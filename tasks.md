@@ -87,7 +87,7 @@ Done criteria:
 - [x] Deep clone selected objects with new ids and preserved styles.
 - [x] Preserve relative positions for multi-object paste.
 - [x] Apply progressive `+20,+20` offset on repeated pastes.
-- [ ] Reset paste offset sequence when user copies a different source selection.
+- [x] Reset paste offset sequence when user copies a different source selection.
 - [ ] Support copy/paste of groups with child id remapping.
 - [ ] Implement duplicate/remove context actions.
 - [ ] Add drag-and-drop image import (`png`, `jpg`, `jpeg`, `gif`, `svg`).
