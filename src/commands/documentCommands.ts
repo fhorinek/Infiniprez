@@ -216,6 +216,43 @@ export function setShapeOpacityCommand(
   }
 }
 
+export function groupObjectsCommand(
+  groupObject: CanvasObject,
+  childParentBefore: Record<string, string | null>
+): Command<DocumentModel> {
+  return {
+    label: 'Group objects',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const hasGroup = draft.objects.some((entry) => entry.id === groupObject.id)
+          if (!hasGroup) {
+            draft.objects.push(groupObject)
+          }
+
+          for (const object of draft.objects) {
+            if (childParentBefore[object.id] !== undefined) {
+              object.parentGroupId = groupObject.id
+            }
+          }
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.objects = draft.objects.filter((entry) => entry.id !== groupObject.id)
+
+          for (const object of draft.objects) {
+            const beforeParent = childParentBefore[object.id]
+            if (beforeParent !== undefined) {
+              object.parentGroupId = beforeParent
+            }
+          }
+        })
+      ),
+  }
+}
+
 const LAYER_ACTION_LABEL: Record<LayerOrderAction, string> = {
   top: 'Bring to front',
   up: 'Bring forward',

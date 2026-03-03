@@ -73,7 +73,7 @@ Done criteria:
 - Multi-select operations apply consistently to all selected objects.
 
 ## 6. Group / Ungroup + Isolated Group Edit
-- [ ] Implement `group` object creation from selected items.
+- [x] Implement `group` object creation from selected items.
 - [ ] Implement ungroup with child restoration.
 - [ ] Add enter-group flows: double-click, `Enter`, toolbar icon.
 - [ ] Add exit-group flows: `Esc`, explicit action.

@@ -49,6 +49,7 @@ export interface EditorActions {
   reorderObjectsLayer: (objectIds: string[], action: LayerOrderAction) => void
   toggleObjectLock: (objectId: string) => void
   setShapeOpacity: (objectId: string, opacityPercent: number) => void
+  groupObjects: (objectIds: string[]) => void
   createSlide: (slide: Slide) => void
   deleteSlide: (slideId: string) => void
 }

@@ -401,6 +401,7 @@ export function CanvasViewport() {
   const moveObject = useEditorStore((state) => state.moveObject)
   const deleteObjects = useEditorStore((state) => state.deleteObjects)
   const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
+  const groupObjects = useEditorStore((state) => state.groupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
@@ -1341,6 +1342,10 @@ export function CanvasViewport() {
             type="button"
             disabled={!canGroup}
             title={canGroup ? 'Group' : 'Select multiple ungrouped objects'}
+            onClick={() => {
+              groupObjects(contextSelectionIds)
+              closeContextMenu()
+            }}
           >
             <FontAwesomeIcon icon={faLayerGroup} />
             Group
