@@ -143,6 +143,20 @@ button:disabled {
   color: #95a6c5;
 }
 
+.shape-opacity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.shape-opacity-control input[type='range'] {
+  width: 96px;
+}
+
+.shape-opacity-control input[type='number'] {
+  width: 56px;
+}
+
 .lock-toggle-btn {
   grid-column: 1 / -1;
   margin-top: 0.4rem;

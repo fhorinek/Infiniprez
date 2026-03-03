@@ -10,6 +10,7 @@ import {
   moveObjectCommand,
   recordExecutedCommand,
   redoCommand,
+  setShapeOpacityCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
   undoCommand,
@@ -243,6 +244,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     const command = setObjectLockCommand(objectId, target.locked, !target.locked)
+    get().executeDocumentCommand(command)
+  },
+
+  setShapeOpacity: (objectId, opacityPercent) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (
+      !target ||
+      (target.type !== 'shape_rect' && target.type !== 'shape_circle' && target.type !== 'shape_arrow')
+    ) {
+      return
+    }
+
+    const nextOpacity = Math.max(0, Math.min(100, Math.round(opacityPercent)))
+    if (target.shapeData.opacityPercent === nextOpacity) {
+      return
+    }
+
+    const command = setShapeOpacityCommand(objectId, target.shapeData.opacityPercent, nextOpacity)
     get().executeDocumentCommand(command)
   },
 

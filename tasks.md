@@ -52,7 +52,7 @@ Done criteria:
 - [x] For rotated objects, apply object-edge snapping against axis-aligned bounding boxes (MVP rule).
 - [x] Implement lock/unlock behavior and lock icon control.
 - [x] Implement shape fill modes: solid color and 2-stop linear gradient (`colorA`, `colorB`, `angleDeg`).
-- [ ] Implement shape opacity as percent (`0..100`) in model and UI controls.
+- [x] Implement shape opacity as percent (`0..100`) in model and UI controls.
 
 Done criteria:
 - Selected unlocked objects can be transformed.

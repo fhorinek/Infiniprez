@@ -176,6 +176,46 @@ export function setObjectLockCommand(
   }
 }
 
+export function setShapeOpacityCommand(
+  objectId: string,
+  beforeOpacityPercent: number,
+  afterOpacityPercent: number
+): Command<DocumentModel> {
+  return {
+    label: 'Set shape opacity',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (
+            !target ||
+            (target.type !== 'shape_rect' &&
+              target.type !== 'shape_circle' &&
+              target.type !== 'shape_arrow')
+          ) {
+            return
+          }
+          target.shapeData.opacityPercent = afterOpacityPercent
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (
+            !target ||
+            (target.type !== 'shape_rect' &&
+              target.type !== 'shape_circle' &&
+              target.type !== 'shape_arrow')
+          ) {
+            return
+          }
+          target.shapeData.opacityPercent = beforeOpacityPercent
+        })
+      ),
+  }
+}
+
 const LAYER_ACTION_LABEL: Record<LayerOrderAction, string> = {
   top: 'Bring to front',
   up: 'Bring forward',

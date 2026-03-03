@@ -105,12 +105,20 @@ function App() {
   const createObject = useEditorStore((state) => state.createObject)
   const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
 
   const selectedObject =
     selectedObjectIds.length === 1
       ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
   const hasSelection = selectedObjectIds.length > 0
+  const selectedShapeObject =
+    selectedObject &&
+    (selectedObject.type === 'shape_rect' ||
+      selectedObject.type === 'shape_circle' ||
+      selectedObject.type === 'shape_arrow')
+      ? selectedObject
+      : null
   const canBringToFront = canReorderLayer(document.objects, selectedObjectIds, 'top')
   const canBringForward = canReorderLayer(document.objects, selectedObjectIds, 'up')
   const canSendBackward = canReorderLayer(document.objects, selectedObjectIds, 'down')
@@ -243,6 +251,14 @@ function App() {
       return
     }
     resetDocument()
+  }
+
+  function handleShapeOpacityChange(objectId: string, value: string) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) {
+      return
+    }
+    setShapeOpacity(objectId, parsed)
   }
 
   function handleSaveDocument() {
@@ -445,6 +461,34 @@ function App() {
               <div>{selectedObject.h.toFixed(1)}</div>
               <div>Rotation</div>
               <div>{selectedObject.rotation.toFixed(2)}</div>
+              {selectedShapeObject && (
+                <>
+                  <div>Opacity</div>
+                  <div className="shape-opacity-control">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={selectedShapeObject.shapeData.opacityPercent}
+                      onChange={(event) =>
+                        handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
+                      }
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={selectedShapeObject.shapeData.opacityPercent}
+                      onChange={(event) =>
+                        handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
+                      }
+                    />
+                    <span>%</span>
+                  </div>
+                </>
+              )}
               <button
                 type="button"
                 className="lock-toggle-btn icon-btn"
