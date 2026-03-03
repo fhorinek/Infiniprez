@@ -7,6 +7,7 @@ import {
   clamp,
   getDynamicGridStep,
   getViewWorldBounds,
+  rotatePoint,
   screenToWorld,
   type Point,
   type ViewportSize,
@@ -292,11 +293,22 @@ export function CanvasViewport() {
     }
 
     if (interaction.mode === 'resize') {
-      const nextWidth = Math.max(20, interaction.objectStart.w + deltaWorld.x)
-      const nextHeight = Math.max(20, interaction.objectStart.h + deltaWorld.y)
+      // Resize is computed in the object's local axis space so dragging
+      // follows the selected handle even when object is rotated.
+      const localDelta = rotatePoint(deltaWorld, -interaction.objectStart.rotation)
+      const nextWidth = Math.max(20, interaction.objectStart.w + localDelta.x)
+      const nextHeight = Math.max(20, interaction.objectStart.h + localDelta.y)
+      const appliedWidthDelta = nextWidth - interaction.objectStart.w
+      const appliedHeightDelta = nextHeight - interaction.objectStart.h
+      const centerShiftLocal = {
+        x: appliedWidthDelta / 2,
+        y: appliedHeightDelta / 2,
+      }
+      const centerShiftWorld = rotatePoint(centerShiftLocal, interaction.objectStart.rotation)
+
       moveObject(interaction.objectId, {
-        x: interaction.objectStart.x + (nextWidth - interaction.objectStart.w) / 2,
-        y: interaction.objectStart.y + (nextHeight - interaction.objectStart.h) / 2,
+        x: interaction.objectStart.x + centerShiftWorld.x,
+        y: interaction.objectStart.y + centerShiftWorld.y,
         w: nextWidth,
         h: nextHeight,
         rotation: interaction.objectStart.rotation,
