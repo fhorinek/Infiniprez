@@ -283,6 +283,11 @@ function getSelectionKey(ids: string[]): string {
   return [...ids].sort().join('|')
 }
 
+function snapToGrid(value: number, gridSize: number): number {
+  const safeGridSize = Math.max(0.00001, gridSize)
+  return Math.round(value / safeGridSize) * safeGridSize
+}
+
 export function CanvasViewport() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<PanInteraction | null>(null)
@@ -605,12 +610,26 @@ export function CanvasViewport() {
       y: event.clientY - interaction.originClient.y,
     }
     const deltaWorld = cameraDragDeltaToWorld(deltaClient, interaction.cameraStart)
+    const shouldSnapToGrid = canvasSettings.snapToGrid && !event.altKey
+    const snapGridSize = canvasSettings.baseGridSize
 
     if (interaction.mode === 'move') {
+      let appliedDelta = deltaWorld
+      if (shouldSnapToGrid) {
+        const snappedCenter = {
+          x: snapToGrid(interaction.centerStart.x + deltaWorld.x, snapGridSize),
+          y: snapToGrid(interaction.centerStart.y + deltaWorld.y, snapGridSize),
+        }
+        appliedDelta = {
+          x: snappedCenter.x - interaction.centerStart.x,
+          y: snappedCenter.y - interaction.centerStart.y,
+        }
+      }
+
       interaction.targets.forEach((target) => {
         moveObject(target.id, {
-          x: target.start.x + deltaWorld.x,
-          y: target.start.y + deltaWorld.y,
+          x: target.start.x + appliedDelta.x,
+          y: target.start.y + appliedDelta.y,
           w: target.start.w,
           h: target.start.h,
           rotation: target.start.rotation,
@@ -620,8 +639,8 @@ export function CanvasViewport() {
         setMultiSelectionFrame({
           ...interaction.selectionFrameStart,
           center: {
-            x: interaction.selectionFrameStart.center.x + deltaWorld.x,
-            y: interaction.selectionFrameStart.center.y + deltaWorld.y,
+            x: interaction.selectionFrameStart.center.x + appliedDelta.x,
+            y: interaction.selectionFrameStart.center.y + appliedDelta.y,
           },
         })
       }
@@ -632,8 +651,12 @@ export function CanvasViewport() {
       if (interaction.targets.length === 1) {
         const target = interaction.targets[0]
         const localDelta = rotatePoint(deltaWorld, -target.start.rotation)
-        const nextWidth = Math.max(20, target.start.w + localDelta.x)
-        const nextHeight = Math.max(20, target.start.h + localDelta.y)
+        let nextWidth = Math.max(20, target.start.w + localDelta.x)
+        let nextHeight = Math.max(20, target.start.h + localDelta.y)
+        if (shouldSnapToGrid) {
+          nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
+          nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+        }
         const appliedWidthDelta = nextWidth - target.start.w
         const appliedHeightDelta = nextHeight - target.start.h
         const centerShiftLocal = {
@@ -662,8 +685,12 @@ export function CanvasViewport() {
         1,
         interaction.selectionBoundsStart.maxY - interaction.selectionBoundsStart.minY
       )
-      const nextWidth = Math.max(20, selectionWidth + deltaWorld.x)
-      const nextHeight = Math.max(20, selectionHeight + deltaWorld.y)
+      let nextWidth = Math.max(20, selectionWidth + deltaWorld.x)
+      let nextHeight = Math.max(20, selectionHeight + deltaWorld.y)
+      if (shouldSnapToGrid) {
+        nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
+        nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+      }
       const scaleX = nextWidth / selectionWidth
       const scaleY = nextHeight / selectionHeight
       const anchorX = interaction.selectionBoundsStart.minX

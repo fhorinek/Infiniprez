@@ -38,7 +38,7 @@ Done criteria:
 - [x] Add coordinate conversion helpers (screen <-> world).
 - [x] Implement canvas snap settings (`snapToGrid`, `snapToObjectEdges`, `snapTolerancePx`).
 - [x] Set default `snapTolerancePx` to `8`.
-- [ ] Enable snapping by default and support temporary snap bypass with `Alt` during move/resize.
+- [x] Enable snapping by default and support temporary snap bypass with `Alt` during move/resize.
 
 Done criteria:
 - Navigation is smooth and grid scales correctly with zoom.
