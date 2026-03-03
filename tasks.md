@@ -59,15 +59,15 @@ Done criteria:
 - Locked objects remain selectable but not transformable.
 
 ## 5. Multi-Select + Marquee + Layering
-- [ ] Implement `Shift + drag` marquee selection.
-- [ ] Apply marquee mode by horizontal drag direction: right = containment, left = intersection.
-- [ ] Support multi-selection with additive selection logic.
-- [ ] Restrict numeric property panel edits (`X/Y/W/H/Rotation`) to single selection only.
-- [ ] Implement layer actions: top/up/down/bottom.
-- [ ] Add object context menu with enable/disable rules.
-- [ ] Implement `Delete` key to remove selected unlocked objects immediately.
-- [ ] Ensure `Backspace` does not delete objects (reserved for text editing).
-- [ ] Ensure locked objects are protected from keyboard/context delete actions.
+- [x] Implement `Shift + drag` marquee selection.
+- [x] Apply marquee mode by horizontal drag direction: right = containment, left = intersection.
+- [x] Support multi-selection with additive selection logic.
+- [x] Restrict numeric property panel edits (`X/Y/W/H/Rotation`) to single selection only.
+- [x] Implement layer actions: top/up/down/bottom.
+- [x] Add object context menu with enable/disable rules.
+- [x] Implement `Delete` key to remove selected unlocked objects immediately.
+- [x] Ensure `Backspace` does not delete objects (reserved for text editing).
+- [x] Ensure locked objects are protected from keyboard/context delete actions.
 
 Done criteria:
 - Multi-select operations apply consistently to all selected objects.

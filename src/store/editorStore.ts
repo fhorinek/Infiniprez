@@ -10,11 +10,17 @@ import {
   moveObjectCommand,
   recordExecutedCommand,
   redoCommand,
+  setObjectZIndexCommand,
   setObjectLockCommand,
   undoCommand,
   type Command,
 } from '../commands'
-import { createEmptyDocument, type CanvasObject, type DocumentModel } from '../model'
+import {
+  computeLayerZIndexSnapshots,
+  createEmptyDocument,
+  type CanvasObject,
+  type DocumentModel,
+} from '../model'
 import type { CameraState, EditorState, EditorStore, UiState } from './types'
 
 const DEFAULT_CAMERA: CameraState = {
@@ -214,6 +220,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (hasRemovedSelected) {
       get().clearSelection()
     }
+  },
+
+  reorderObjectsLayer: (objectIds, action) => {
+    if (objectIds.length === 0) {
+      return
+    }
+
+    const { before, after } = computeLayerZIndexSnapshots(get().document.objects, objectIds, action)
+    if (Object.keys(after).length === 0) {
+      return
+    }
+
+    const command = setObjectZIndexCommand(action, before, after)
+    get().executeDocumentCommand(command)
   },
 
   toggleObjectLock: (objectId) => {

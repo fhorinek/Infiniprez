@@ -1,6 +1,6 @@
 import { produce } from 'immer'
 import type { Command } from './types'
-import type { CanvasObject, DocumentModel, Slide } from '../model'
+import type { CanvasObject, DocumentModel, LayerOrderAction, Slide, ZIndexSnapshot } from '../model'
 
 type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
 
@@ -171,6 +171,48 @@ export function setObjectLockCommand(
             return
           }
           target.locked = beforeLocked
+        })
+      ),
+  }
+}
+
+const LAYER_ACTION_LABEL: Record<LayerOrderAction, string> = {
+  top: 'Bring to front',
+  up: 'Bring forward',
+  down: 'Send backward',
+  bottom: 'Send to back',
+}
+
+function applyZIndexSnapshot(draft: DocumentModel, snapshot: ZIndexSnapshot) {
+  if (Object.keys(snapshot).length === 0) {
+    return
+  }
+
+  for (const object of draft.objects) {
+    const next = snapshot[object.id]
+    if (next !== undefined) {
+      object.zIndex = next
+    }
+  }
+}
+
+export function setObjectZIndexCommand(
+  action: LayerOrderAction,
+  beforeSnapshot: ZIndexSnapshot,
+  afterSnapshot: ZIndexSnapshot
+): Command<DocumentModel> {
+  return {
+    label: LAYER_ACTION_LABEL[action],
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          applyZIndexSnapshot(draft, afterSnapshot)
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          applyZIndexSnapshot(draft, beforeSnapshot)
         })
       ),
   }

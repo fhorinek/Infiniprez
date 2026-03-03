@@ -92,6 +92,10 @@
   flex: 0 0 auto;
 }
 
+.layer-actions {
+  margin-top: 0.65rem;
+}
+
 .danger {
   border-color: rgba(255, 139, 139, 0.5);
 }
@@ -260,6 +264,22 @@ button:disabled {
   pointer-events: none;
 }
 
+.marquee-select {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid rgba(140, 194, 255, 0.95);
+  background: rgba(86, 147, 234, 0.15);
+  z-index: 12;
+}
+
+.marquee-select.contain {
+  border-style: solid;
+}
+
+.marquee-select.intersect {
+  border-style: dashed;
+}
+
 .selection-overlay.locked {
   border-color: rgba(255, 190, 117, 0.92);
 }
@@ -269,6 +289,48 @@ button:disabled {
 .lock-handle {
   position: absolute;
   pointer-events: auto;
+}
+
+.object-context-menu {
+  position: absolute;
+  z-index: 24;
+  min-width: 180px;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(167, 196, 247, 0.38);
+  background: rgba(8, 14, 30, 0.95);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.34);
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.object-context-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.38rem 0.5rem;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: transparent;
+  color: #d9e8ff;
+}
+
+.object-context-menu button:hover:not(:disabled) {
+  background: rgba(117, 167, 245, 0.18);
+}
+
+.object-context-menu button:disabled {
+  opacity: 0.45;
+}
+
+.object-context-menu hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid rgba(153, 185, 243, 0.22);
+  margin: 0.15rem 0;
 }
 
 .resize-handle {

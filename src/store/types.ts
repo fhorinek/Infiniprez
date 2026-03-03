@@ -1,5 +1,5 @@
 import type { Command, HistoryState } from '../commands'
-import type { CanvasObject, DocumentModel, Slide } from '../model'
+import type { CanvasObject, DocumentModel, LayerOrderAction, Slide } from '../model'
 
 export interface CameraState {
   x: number
@@ -46,6 +46,7 @@ export interface EditorActions {
     next: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
   ) => void
   deleteObjects: (objectIds: string[]) => void
+  reorderObjectsLayer: (objectIds: string[], action: LayerOrderAction) => void
   toggleObjectLock: (objectId: string) => void
   createSlide: (slide: Slide) => void
   deleteSlide: (slideId: string) => void

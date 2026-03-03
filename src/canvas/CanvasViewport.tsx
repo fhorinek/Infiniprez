@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCompass, faLock, faLockOpen, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
-import type { CanvasObject, ShapeData } from '../model'
+import {
+  faArrowsDownToLine,
+  faArrowsUpToLine,
+  faArrowDown,
+  faArrowUp,
+  faClone,
+  faCompass,
+  faLayerGroup,
+  faLock,
+  faLockOpen,
+  faMagnifyingGlass,
+  faObjectUngroup,
+  faTrashCan,
+} from '@fortawesome/free-solid-svg-icons'
+import { canReorderLayer, type CanvasObject, type LayerOrderAction, type ShapeData } from '../model'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
 import {
@@ -36,6 +49,26 @@ interface ObjectInteraction {
   cameraStart: CameraState
   centerScreenStart: Point
   startPointerAngle: number
+}
+
+interface MarqueeInteraction {
+  pointerId: number
+  startScreen: Point
+  currentScreen: Point
+  baseSelection: string[]
+}
+
+interface Rect {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+interface ContextMenuState {
+  x: number
+  y: number
+  selectionIds: string[]
 }
 
 function useViewportSize(ref: RefObject<HTMLElement>) {
@@ -115,10 +148,83 @@ function getObjectLabel(object: CanvasObject): string {
   return 'Group'
 }
 
+function toRect(start: Point, end: Point): Rect {
+  return {
+    minX: Math.min(start.x, end.x),
+    minY: Math.min(start.y, end.y),
+    maxX: Math.max(start.x, end.x),
+    maxY: Math.max(start.y, end.y),
+  }
+}
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null
+  if (!element) {
+    return false
+  }
+
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true
+  }
+
+  return element.isContentEditable
+}
+
+function getObjectScreenAabb(
+  object: CanvasObject,
+  camera: CameraState,
+  viewportSize: ViewportSize
+): Rect {
+  const halfW = object.w / 2
+  const halfH = object.h / 2
+  const localCorners = [
+    { x: -halfW, y: -halfH },
+    { x: halfW, y: -halfH },
+    { x: halfW, y: halfH },
+    { x: -halfW, y: halfH },
+  ]
+
+  const screenCorners = localCorners.map((corner) => {
+    const rotated = rotatePoint(corner, object.rotation)
+    return worldToScreen(
+      {
+        x: object.x + rotated.x,
+        y: object.y + rotated.y,
+      },
+      camera,
+      viewportSize
+    )
+  })
+
+  return {
+    minX: Math.min(...screenCorners.map((point) => point.x)),
+    minY: Math.min(...screenCorners.map((point) => point.y)),
+    maxX: Math.max(...screenCorners.map((point) => point.x)),
+    maxY: Math.max(...screenCorners.map((point) => point.y)),
+  }
+}
+
+function containsRect(outer: Rect, inner: Rect): boolean {
+  return (
+    inner.minX >= outer.minX &&
+    inner.maxX <= outer.maxX &&
+    inner.minY >= outer.minY &&
+    inner.maxY <= outer.maxY
+  )
+}
+
+function intersectsRect(a: Rect, b: Rect): boolean {
+  return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY)
+}
+
 export function CanvasViewport() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<PanInteraction | null>(null)
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
+  const marqueeRef = useRef<MarqueeInteraction | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -128,6 +234,8 @@ export function CanvasViewport() {
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
   const moveObject = useEditorStore((state) => state.moveObject)
+  const deleteObjects = useEditorStore((state) => state.deleteObjects)
+  const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
@@ -138,6 +246,14 @@ export function CanvasViewport() {
     selectedObjectIds.length === 1
       ? (orderedObjects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
+  const selectedObjects = useMemo(() => {
+    const selectedSet = new Set(selectedObjectIds)
+    return orderedObjects.filter((object) => selectedSet.has(object.id))
+  }, [orderedObjects, selectedObjectIds])
+  const selectedUnlockedIds = useMemo(
+    () => selectedObjects.filter((object) => !object.locked).map((object) => object.id),
+    [selectedObjects]
+  )
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -235,6 +351,70 @@ export function CanvasViewport() {
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => element.removeEventListener('wheel', onWheel)
   }, [camera, setCamera, viewportSize])
+
+  const contextSelectionIds = contextMenu?.selectionIds ?? selectedObjectIds
+  const contextSelectionObjects = useMemo(() => {
+    const selectedSet = new Set(contextSelectionIds)
+    return orderedObjects.filter((object) => selectedSet.has(object.id))
+  }, [contextSelectionIds, orderedObjects])
+  const contextUnlockedIds = useMemo(
+    () => contextSelectionObjects.filter((object) => !object.locked).map((object) => object.id),
+    [contextSelectionObjects]
+  )
+
+  const canBringToFront = canReorderLayer(objects, contextSelectionIds, 'top')
+  const canBringForward = canReorderLayer(objects, contextSelectionIds, 'up')
+  const canSendBackward = canReorderLayer(objects, contextSelectionIds, 'down')
+  const canSendToBack = canReorderLayer(objects, contextSelectionIds, 'bottom')
+  const canGroup =
+    contextSelectionObjects.length > 1 &&
+    contextSelectionObjects.every(
+      (object) => object.parentGroupId === null && object.type !== 'group'
+    )
+  const canUngroup =
+    contextSelectionObjects.length === 1 && contextSelectionObjects[0]?.type === 'group'
+
+  function closeContextMenu() {
+    setContextMenu(null)
+  }
+
+  function applyDeleteSelection(ids: string[]) {
+    if (ids.length === 0) {
+      return
+    }
+    deleteObjects(ids)
+  }
+
+  function applyLayerAction(action: LayerOrderAction) {
+    if (contextSelectionIds.length === 0) {
+      return
+    }
+    reorderObjectsLayer(contextSelectionIds, action)
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextInputTarget(event.target)) {
+        return
+      }
+
+      if (event.key === 'Delete') {
+        if (selectedUnlockedIds.length > 0) {
+          event.preventDefault()
+          deleteObjects(selectedUnlockedIds)
+          setContextMenu(null)
+        }
+        return
+      }
+
+      if (event.key === 'Backspace' && selectedObjectIds.length > 0) {
+        event.preventDefault()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [deleteObjects, selectedObjectIds, selectedUnlockedIds])
 
   function beginObjectInteraction(
     event: PointerEvent<HTMLElement>,
@@ -334,13 +514,52 @@ export function CanvasViewport() {
     })
   }
 
+  function finalizeMarqueeSelection(interaction: MarqueeInteraction) {
+    const rect = toRect(interaction.startScreen, interaction.currentScreen)
+    const width = rect.maxX - rect.minX
+    const height = rect.maxY - rect.minY
+    if (width < 2 && height < 2) {
+      return
+    }
+
+    const usesContainMode = interaction.currentScreen.x >= interaction.startScreen.x
+    const hits = orderedObjects
+      .filter((object) => {
+        const bounds = getObjectScreenAabb(object, camera, viewportSize)
+        return usesContainMode ? containsRect(rect, bounds) : intersectsRect(rect, bounds)
+      })
+      .map((object) => object.id)
+
+    const nextSelection = new Set(interaction.baseSelection)
+    hits.forEach((id) => nextSelection.add(id))
+    selectObjects([...nextSelection])
+  }
+
   function handleViewportPointerDown(event: PointerEvent<HTMLDivElement>) {
+    closeContextMenu()
+
+    if (event.button === 0 && event.shiftKey) {
+      event.preventDefault()
+      const start = getViewportRelativePoint(event.clientX, event.clientY)
+      marqueeRef.current = {
+        pointerId: event.pointerId,
+        startScreen: start,
+        currentScreen: start,
+        baseSelection: selectedObjectIds,
+      }
+      setMarqueeRect(toRect(start, start))
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
+
     if (event.button !== 0 && event.button !== 1) {
       return
     }
 
     event.preventDefault()
-    clearSelection()
+    if (event.button === 0) {
+      clearSelection()
+    }
     panRef.current = {
       pointerId: event.pointerId,
       originClient: { x: event.clientX, y: event.clientY },
@@ -353,6 +572,14 @@ export function CanvasViewport() {
     const interaction = objectInteractionRef.current
     if (interaction && interaction.pointerId === event.pointerId) {
       applyObjectInteraction(event, interaction)
+      return
+    }
+
+    const marquee = marqueeRef.current
+    if (marquee && marquee.pointerId === event.pointerId) {
+      const current = getViewportRelativePoint(event.clientX, event.clientY)
+      marquee.currentScreen = current
+      setMarqueeRect(toRect(marquee.startScreen, current))
       return
     }
 
@@ -381,6 +608,13 @@ export function CanvasViewport() {
       commitCommandBatch()
     }
 
+    const marquee = marqueeRef.current
+    if (marquee && marquee.pointerId === event.pointerId) {
+      finalizeMarqueeSelection(marquee)
+      marqueeRef.current = null
+      setMarqueeRect(null)
+    }
+
     const pan = panRef.current
     if (pan && pan.pointerId === event.pointerId) {
       panRef.current = null
@@ -391,6 +625,11 @@ export function CanvasViewport() {
     }
   }
 
+  const marqueeMode =
+    marqueeRef.current && marqueeRef.current.currentScreen.x >= marqueeRef.current.startScreen.x
+      ? 'contain'
+      : 'intersect'
+
   return (
     <div
       ref={viewportRef}
@@ -399,6 +638,12 @@ export function CanvasViewport() {
       onPointerMove={handleViewportPointerMove}
       onPointerUp={handleViewportPointerUp}
       onPointerCancel={handleViewportPointerUp}
+      onContextMenu={(event) => {
+        if (event.target === event.currentTarget) {
+          event.preventDefault()
+          closeContextMenu()
+        }
+      }}
     >
       <svg
         width={viewportSize.width}
@@ -493,10 +738,42 @@ export function CanvasViewport() {
               className={objectClasses}
               style={{ ...baseStyle, ...shapeStyle }}
               onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  return
+                }
                 event.preventDefault()
                 event.stopPropagation()
+                closeContextMenu()
+
+                if (event.shiftKey) {
+                  const nextSelection = new Set(selectedObjectIds)
+                  if (nextSelection.has(object.id)) {
+                    nextSelection.delete(object.id)
+                  } else {
+                    nextSelection.add(object.id)
+                  }
+                  selectObjects([...nextSelection])
+                  return
+                }
+
                 selectObjects([object.id])
                 beginObjectInteraction(event, object, 'move')
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const pointer = getViewportRelativePoint(event.clientX, event.clientY)
+                const selectionIds = selectedObjectIds.includes(object.id)
+                  ? selectedObjectIds
+                  : [object.id]
+                if (!selectedObjectIds.includes(object.id)) {
+                  selectObjects([object.id])
+                }
+                setContextMenu({
+                  x: pointer.x,
+                  y: pointer.y,
+                  selectionIds,
+                })
               }}
             >
               {object.type === 'shape_arrow' ? (
@@ -516,6 +793,18 @@ export function CanvasViewport() {
           )
         })}
       </div>
+
+      {marqueeRect && (
+        <div
+          className={`marquee-select ${marqueeMode}`}
+          style={{
+            left: marqueeRect.minX,
+            top: marqueeRect.minY,
+            width: marqueeRect.maxX - marqueeRect.minX,
+            height: marqueeRect.maxY - marqueeRect.minY,
+          }}
+        />
+      )}
 
       {selectedObject && (
         <div
@@ -568,6 +857,95 @@ export function CanvasViewport() {
             title={selectedObject.locked ? 'Unlock object' : 'Lock object'}
           >
             <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
+          </button>
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          className="object-context-menu"
+          style={{
+            left: clamp(contextMenu.x, 8, viewportSize.width - 188),
+            top: clamp(contextMenu.y, 8, viewportSize.height - 244),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button type="button" disabled title="Not implemented in this step">
+            <FontAwesomeIcon icon={faClone} />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            disabled={contextUnlockedIds.length === 0}
+            onClick={() => {
+              applyDeleteSelection(contextUnlockedIds)
+              closeContextMenu()
+            }}
+            title={contextUnlockedIds.length === 0 ? 'No unlocked objects selected' : 'Remove'}
+          >
+            <FontAwesomeIcon icon={faTrashCan} />
+            Remove
+          </button>
+          <button
+            type="button"
+            disabled={!canGroup}
+            title={canGroup ? 'Group' : 'Select multiple ungrouped objects'}
+          >
+            <FontAwesomeIcon icon={faLayerGroup} />
+            Group
+          </button>
+          <button
+            type="button"
+            disabled={!canUngroup}
+            title={canUngroup ? 'Ungroup' : 'Select one group object'}
+          >
+            <FontAwesomeIcon icon={faObjectUngroup} />
+            Ungroup
+          </button>
+          <hr />
+          <button
+            type="button"
+            disabled={!canBringToFront}
+            onClick={() => {
+              applyLayerAction('top')
+              closeContextMenu()
+            }}
+          >
+            <FontAwesomeIcon icon={faArrowsUpToLine} />
+            Bring to front
+          </button>
+          <button
+            type="button"
+            disabled={!canBringForward}
+            onClick={() => {
+              applyLayerAction('up')
+              closeContextMenu()
+            }}
+          >
+            <FontAwesomeIcon icon={faArrowUp} />
+            Bring forward
+          </button>
+          <button
+            type="button"
+            disabled={!canSendBackward}
+            onClick={() => {
+              applyLayerAction('down')
+              closeContextMenu()
+            }}
+          >
+            <FontAwesomeIcon icon={faArrowDown} />
+            Send backward
+          </button>
+          <button
+            type="button"
+            disabled={!canSendToBack}
+            onClick={() => {
+              applyLayerAction('bottom')
+              closeContextMenu()
+            }}
+          >
+            <FontAwesomeIcon icon={faArrowsDownToLine} />
+            Send to back
           </button>
         </div>
       )}

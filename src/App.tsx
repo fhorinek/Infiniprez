@@ -1,7 +1,11 @@
 import { useRef, type ChangeEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
+  faArrowDown,
+  faArrowUp,
+  faArrowsDownToLine,
   faArrowsLeftRightToLine,
+  faArrowsUpToLine,
   faArrowsUpDownLeftRight,
   faCircle,
   faClock,
@@ -25,7 +29,13 @@ import {
   faUndo,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
-import { deserializeDocument, serializeDocument, type CanvasObject, type ShapeData } from './model'
+import {
+  canReorderLayer,
+  deserializeDocument,
+  serializeDocument,
+  type CanvasObject,
+  type ShapeData,
+} from './model'
 import { useEditorStore } from './store'
 import './App.css'
 
@@ -40,12 +50,18 @@ function App() {
   const resetDocument = useEditorStore((state) => state.resetDocument)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
   const createObject = useEditorStore((state) => state.createObject)
+  const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
 
   const selectedObject =
     selectedObjectIds.length === 1
       ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
+  const hasSelection = selectedObjectIds.length > 0
+  const canBringToFront = canReorderLayer(document.objects, selectedObjectIds, 'top')
+  const canBringForward = canReorderLayer(document.objects, selectedObjectIds, 'up')
+  const canSendBackward = canReorderLayer(document.objects, selectedObjectIds, 'down')
+  const canSendToBack = canReorderLayer(document.objects, selectedObjectIds, 'bottom')
 
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
@@ -376,9 +392,55 @@ function App() {
                 <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
               </button>
             </div>
+          ) : selectedObjectIds.length > 1 ? (
+            <p className="panel-empty">
+              Numeric transform fields are available only for a single selected object.
+            </p>
           ) : (
             <p className="panel-empty">Select one object to view transform properties.</p>
           )}
+          <div className="inline-actions layer-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Bring to front"
+              title="Bring to front"
+              disabled={!hasSelection || !canBringToFront}
+              onClick={() => reorderObjectsLayer(selectedObjectIds, 'top')}
+            >
+              <FontAwesomeIcon icon={faArrowsUpToLine} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Bring forward"
+              title="Bring forward"
+              disabled={!hasSelection || !canBringForward}
+              onClick={() => reorderObjectsLayer(selectedObjectIds, 'up')}
+            >
+              <FontAwesomeIcon icon={faArrowUp} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Send backward"
+              title="Send backward"
+              disabled={!hasSelection || !canSendBackward}
+              onClick={() => reorderObjectsLayer(selectedObjectIds, 'down')}
+            >
+              <FontAwesomeIcon icon={faArrowDown} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Send to back"
+              title="Send to back"
+              disabled={!hasSelection || !canSendToBack}
+              onClick={() => reorderObjectsLayer(selectedObjectIds, 'bottom')}
+            >
+              <FontAwesomeIcon icon={faArrowsDownToLine} />
+            </button>
+          </div>
         </section>
       </aside>
 
