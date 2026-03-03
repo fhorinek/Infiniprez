@@ -1486,6 +1486,19 @@ export function CanvasViewport() {
             disabled={contextSelectionIds.length === 0}
             onClick={() => {
               copySelection(contextSelectionIds)
+              pasteClipboard()
+              closeContextMenu()
+            }}
+            title={contextSelectionIds.length === 0 ? 'No objects selected' : 'Duplicate'}
+          >
+            <FontAwesomeIcon icon={faClone} />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            disabled={contextSelectionIds.length === 0}
+            onClick={() => {
+              copySelection(contextSelectionIds)
               closeContextMenu()
             }}
             title={contextSelectionIds.length === 0 ? 'No objects selected' : 'Copy'}
