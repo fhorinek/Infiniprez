@@ -88,6 +88,12 @@ interface SnapCandidateEdges {
   y: number[]
 }
 
+interface ClipboardState {
+  objects: CanvasObject[]
+  sourceSelectionKey: string
+  pasteCount: number
+}
+
 interface ContextMenuState {
   x: number
   y: number
@@ -394,7 +400,7 @@ export function CanvasViewport() {
   const panRef = useRef<PanInteraction | null>(null)
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
-  const clipboardRef = useRef<CanvasObject[] | null>(null)
+  const clipboardRef = useRef<ClipboardState | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
@@ -632,21 +638,36 @@ export function CanvasViewport() {
     const copied = objects
       .filter((object) => selectedSet.has(object.id))
       .map((object) => JSON.parse(JSON.stringify(object)) as CanvasObject)
-    clipboardRef.current = copied.length > 0 ? copied : null
+    if (copied.length === 0) {
+      clipboardRef.current = null
+      return
+    }
+
+    const sourceSelectionKey = getSelectionKey(ids)
+    const current = clipboardRef.current
+    clipboardRef.current = {
+      objects: copied,
+      sourceSelectionKey,
+      pasteCount:
+        current && current.sourceSelectionKey === sourceSelectionKey ? current.pasteCount : 0,
+    }
   }
 
   function pasteClipboard() {
-    const source = clipboardRef.current
-    if (!source || source.length === 0) {
+    const clipboard = clipboardRef.current
+    if (!clipboard || clipboard.objects.length === 0) {
       return
     }
 
     const zIndexStart = objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1
-    const clones = source.map((object, index) => {
+    const pasteOffset = (clipboard.pasteCount + 1) * 20
+    const clones = clipboard.objects.map((object, index) => {
       const next = JSON.parse(JSON.stringify(object)) as CanvasObject
       next.id = createId()
       next.parentGroupId = null
       next.zIndex = zIndexStart + index
+      next.x += pasteOffset
+      next.y += pasteOffset
       return next
     })
 
@@ -654,6 +675,10 @@ export function CanvasViewport() {
     clones.forEach((entry) => createObject(entry))
     commitCommandBatch()
     selectObjects(clones.map((entry) => entry.id))
+    clipboardRef.current = {
+      ...clipboard,
+      pasteCount: clipboard.pasteCount + 1,
+    }
   }
 
   useEffect(() => {
