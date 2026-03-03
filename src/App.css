@@ -1,0 +1,190 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 15%, #22416c 0%, transparent 35%),
+    radial-gradient(circle at 88% 82%, #42224f 0%, transparent 38%),
+    linear-gradient(120deg, #0f1828 0%, #131726 45%, #171421 100%);
+}
+
+.sidebar {
+  border-right: 1px solid rgba(185, 200, 255, 0.16);
+  padding: 1rem;
+  overflow-y: auto;
+  background: rgba(8, 12, 23, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.sidebar-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
+}
+
+.sidebar-header p {
+  margin: 0.2rem 0 1rem;
+  color: #9eaec9;
+}
+
+.panel {
+  margin-bottom: 0.9rem;
+  border: 1px solid rgba(183, 209, 255, 0.16);
+  border-radius: 0.8rem;
+  background: rgba(19, 24, 38, 0.75);
+  padding: 0.7rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9caecf;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-icon-btn {
+  width: 2rem;
+  height: 2rem;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.45rem;
+  min-height: 2.1rem;
+}
+
+.slide-list {
+  margin: 0 0 0.6rem;
+  padding-left: 1.2rem;
+}
+
+.slide-item {
+  border-radius: 0.35rem;
+  padding: 0.15rem 0.3rem;
+  margin-bottom: 0.2rem;
+}
+
+.slide-item.active {
+  background: rgba(93, 151, 255, 0.2);
+  color: #d9e9ff;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.inline-actions button {
+  flex: 1;
+}
+
+.danger {
+  border-color: rgba(255, 139, 139, 0.5);
+}
+
+.property-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.property-table td {
+  border-top: 1px solid rgba(183, 209, 255, 0.16);
+  padding: 0.35rem 0.2rem;
+}
+
+.property-list {
+  margin: 0;
+  padding: 0 0 0 1.1rem;
+}
+
+.property-list li {
+  margin-bottom: 0.18rem;
+}
+
+.canvas-area {
+  display: flex;
+  flex-direction: column;
+  padding: 0.8rem;
+  gap: 0.8rem;
+}
+
+.canvas-toolbar {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.canvas-toolbar button {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.canvas-stage {
+  position: relative;
+  min-height: 560px;
+  border-radius: 1rem;
+  border: 1px solid rgba(163, 189, 238, 0.22);
+  background: rgba(9, 12, 22, 0.72);
+  overflow: hidden;
+}
+
+.grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(150, 170, 214, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 170, 214, 0.16) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.camera-card {
+  position: absolute;
+  top: 2rem;
+  left: 2rem;
+  max-width: 420px;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(183, 209, 255, 0.25);
+  background: rgba(14, 19, 33, 0.92);
+  padding: 1rem;
+}
+
+.camera-card h3 {
+  margin: 0 0 0.35rem;
+}
+
+.camera-card p {
+  margin: 0;
+  color: #c8d4ed;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(185, 200, 255, 0.16);
+    max-height: 52vh;
+  }
+
+  .canvas-stage {
+    min-height: 420px;
+  }
+}

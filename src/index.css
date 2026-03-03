@@ -1,0 +1,37 @@
+:root {
+  font-family: 'Space Grotesk', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  line-height: 1.45;
+  font-weight: 400;
+  color: #eef4ff;
+  background: #0f1523;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button {
+  font: inherit;
+  color: #e9f3ff;
+  background: rgba(37, 52, 80, 0.72);
+  border: 1px solid rgba(173, 202, 255, 0.28);
+  border-radius: 0.5rem;
+  padding: 0.42rem 0.58rem;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: rgba(173, 202, 255, 0.52);
+  background: rgba(49, 70, 108, 0.75);
+}
