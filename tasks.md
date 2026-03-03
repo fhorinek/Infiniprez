@@ -6,7 +6,7 @@
 - [x] Define folder structure: `model/`, `store/`, `commands/`, `canvas/`, `presentation/`, `persistence/`, `ui/`.
 - [x] Add linting and formatting (`eslint`, `prettier`) and baseline scripts.
 - [x] Create app shell with left sidebar + right canvas layout.
-- [ ] Add top-toolbar `New Document` icon action with confirmation dialog.
+- [x] Add top-toolbar `New Document` icon action with confirmation dialog.
 
 Done criteria:
 - App runs locally with stable TypeScript build.

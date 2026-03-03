@@ -512,6 +512,15 @@ function App() {
           <button
             type="button"
             className="icon-btn"
+            aria-label="New document"
+            title="New document"
+            onClick={handleNewDocument}
+          >
+            <FontAwesomeIcon icon={faFileCirclePlus} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
             aria-label="Snap"
             title="Snap (not implemented)"
             disabled
