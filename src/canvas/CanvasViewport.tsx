@@ -91,6 +91,7 @@ interface SnapCandidateEdges {
 interface ClipboardState {
   objects: CanvasObject[]
   sourceSelectionKey: string
+  selectedRootIds: string[]
   pasteCount: number
 }
 
@@ -635,6 +636,21 @@ export function CanvasViewport() {
       return
     }
     const selectedSet = new Set(ids)
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const object of objects) {
+        if (object.type === 'group' && selectedSet.has(object.id)) {
+          for (const childId of object.groupData.childIds) {
+            if (!selectedSet.has(childId)) {
+              selectedSet.add(childId)
+              changed = true
+            }
+          }
+        }
+      }
+    }
+
     const copied = objects
       .filter((object) => selectedSet.has(object.id))
       .map((object) => JSON.parse(JSON.stringify(object)) as CanvasObject)
@@ -648,6 +664,7 @@ export function CanvasViewport() {
     clipboardRef.current = {
       objects: copied,
       sourceSelectionKey,
+      selectedRootIds: ids,
       pasteCount:
         current && current.sourceSelectionKey === sourceSelectionKey ? current.pasteCount : 0,
     }
@@ -661,10 +678,24 @@ export function CanvasViewport() {
 
     const zIndexStart = objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1
     const pasteOffset = (clipboard.pasteCount + 1) * 20
+    const idMap = new Map<string, string>()
+    clipboard.objects.forEach((object) => {
+      idMap.set(object.id, createId())
+    })
+
     const clones = clipboard.objects.map((object, index) => {
       const next = JSON.parse(JSON.stringify(object)) as CanvasObject
-      next.id = createId()
-      next.parentGroupId = null
+      next.id = idMap.get(object.id) ?? createId()
+      if (object.parentGroupId && idMap.has(object.parentGroupId)) {
+        next.parentGroupId = idMap.get(object.parentGroupId) ?? null
+      } else {
+        next.parentGroupId = null
+      }
+      if (next.type === 'group') {
+        next.groupData.childIds = next.groupData.childIds
+          .map((childId) => idMap.get(childId))
+          .filter((childId): childId is string => Boolean(childId))
+      }
       next.zIndex = zIndexStart + index
       next.x += pasteOffset
       next.y += pasteOffset
@@ -674,7 +705,10 @@ export function CanvasViewport() {
     beginCommandBatch('Paste objects')
     clones.forEach((entry) => createObject(entry))
     commitCommandBatch()
-    selectObjects(clones.map((entry) => entry.id))
+    const selectedPastedRoots = clipboard.selectedRootIds
+      .map((rootId) => idMap.get(rootId))
+      .filter((id): id is string => Boolean(id))
+    selectObjects(selectedPastedRoots)
     clipboardRef.current = {
       ...clipboard,
       pasteCount: clipboard.pasteCount + 1,

@@ -88,7 +88,7 @@ Done criteria:
 - [x] Preserve relative positions for multi-object paste.
 - [x] Apply progressive `+20,+20` offset on repeated pastes.
 - [x] Reset paste offset sequence when user copies a different source selection.
-- [ ] Support copy/paste of groups with child id remapping.
+- [x] Support copy/paste of groups with child id remapping.
 - [ ] Implement duplicate/remove context actions.
 - [ ] Add drag-and-drop image import (`png`, `jpg`, `jpeg`, `gif`, `svg`).
 
