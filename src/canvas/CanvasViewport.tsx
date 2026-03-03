@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent,
-  type RefObject,
-  type WheelEvent,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import type { CanvasObject, ShapeData } from '../model'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
@@ -200,6 +192,47 @@ export function CanvasViewport() {
     }
   }
 
+  useEffect(() => {
+    const element = viewportRef.current
+    if (!element) {
+      return
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
+      const worldBefore = screenToWorld(pointerScreen, camera, viewportSize)
+
+      if (event.altKey) {
+        const rotationDelta = event.deltaY * 0.002
+        const nextRotation = camera.rotation + rotationDelta
+        const rotatedCamera = { ...camera, rotation: nextRotation }
+        const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewportSize)
+
+        setCamera({
+          ...rotatedCamera,
+          x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
+          y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
+        })
+        return
+      }
+
+      const zoomFactor = Math.exp(-event.deltaY * 0.0015)
+      const nextZoom = clamp(camera.zoom * zoomFactor, 0.1, 10)
+      const zoomedCamera = { ...camera, zoom: nextZoom }
+      const worldAfter = screenToWorld(pointerScreen, zoomedCamera, viewportSize)
+
+      setCamera({
+        ...zoomedCamera,
+        x: zoomedCamera.x + (worldBefore.x - worldAfter.x),
+        y: zoomedCamera.y + (worldBefore.y - worldAfter.y),
+      })
+    }
+
+    element.addEventListener('wheel', onWheel, { passive: false })
+    return () => element.removeEventListener('wheel', onWheel)
+  }, [camera, setCamera, viewportSize])
+
   function beginObjectInteraction(
     event: PointerEvent<HTMLElement>,
     object: CanvasObject,
@@ -344,37 +377,6 @@ export function CanvasViewport() {
     }
   }
 
-  function handleWheel(event: WheelEvent<HTMLDivElement>) {
-    event.preventDefault()
-    const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
-    const worldBefore = screenToWorld(pointerScreen, camera, viewportSize)
-
-    if (event.altKey) {
-      const rotationDelta = event.deltaY * 0.002
-      const nextRotation = camera.rotation + rotationDelta
-      const rotatedCamera = { ...camera, rotation: nextRotation }
-      const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewportSize)
-
-      setCamera({
-        ...rotatedCamera,
-        x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
-        y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
-      })
-      return
-    }
-
-    const zoomFactor = Math.exp(-event.deltaY * 0.0015)
-    const nextZoom = clamp(camera.zoom * zoomFactor, 0.1, 10)
-    const zoomedCamera = { ...camera, zoom: nextZoom }
-    const worldAfter = screenToWorld(pointerScreen, zoomedCamera, viewportSize)
-
-    setCamera({
-      ...zoomedCamera,
-      x: zoomedCamera.x + (worldBefore.x - worldAfter.x),
-      y: zoomedCamera.y + (worldBefore.y - worldAfter.y),
-    })
-  }
-
   return (
     <div
       ref={viewportRef}
@@ -383,7 +385,6 @@ export function CanvasViewport() {
       onPointerMove={handleViewportPointerMove}
       onPointerUp={handleViewportPointerUp}
       onPointerCancel={handleViewportPointerUp}
-      onWheel={handleWheel}
     >
       <svg
         width={viewportSize.width}
