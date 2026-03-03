@@ -34,6 +34,7 @@ export interface EditorActions {
   resetDocument: () => void
   selectObjects: (objectIds: string[]) => void
   clearSelection: () => void
+  selectSlide: (slideId: string | null) => void
   enterGroup: (groupId: string) => void
   exitGroup: () => void
   executeDocumentCommand: (command: Command<DocumentModel>) => void
@@ -55,6 +56,7 @@ export interface EditorActions {
   groupObjects: (objectIds: string[]) => void
   ungroupObjects: (objectIds: string[]) => void
   createSlide: (slide: Slide) => void
+  updateSlide: (slideId: string, next: Slide) => void
   deleteSlide: (slideId: string) => void
   reorderSlides: (orderedSlideIds: string[]) => void
 }

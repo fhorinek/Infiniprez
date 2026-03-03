@@ -52,7 +52,15 @@ import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
 import './App.css'
 
-function SortableSlideItem({ slide, isActive }: { slide: Slide; isActive: boolean }) {
+function SortableSlideItem({
+  slide,
+  isActive,
+  onClick,
+}: {
+  slide: Slide
+  isActive: boolean
+  onClick: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: slide.id,
   })
@@ -69,6 +77,7 @@ function SortableSlideItem({ slide, isActive }: { slide: Slide; isActive: boolea
       {...attributes}
       {...listeners}
       title="Drag to reorder"
+      onClick={onClick}
     >
       {slide.name || `Slide ${slide.orderIndex + 1}`}
     </li>
@@ -157,6 +166,10 @@ function App() {
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const enterGroup = useEditorStore((state) => state.enterGroup)
   const reorderSlides = useEditorStore((state) => state.reorderSlides)
+  const createSlide = useEditorStore((state) => state.createSlide)
+  const updateSlide = useEditorStore((state) => state.updateSlide)
+  const deleteSlide = useEditorStore((state) => state.deleteSlide)
+  const selectSlide = useEditorStore((state) => state.selectSlide)
   const selectedSlideId = useEditorStore((state) => state.ui.selectedSlideId)
 
   const selectedObject =
@@ -179,6 +192,7 @@ function App() {
   const canToggleGroupFromSelection = Boolean(selectedGroupObject && activeGroupId === null)
   const orderedSlides = [...document.slides].sort((a, b) => a.orderIndex - b.orderIndex)
   const activeSlideId = selectedSlideId ?? orderedSlides[0]?.id ?? null
+  const activeSlide = orderedSlides.find((slide) => slide.id === activeSlideId) ?? null
   const slideDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 4 },
@@ -339,6 +353,44 @@ function App() {
     reorderSlides(reordered.map((slide) => slide.id))
   }
 
+  function handleCreateSlide() {
+    const slide: Slide = {
+      id: createId(),
+      name: `Slide ${orderedSlides.length + 1}`,
+      x: camera.x,
+      y: camera.y,
+      zoom: camera.zoom,
+      rotation: camera.rotation,
+      triggerMode: 'manual',
+      triggerDelayMs: 0,
+      transitionType: 'ease',
+      transitionDurationMs: 2000,
+      orderIndex: orderedSlides.length,
+    }
+    createSlide(slide)
+    selectSlide(slide.id)
+  }
+
+  function handleUpdateSlideFromCamera() {
+    if (!activeSlide) {
+      return
+    }
+    updateSlide(activeSlide.id, {
+      ...activeSlide,
+      x: camera.x,
+      y: camera.y,
+      zoom: camera.zoom,
+      rotation: camera.rotation,
+    })
+  }
+
+  function handleDeleteActiveSlide() {
+    if (!activeSlide) {
+      return
+    }
+    deleteSlide(activeSlide.id)
+  }
+
   function handleSaveDocument() {
     const serialized = JSON.stringify(
       {
@@ -443,8 +495,8 @@ function App() {
               type="button"
               className="panel-icon-btn icon-btn"
               aria-label="Create slide"
-              title="Create slide (not implemented)"
-              disabled
+              title="Create slide from current camera"
+              onClick={handleCreateSlide}
             >
               <FontAwesomeIcon icon={faFileCirclePlus} />
             </button>
@@ -465,6 +517,7 @@ function App() {
                       key={slide.id}
                       slide={slide}
                       isActive={slide.id === activeSlideId}
+                      onClick={() => selectSlide(slide.id)}
                     />
                   ))}
                 </ol>
@@ -478,8 +531,9 @@ function App() {
               type="button"
               className="icon-btn"
               aria-label="Update slide"
-              title="Update slide (not implemented)"
-              disabled
+              title="Update selected slide from current camera"
+              disabled={!activeSlide}
+              onClick={handleUpdateSlideFromCamera}
             >
               <FontAwesomeIcon icon={faRotateLeft} />
             </button>
@@ -487,8 +541,9 @@ function App() {
               type="button"
               className="danger icon-btn"
               aria-label="Delete slide"
-              title="Delete slide (not implemented)"
-              disabled
+              title="Delete selected slide"
+              disabled={!activeSlide}
+              onClick={handleDeleteActiveSlide}
             >
               <FontAwesomeIcon icon={faTrashCan} />
             </button>

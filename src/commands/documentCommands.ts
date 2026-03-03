@@ -168,6 +168,38 @@ export function deleteSlideCommand(
   }
 }
 
+export function updateSlideCommand(
+  slideId: string,
+  before: Slide,
+  after: Slide
+): Command<DocumentModel> {
+  return {
+    label: 'Update slide',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.slides.find((entry) => entry.id === slideId)
+          if (!target) {
+            return
+          }
+
+          Object.assign(target, after)
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.slides.find((entry) => entry.id === slideId)
+          if (!target) {
+            return
+          }
+
+          Object.assign(target, before)
+        })
+      ),
+  }
+}
+
 function applySlideOrderSnapshot(draft: DocumentModel, snapshot: SlideOrderSnapshot) {
   if (Object.keys(snapshot).length === 0) {
     return

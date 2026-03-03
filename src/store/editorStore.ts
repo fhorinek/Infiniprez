@@ -16,6 +16,7 @@ import {
   setShapeOpacityCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
+  updateSlideCommand,
   ungroupObjectCommand,
   undoCommand,
   type Command,
@@ -228,6 +229,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       ui: {
         ...state.ui,
         selectedObjectIds: [],
+      },
+    })),
+
+  selectSlide: (slideId) =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        selectedSlideId: slideId,
       },
     })),
 
@@ -540,7 +550,17 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     get().executeDocumentCommand(command)
   },
 
+  updateSlide: (slideId, next) => {
+    const before = get().document.slides.find((entry) => entry.id === slideId)
+    if (!before) {
+      return
+    }
+    const command = updateSlideCommand(slideId, before, next)
+    get().executeDocumentCommand(command)
+  },
+
   deleteSlide: (slideId) => {
+    const selectedBefore = get().ui.selectedSlideId
     const removedIndex = get().document.slides.findIndex((entry) => entry.id === slideId)
     if (removedIndex < 0) {
       return
@@ -549,6 +569,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const removedSlide = get().document.slides[removedIndex]
     const command = deleteSlideCommand(slideId, removedSlide, removedIndex)
     get().executeDocumentCommand(command)
+
+    if (selectedBefore === slideId) {
+      const remainingSlides = [...get().document.slides].sort((a, b) => a.orderIndex - b.orderIndex)
+      const fallback =
+        remainingSlides[Math.min(removedIndex, Math.max(0, remainingSlides.length - 1))]?.id ?? null
+      get().selectSlide(fallback)
+    }
   },
 
   reorderSlides: (orderedSlideIds) => {

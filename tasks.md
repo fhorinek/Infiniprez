@@ -97,7 +97,7 @@ Done criteria:
 
 ## 8. Slide Management + Slide Parameters
 - [x] Build ordered slide list with drag-and-drop reorder.
-- [ ] Add slide create/update/delete from camera state.
+- [x] Add slide create/update/delete from camera state.
 - [ ] Add slide parameter table and two-way binding to selected slide.
 - [ ] Validate `triggerDelayMs` in `0..3600000`.
 - [ ] Validate `transitionDurationMs` in `1000..10000` when transition is not `instant`.
