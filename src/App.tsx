@@ -1,11 +1,7 @@
 import { useRef, type ChangeEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faArrowDown,
-  faArrowUp,
-  faArrowsDownToLine,
   faArrowsLeftRightToLine,
-  faArrowsUpToLine,
   faArrowsUpDownLeftRight,
   faCircle,
   faClock,
@@ -30,7 +26,6 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
 import {
-  canReorderLayer,
   deserializeDocument,
   serializeDocument,
   type CanvasObject,
@@ -91,6 +86,21 @@ function parseStoredFile(payload: string): { document: DocumentModel; camera: Ca
   }
 }
 
+function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasObject>): boolean {
+  let parentId = object.parentGroupId
+  while (parentId) {
+    const parent = objectById.get(parentId)
+    if (!parent || parent.type !== 'group') {
+      return false
+    }
+    if (parent.locked) {
+      return true
+    }
+    parentId = parent.parentGroupId
+  }
+  return false
+}
+
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
 
@@ -104,30 +114,28 @@ function App() {
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const createObject = useEditorStore((state) => state.createObject)
-  const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const enterGroup = useEditorStore((state) => state.enterGroup)
-  const exitGroup = useEditorStore((state) => state.exitGroup)
 
   const selectedObject =
     selectedObjectIds.length === 1
       ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
-  const hasSelection = selectedObjectIds.length > 0
+  const objectById = new Map(document.objects.map((object) => [object.id, object]))
   const selectedShapeObject =
     selectedObject &&
-    (selectedObject.type === 'shape_rect' ||
-      selectedObject.type === 'shape_circle' ||
-      selectedObject.type === 'shape_arrow')
+      (selectedObject.type === 'shape_rect' ||
+        selectedObject.type === 'shape_circle' ||
+        selectedObject.type === 'shape_arrow')
       ? selectedObject
       : null
   const selectedGroupObject =
     selectedObject && selectedObject.type === 'group' ? selectedObject : null
-  const canBringToFront = canReorderLayer(document.objects, selectedObjectIds, 'top')
-  const canBringForward = canReorderLayer(document.objects, selectedObjectIds, 'up')
-  const canSendBackward = canReorderLayer(document.objects, selectedObjectIds, 'down')
-  const canSendToBack = canReorderLayer(document.objects, selectedObjectIds, 'bottom')
+  const selectedObjectLockedByAncestor = selectedObject
+    ? hasLockedAncestor(selectedObject, objectById)
+    : false
+  const canToggleGroupFromSelection = Boolean(selectedGroupObject && activeGroupId === null)
 
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
@@ -213,7 +221,7 @@ function App() {
             assetId: '',
             intrinsicWidth: 1200,
             intrinsicHeight: 800,
-            keepAspectRatio: true,
+            keepAspectRatio: false,
           },
         })
         break
@@ -494,15 +502,45 @@ function App() {
                   </div>
                 </>
               )}
-              <button
-                type="button"
-                className="lock-toggle-btn icon-btn"
-                onClick={() => toggleObjectLock(selectedObject.id)}
-                aria-label={selectedObject.locked ? 'Unlock object' : 'Lock object'}
-                title={selectedObject.locked ? 'Unlock object' : 'Lock object'}
-              >
-                <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
-              </button>
+              <div className="selected-object-actions">
+                <button
+                  type="button"
+                  className="lock-toggle-btn icon-btn"
+                  onClick={() => toggleObjectLock(selectedObject.id)}
+                  aria-label={
+                    selectedObjectLockedByAncestor
+                      ? 'Object inherits lock from parent group'
+                      : selectedObject.locked
+                        ? 'Unlock object'
+                        : 'Lock object'
+                  }
+                  title={
+                    selectedObjectLockedByAncestor
+                      ? 'Unlock parent group to modify this object'
+                      : selectedObject.locked
+                        ? 'Unlock object'
+                        : 'Lock object'
+                  }
+                  disabled={selectedObjectLockedByAncestor}
+                >
+                  <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
+                </button>
+                {canToggleGroupFromSelection && (
+                  <button
+                    type="button"
+                    className="lock-toggle-btn icon-btn"
+                    onClick={() => {
+                      if (selectedGroupObject) {
+                        enterGroup(selectedGroupObject.id)
+                      }
+                    }}
+                    aria-label="Enter group"
+                    title="Enter group"
+                  >
+                    <FontAwesomeIcon icon={faLayerGroup} />
+                  </button>
+                )}
+              </div>
             </div>
           ) : selectedObjectIds.length > 1 ? (
             <p className="panel-empty">
@@ -511,86 +549,11 @@ function App() {
           ) : (
             <p className="panel-empty">Select one object to view transform properties.</p>
           )}
-          <div className="inline-actions layer-actions">
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Bring to front"
-              title="Bring to front"
-              disabled={!hasSelection || !canBringToFront}
-              onClick={() => reorderObjectsLayer(selectedObjectIds, 'top')}
-            >
-              <FontAwesomeIcon icon={faArrowsUpToLine} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Bring forward"
-              title="Bring forward"
-              disabled={!hasSelection || !canBringForward}
-              onClick={() => reorderObjectsLayer(selectedObjectIds, 'up')}
-            >
-              <FontAwesomeIcon icon={faArrowUp} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Send backward"
-              title="Send backward"
-              disabled={!hasSelection || !canSendBackward}
-              onClick={() => reorderObjectsLayer(selectedObjectIds, 'down')}
-            >
-              <FontAwesomeIcon icon={faArrowDown} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Send to back"
-              title="Send to back"
-              disabled={!hasSelection || !canSendToBack}
-              onClick={() => reorderObjectsLayer(selectedObjectIds, 'bottom')}
-            >
-              <FontAwesomeIcon icon={faArrowsDownToLine} />
-            </button>
-          </div>
         </section>
       </aside>
 
       <main className="canvas-area">
         <div className="canvas-toolbar">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Enter group"
-            title={selectedGroupObject ? 'Enter group' : 'Select one group to enter'}
-            onClick={() => {
-              if (selectedGroupObject) {
-                enterGroup(selectedGroupObject.id)
-              }
-            }}
-            disabled={!selectedGroupObject}
-          >
-            <FontAwesomeIcon icon={faLayerGroup} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Exit group"
-            title={activeGroupId ? 'Exit group' : 'Not inside a group'}
-            onClick={exitGroup}
-            disabled={!activeGroupId}
-          >
-            <FontAwesomeIcon icon={faObjectUngroup} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="New document"
-            title="New document"
-            onClick={handleNewDocument}
-          >
-            <FontAwesomeIcon icon={faFileCirclePlus} />
-          </button>
           <button
             type="button"
             className="icon-btn"

@@ -123,6 +123,8 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   'image/svg+xml',
 ])
 
+const DOUBLE_CLICK_MS = 500
+
 function useViewportSize(ref: RefObject<HTMLElement>) {
   const [size, setSize] = useState<ViewportSize>({ width: 1, height: 1 })
 
@@ -411,6 +413,64 @@ function getObjectEdgeSnapOffset(
   }
 }
 
+function isPointInsideObjectRect(pointWorld: Point, object: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>): boolean {
+  const local = rotatePoint(
+    {
+      x: pointWorld.x - object.x,
+      y: pointWorld.y - object.y,
+    },
+    -object.rotation
+  )
+
+  return Math.abs(local.x) <= object.w / 2 && Math.abs(local.y) <= object.h / 2
+}
+
+function collectGroupTransformTargets(
+  rootGroup: Extract<CanvasObject, { type: 'group' }>,
+  objectById: Map<string, CanvasObject>
+): CanvasObject[] {
+  const resolvedIds = new Set<string>([rootGroup.id])
+  const stack = [...rootGroup.groupData.childIds]
+
+  while (stack.length > 0) {
+    const nextId = stack.pop()
+    if (!nextId || resolvedIds.has(nextId)) {
+      continue
+    }
+    resolvedIds.add(nextId)
+    const nextObject = objectById.get(nextId)
+    if (nextObject?.type === 'group') {
+      stack.push(...nextObject.groupData.childIds)
+    }
+  }
+
+  return [...resolvedIds]
+    .map((id) => objectById.get(id))
+    .filter((entry): entry is CanvasObject => Boolean(entry))
+}
+
+function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasObject>): boolean {
+  let parentId = object.parentGroupId
+  while (parentId) {
+    const parent = objectById.get(parentId)
+    if (!parent || parent.type !== 'group') {
+      return false
+    }
+    if (parent.locked) {
+      return true
+    }
+    parentId = parent.parentGroupId
+  }
+  return false
+}
+
+function isObjectEffectivelyLocked(
+  object: CanvasObject,
+  objectById: Map<string, CanvasObject>
+): boolean {
+  return object.locked || hasLockedAncestor(object, objectById)
+}
+
 function createId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -453,6 +513,7 @@ export function CanvasViewport() {
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
   const clipboardRef = useRef<ClipboardState | null>(null)
+  const lastPointerDownRef = useRef<{ enterGroupId: string | null; timestampMs: number } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
@@ -461,6 +522,7 @@ export function CanvasViewport() {
   const setCamera = useEditorStore((state) => state.setCamera)
   const canvasSettings = useEditorStore((state) => state.document.canvas)
   const objects = useEditorStore((state) => state.document.objects)
+  const assets = useEditorStore((state) => state.document.assets)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
@@ -480,25 +542,44 @@ export function CanvasViewport() {
 
   const viewportSize = useViewportSize(viewportRef)
   const orderedObjects = useMemo(() => [...objects].sort((a, b) => a.zIndex - b.zIndex), [objects])
+  const objectById = useMemo(() => new Map(objects.map((object) => [object.id, object])), [objects])
+  const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
   const editableObjects = useMemo(() => {
-    if (!activeGroupId) {
+    if (activeGroupId === null) {
+      return orderedObjects.filter((object) => object.parentGroupId === null)
+    }
+    if (!objectById.has(activeGroupId)) {
       return orderedObjects
     }
     return orderedObjects.filter((object) => object.parentGroupId === activeGroupId)
-  }, [activeGroupId, orderedObjects])
+  }, [activeGroupId, objectById, orderedObjects])
   const selectedObject =
     selectedObjectIds.length === 1
-      ? (orderedObjects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
+      ? (editableObjects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
+  const activeGroupObject =
+    activeGroupId && objectById.get(activeGroupId)?.type === 'group'
+      ? (objectById.get(activeGroupId) ?? null)
+      : null
+  const selectedObjectLockedByAncestor = selectedObject
+    ? hasLockedAncestor(selectedObject, objectById)
+    : false
+  const canToggleGroupFromSelection = Boolean(
+    selectedObject?.type === 'group' && activeGroupId === null
+  )
   const selectedObjects = useMemo(() => {
     const selectedSet = new Set(selectedObjectIds)
     return editableObjects.filter((object) => selectedSet.has(object.id))
   }, [editableObjects, selectedObjectIds])
+  const editableObjectIds = useMemo(
+    () => new Set(editableObjects.map((object) => object.id)),
+    [editableObjects]
+  )
   const selectedGroup =
     selectedObjects.length === 1 && selectedObjects[0]?.type === 'group' ? selectedObjects[0] : null
   const selectedUnlockedObjects = useMemo(
-    () => selectedObjects.filter((object) => !object.locked),
-    [selectedObjects]
+    () => selectedObjects.filter((object) => !isObjectEffectivelyLocked(object, objectById)),
+    [objectById, selectedObjects]
   )
   const selectedUnlockedIds = useMemo(
     () => selectedUnlockedObjects.map((object) => object.id),
@@ -613,6 +694,22 @@ export function CanvasViewport() {
       const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
       const worldBefore = screenToWorld(pointerScreen, camera, viewportSize)
 
+      if (
+        event.shiftKey &&
+        selectedObject &&
+        !isObjectEffectivelyLocked(selectedObject, objectById)
+      ) {
+        const rotationDelta = event.deltaY * 0.002
+        moveObject(selectedObject.id, {
+          x: selectedObject.x,
+          y: selectedObject.y,
+          w: selectedObject.w,
+          h: selectedObject.h,
+          rotation: selectedObject.rotation + rotationDelta,
+        })
+        return
+      }
+
       if (event.altKey) {
         const rotationDelta = event.deltaY * 0.002
         const nextRotation = camera.rotation + rotationDelta
@@ -641,7 +738,7 @@ export function CanvasViewport() {
 
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => element.removeEventListener('wheel', onWheel)
-  }, [camera, setCamera, viewportSize])
+  }, [camera, moveObject, objectById, selectedObject, setCamera, viewportSize])
 
   const contextSelectionIds = contextMenu?.selectionIds ?? selectedObjectIds
   const contextSelectionObjects = useMemo(() => {
@@ -649,8 +746,11 @@ export function CanvasViewport() {
     return editableObjects.filter((object) => selectedSet.has(object.id))
   }, [contextSelectionIds, editableObjects])
   const contextUnlockedIds = useMemo(
-    () => contextSelectionObjects.filter((object) => !object.locked).map((object) => object.id),
-    [contextSelectionObjects]
+    () =>
+      contextSelectionObjects
+        .filter((object) => !isObjectEffectivelyLocked(object, objectById))
+        .map((object) => object.id),
+    [contextSelectionObjects, objectById]
   )
 
   const canBringToFront = canReorderLayer(objects, contextSelectionIds, 'top')
@@ -660,7 +760,10 @@ export function CanvasViewport() {
   const canGroup =
     contextSelectionObjects.length > 1 &&
     contextSelectionObjects.every(
-      (object) => object.parentGroupId === null && object.type !== 'group'
+      (object) =>
+        object.parentGroupId === null &&
+        object.type !== 'group' &&
+        !isObjectEffectivelyLocked(object, objectById)
     )
   const canUngroup =
     contextSelectionObjects.length === 1 && contextSelectionObjects[0]?.type === 'group'
@@ -818,7 +921,7 @@ export function CanvasViewport() {
             assetId: asset.id,
             intrinsicWidth: dimensions.width,
             intrinsicHeight: dimensions.height,
-            keepAspectRatio: true,
+            keepAspectRatio: false,
           },
         })
         createdIds.push(objectId)
@@ -899,14 +1002,25 @@ export function CanvasViewport() {
     targets: CanvasObject[],
     mode: ObjectInteraction['mode']
   ) {
-    const unlockedTargets = targets.filter((target) => !target.locked)
-    if (unlockedTargets.length === 0) {
+    const rootGroup =
+      activeGroupId === null && targets.length === 1 && targets[0]?.type === 'group'
+        ? targets[0]
+        : null
+    const resolvedTargets = rootGroup
+      ? collectGroupTransformTargets(rootGroup, objectById)
+      : targets
+    const interactionTargets = rootGroup
+      ? rootGroup.locked
+        ? []
+        : resolvedTargets
+      : resolvedTargets.filter((target) => !isObjectEffectivelyLocked(target, objectById))
+    if (interactionTargets.length === 0) {
       return
     }
 
-    const interactionSelectionKey = getSelectionKey(unlockedTargets.map((target) => target.id))
+    const interactionSelectionKey = getSelectionKey(interactionTargets.map((target) => target.id))
     const frameStart =
-      unlockedTargets.length > 1 && multiSelectionFrame?.selectionKey === interactionSelectionKey
+      interactionTargets.length > 1 && multiSelectionFrame?.selectionKey === interactionSelectionKey
         ? multiSelectionFrame
         : null
 
@@ -917,7 +1031,7 @@ export function CanvasViewport() {
           maxX: frameStart.center.x + frameStart.width / 2,
           maxY: frameStart.center.y + frameStart.height / 2,
         }
-      : getObjectsWorldAabb(unlockedTargets)
+      : getObjectsWorldAabb(interactionTargets)
     if (!selectionBoundsStart) {
       return
     }
@@ -933,10 +1047,10 @@ export function CanvasViewport() {
       pointerScreen.x - centerScreenStart.x
     )
 
-    beginCommandBatch(unlockedTargets.length > 1 ? 'Objects transform' : 'Object transform')
+    beginCommandBatch(interactionTargets.length > 1 ? 'Objects transform' : 'Object transform')
     objectInteractionRef.current = {
       pointerId: event.pointerId,
-      targets: unlockedTargets.map((target) => ({
+      targets: interactionTargets.map((target) => ({
         id: target.id,
         start: {
           x: target.x,
@@ -1192,6 +1306,23 @@ export function CanvasViewport() {
   function handleViewportPointerDown(event: PointerEvent<HTMLDivElement>) {
     closeContextMenu()
 
+    if (
+      event.button === 1 &&
+      event.shiftKey &&
+      selectedObject &&
+      !isObjectEffectivelyLocked(selectedObject, objectById)
+    ) {
+      event.preventDefault()
+      moveObject(selectedObject.id, {
+        x: selectedObject.x,
+        y: selectedObject.y,
+        w: selectedObject.w,
+        h: selectedObject.h,
+        rotation: -camera.rotation,
+      })
+      return
+    }
+
     if (event.button === 0 && event.shiftKey) {
       event.preventDefault()
       const start = getViewportRelativePoint(event.clientX, event.clientY)
@@ -1298,6 +1429,18 @@ export function CanvasViewport() {
       onPointerMove={handleViewportPointerMove}
       onPointerUp={handleViewportPointerUp}
       onPointerCancel={handleViewportPointerUp}
+      onDoubleClick={(event) => {
+        if (!activeGroupObject) {
+          return
+        }
+
+        const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
+        const pointerWorld = screenToWorld(pointerScreen, camera, viewportSize)
+        if (!isPointInsideObjectRect(pointerWorld, activeGroupObject)) {
+          event.preventDefault()
+          exitGroup()
+        }
+      }}
       onContextMenu={(event) => {
         if (event.target === event.currentTarget) {
           event.preventDefault()
@@ -1355,11 +1498,15 @@ export function CanvasViewport() {
       </svg>
 
       <div className="objects-layer">
-        {editableObjects.map((object) => {
+        {orderedObjects.map((object) => {
           const center = worldToScreen({ x: object.x, y: object.y }, camera, viewportSize)
           const widthPx = object.w * camera.zoom
           const heightPx = object.h * camera.zoom
           const isSelected = selectedObjectIds.includes(object.id)
+          const isEditable = editableObjectIds.has(object.id)
+          const isActiveGroupShell = activeGroupId !== null && object.id === activeGroupId
+          const canEnterViaChildDoubleClick =
+            activeGroupId === null && !isEditable && object.parentGroupId !== null
 
           const baseStyle = {
             left: center.x - widthPx / 2,
@@ -1374,6 +1521,9 @@ export function CanvasViewport() {
             object.type,
             isSelected ? 'selected' : '',
             object.locked ? 'locked' : '',
+            isEditable ? '' : 'inactive',
+            canEnterViaChildDoubleClick ? 'enterable-child' : '',
+            isActiveGroupShell ? 'active-group-shell' : '',
           ]
             .filter(Boolean)
             .join(' ')
@@ -1391,6 +1541,10 @@ export function CanvasViewport() {
                   borderRadius: object.type === 'shape_circle' ? '9999px' : undefined,
                 }
               : {}
+          const imageAsset = object.type === 'image' ? assetById.get(object.imageData.assetId) : null
+          const imageSrc = imageAsset
+            ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
+            : null
 
           return (
             <div
@@ -1398,6 +1552,35 @@ export function CanvasViewport() {
               className={objectClasses}
               style={{ ...baseStyle, ...shapeStyle }}
               onPointerDown={(event) => {
+                const nowMs = performance.now()
+                const enterGroupId =
+                  activeGroupId === null
+                    ? object.type === 'group'
+                      ? object.id
+                      : object.parentGroupId
+                    : null
+                const isRapidRepeatForGroupEntry =
+                  enterGroupId !== null &&
+                  lastPointerDownRef.current?.enterGroupId === enterGroupId &&
+                  nowMs - lastPointerDownRef.current.timestampMs <= DOUBLE_CLICK_MS
+                lastPointerDownRef.current = {
+                  enterGroupId,
+                  timestampMs: nowMs,
+                }
+
+                if (isRapidRepeatForGroupEntry && enterGroupId) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  selectObjects([enterGroupId])
+                  enterGroup(enterGroupId)
+                  return
+                }
+
+                if (!isEditable) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 if (event.button !== 0) {
                   return
                 }
@@ -1429,6 +1612,11 @@ export function CanvasViewport() {
                 beginObjectInteraction(event, [object], 'move')
               }}
               onContextMenu={(event) => {
+                if (!isEditable) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 event.preventDefault()
                 event.stopPropagation()
                 const pointer = getViewportRelativePoint(event.clientX, event.clientY)
@@ -1445,6 +1633,11 @@ export function CanvasViewport() {
                 })
               }}
               onDoubleClick={(event) => {
+                if (!isEditable) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 if (object.type !== 'group') {
                   return
                 }
@@ -1464,13 +1657,58 @@ export function CanvasViewport() {
                   <line x1="0" y1="10" x2="88" y2="10" />
                   <polygon points="88,3 100,10 88,17" />
                 </svg>
-              ) : (
+              ) : object.type === 'image' ? (
+                imageSrc ? (
+                  <img
+                    src={imageSrc}
+                    alt=""
+                    draggable={false}
+                    style={{ objectFit: 'fill' }}
+                  />
+                ) : (
+                  <span>Image</span>
+                )
+              ) : object.type === 'group' ? null : (
                 <span>{getObjectLabel(object)}</span>
               )}
             </div>
           )
         })}
       </div>
+
+      {activeGroupObject && (
+        <div
+          className="active-group-exit-anchor"
+          style={{
+            left:
+              worldToScreen({ x: activeGroupObject.x, y: activeGroupObject.y }, camera, viewportSize).x -
+              (activeGroupObject.w * camera.zoom) / 2,
+            top:
+              worldToScreen({ x: activeGroupObject.x, y: activeGroupObject.y }, camera, viewportSize).y -
+              (activeGroupObject.h * camera.zoom) / 2,
+            width: activeGroupObject.w * camera.zoom,
+            height: activeGroupObject.h * camera.zoom,
+            transform: `rotate(${activeGroupObject.rotation + camera.rotation}rad)`,
+          }}
+        >
+          <button
+            type="button"
+            className="active-group-exit-handle"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onClick={(event) => {
+              event.stopPropagation()
+              exitGroup()
+            }}
+            aria-label="Exit group"
+            title="Exit group"
+          >
+            <FontAwesomeIcon icon={faObjectUngroup} />
+          </button>
+        </div>
+      )}
 
       {marqueeRect && (
         <div
@@ -1526,20 +1764,56 @@ export function CanvasViewport() {
 
           <button
             type="button"
-            className="lock-handle"
+            className={`lock-handle ${canToggleGroupFromSelection ? 'with-group' : ''}`}
             onPointerDown={(event) => {
               event.preventDefault()
               event.stopPropagation()
             }}
             onClick={(event) => {
               event.stopPropagation()
+              if (selectedObjectLockedByAncestor) {
+                return
+              }
               toggleObjectLock(selectedObject.id)
             }}
-            aria-label={selectedObject.locked ? 'Unlock object' : 'Lock object'}
-            title={selectedObject.locked ? 'Unlock object' : 'Lock object'}
+            aria-label={
+              selectedObjectLockedByAncestor
+                ? 'Object inherits lock from parent group'
+                : selectedObject.locked
+                  ? 'Unlock object'
+                  : 'Lock object'
+            }
+            title={
+              selectedObjectLockedByAncestor
+                ? 'Unlock parent group to modify this object'
+                : selectedObject.locked
+                  ? 'Unlock object'
+                  : 'Lock object'
+            }
+            disabled={selectedObjectLockedByAncestor}
           >
             <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
           </button>
+          {canToggleGroupFromSelection && (
+            <button
+              type="button"
+              className="group-handle"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (selectedObject.type === 'group') {
+                  enterGroup(selectedObject.id)
+                }
+              }}
+              aria-label="Enter group"
+              title="Enter group"
+            >
+              <FontAwesomeIcon icon={faLayerGroup} />
+            </button>
+          )}
         </div>
       )}
 

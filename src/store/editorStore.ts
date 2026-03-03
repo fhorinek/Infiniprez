@@ -108,6 +108,81 @@ function getObjectWorldAabb(object: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | '
   }
 }
 
+type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+
+function hasTransformChanged(before: TransformSnapshot, after: TransformSnapshot): boolean {
+  return (
+    before.x !== after.x ||
+    before.y !== after.y ||
+    before.w !== after.w ||
+    before.h !== after.h ||
+    before.rotation !== after.rotation
+  )
+}
+
+function getTransformSnapshot(object: CanvasObject): TransformSnapshot {
+  return {
+    x: object.x,
+    y: object.y,
+    w: object.w,
+    h: object.h,
+    rotation: object.rotation,
+  }
+}
+
+function getContentBoundsForGroup(
+  group: Extract<CanvasObject, { type: 'group' }>,
+  objectById: Map<string, CanvasObject>,
+  transforms: Map<string, TransformSnapshot>
+): ReturnType<typeof getObjectWorldAabb> | null {
+  const seen = new Set<string>()
+  const stack = [...group.groupData.childIds]
+  const leafBounds: Array<ReturnType<typeof getObjectWorldAabb>> = []
+
+  while (stack.length > 0) {
+    const nextId = stack.pop()
+    if (!nextId || seen.has(nextId)) {
+      continue
+    }
+    seen.add(nextId)
+
+    const object = objectById.get(nextId)
+    if (!object) {
+      continue
+    }
+
+    if (object.type === 'group') {
+      stack.push(...object.groupData.childIds)
+      continue
+    }
+
+    const transform = transforms.get(object.id)
+    if (!transform) {
+      continue
+    }
+    leafBounds.push(getObjectWorldAabb(transform))
+  }
+
+  if (leafBounds.length === 0) {
+    return null
+  }
+
+  return leafBounds.reduce(
+    (acc, bounds) => ({
+      minX: Math.min(acc.minX, bounds.minX),
+      minY: Math.min(acc.minY, bounds.minY),
+      maxX: Math.max(acc.maxX, bounds.maxX),
+      maxY: Math.max(acc.maxY, bounds.maxY),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    }
+  )
+}
+
 export const useEditorStore = create<EditorStore>((set, get) => ({
   ...createInitialState(),
 
@@ -245,21 +320,70 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   moveObject: (objectId, next) => {
-    const target = get().document.objects.find((entry) => entry.id === objectId)
+    const objects = get().document.objects
+    const selectedIds = new Set(get().ui.selectedObjectIds)
+    const objectById = new Map(objects.map((entry) => [entry.id, entry]))
+    const target = objectById.get(objectId)
     if (!target) {
       return
     }
 
-    const before: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'> = {
-      x: target.x,
-      y: target.y,
-      w: target.w,
-      h: target.h,
-      rotation: target.rotation,
+    const currentTransforms = new Map<string, TransformSnapshot>(
+      objects.map((entry) => [entry.id, getTransformSnapshot(entry)])
+    )
+    currentTransforms.set(objectId, next)
+
+    const commandEntries: Array<{ id: string; before: TransformSnapshot; after: TransformSnapshot }> =
+      []
+    const movedBefore = getTransformSnapshot(target)
+    if (hasTransformChanged(movedBefore, next)) {
+      commandEntries.push({ id: objectId, before: movedBefore, after: next })
     }
 
-    const command = moveObjectCommand(objectId, before, next)
-    get().executeDocumentCommand(command)
+    const ancestorIds: string[] = []
+    let ancestorId = target.parentGroupId
+    while (ancestorId) {
+      const candidate = objectById.get(ancestorId)
+      if (!candidate || candidate.type !== 'group') {
+        break
+      }
+      ancestorIds.push(ancestorId)
+      ancestorId = candidate.parentGroupId
+    }
+
+    for (const groupId of ancestorIds) {
+      if (selectedIds.has(groupId)) {
+        continue
+      }
+      const group = objectById.get(groupId)
+      if (!group || group.type !== 'group') {
+        continue
+      }
+
+      const aggregate = getContentBoundsForGroup(group, objectById, currentTransforms)
+      if (!aggregate) {
+        continue
+      }
+
+      const before = getTransformSnapshot(group)
+      const after: TransformSnapshot = {
+        x: (aggregate.minX + aggregate.maxX) / 2,
+        y: (aggregate.minY + aggregate.maxY) / 2,
+        w: Math.max(20, aggregate.maxX - aggregate.minX),
+        h: Math.max(20, aggregate.maxY - aggregate.minY),
+        rotation: currentTransforms.get(groupId)?.rotation ?? group.rotation,
+      }
+
+      currentTransforms.set(groupId, after)
+      if (hasTransformChanged(before, after)) {
+        commandEntries.push({ id: groupId, before, after })
+      }
+    }
+
+    for (const entry of commandEntries) {
+      const command = moveObjectCommand(entry.id, entry.before, entry.after)
+      get().executeDocumentCommand(command)
+    }
   },
 
   deleteObjects: (objectIds) => {
