@@ -19,7 +19,6 @@ import {
   faArrowsLeftRightToLine,
   faArrowsUpDownLeftRight,
   faCircle,
-  faClock,
   faCopy,
   faCropSimple,
   faDownload,
@@ -391,6 +390,24 @@ function App() {
     deleteSlide(activeSlide.id)
   }
 
+  function updateActiveSlide(patch: Partial<Slide>) {
+    if (!activeSlide) {
+      return
+    }
+    updateSlide(activeSlide.id, {
+      ...activeSlide,
+      ...patch,
+    })
+  }
+
+  function parseNumberInput(value: string): number | null {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) {
+      return null
+    }
+    return parsed
+  }
+
   function handleSaveDocument() {
     const serialized = JSON.stringify(
       {
@@ -552,32 +569,165 @@ function App() {
 
         <section className="panel">
           <h2>Slide Parameters</h2>
-          <table className="property-table" aria-label="Slide parameters">
-            <tbody>
-              <tr>
-                <td>Name</td>
-                <td>Intro Shot</td>
-              </tr>
-              <tr>
-                <td>X / Y</td>
-                <td>120 / 80</td>
-              </tr>
-              <tr>
-                <td>Zoom</td>
-                <td>1.25</td>
-              </tr>
-              <tr>
-                <td>Rotation</td>
-                <td>12</td>
-              </tr>
-              <tr>
-                <td>Trigger</td>
-                <td>
-                  <FontAwesomeIcon icon={faClock} /> timed
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          {activeSlide ? (
+            <table className="property-table slide-params-table" aria-label="Slide parameters">
+              <tbody>
+                <tr>
+                  <td>Name</td>
+                  <td>
+                    <input
+                      type="text"
+                      value={activeSlide.name}
+                      onChange={(event) => updateActiveSlide({ name: event.target.value })}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>X</td>
+                  <td>
+                    <input
+                      type="number"
+                      step={1}
+                      value={activeSlide.x}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateActiveSlide({ x: parsed })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Y</td>
+                  <td>
+                    <input
+                      type="number"
+                      step={1}
+                      value={activeSlide.y}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateActiveSlide({ y: parsed })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Zoom</td>
+                  <td>
+                    <input
+                      type="number"
+                      step={0.05}
+                      min={0.1}
+                      value={activeSlide.zoom}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateActiveSlide({ zoom: Math.max(0.1, parsed) })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Rotation</td>
+                  <td>
+                    <input
+                      type="number"
+                      step={0.01}
+                      value={activeSlide.rotation}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateActiveSlide({ rotation: parsed })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Trigger</td>
+                  <td>
+                    <select
+                      value={activeSlide.triggerMode}
+                      onChange={(event) =>
+                        updateActiveSlide({
+                          triggerMode: event.target.value as Slide['triggerMode'],
+                        })
+                      }
+                    >
+                      <option value="manual">manual</option>
+                      <option value="timed">timed</option>
+                    </select>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Trigger Delay (ms)</td>
+                  <td>
+                    <input
+                      type="number"
+                      min={0}
+                      max={3_600_000}
+                      step={100}
+                      value={activeSlide.triggerDelayMs}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateActiveSlide({
+                            triggerDelayMs: Math.min(3_600_000, Math.max(0, Math.round(parsed))),
+                          })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Transition</td>
+                  <td>
+                    <select
+                      value={activeSlide.transitionType}
+                      onChange={(event) =>
+                        updateActiveSlide({
+                          transitionType: event.target.value as Slide['transitionType'],
+                        })
+                      }
+                    >
+                      <option value="ease">ease</option>
+                      <option value="linear">linear</option>
+                      <option value="instant">instant</option>
+                    </select>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Duration (ms)</td>
+                  <td>
+                    <input
+                      type="number"
+                      min={activeSlide.transitionType === 'instant' ? 0 : 1000}
+                      max={10_000}
+                      step={100}
+                      value={activeSlide.transitionDurationMs}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          const rounded = Math.round(parsed)
+                          const clamped =
+                            activeSlide.transitionType === 'instant'
+                              ? Math.min(10_000, Math.max(0, rounded))
+                              : Math.min(10_000, Math.max(1_000, rounded))
+                          updateActiveSlide({ transitionDurationMs: clamped })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          ) : (
+            <p className="panel-empty">Create or select a slide to edit parameters.</p>
+          )}
         </section>
 
         <section className="panel">

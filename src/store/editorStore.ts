@@ -27,6 +27,7 @@ import {
   type Asset,
   type CanvasObject,
   type DocumentModel,
+  type Slide,
 } from '../model'
 import type { CameraState, EditorState, EditorStore, UiState } from './types'
 
@@ -107,6 +108,30 @@ function getObjectWorldAabb(object: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | '
     minY: Math.min(...corners.map((point) => point.y)),
     maxX: Math.max(...corners.map((point) => point.x)),
     maxY: Math.max(...corners.map((point) => point.y)),
+  }
+}
+
+function clampSlideTriggerDelay(value: number) {
+  const rounded = Math.round(value)
+  return Math.min(3_600_000, Math.max(0, rounded))
+}
+
+function clampSlideTransitionDuration(value: number, transitionType: Slide['transitionType']) {
+  const rounded = Math.round(value)
+  if (transitionType === 'instant') {
+    return Math.min(10_000, Math.max(0, rounded))
+  }
+  return Math.min(10_000, Math.max(1_000, rounded))
+}
+
+function normalizeSlideForStore(slide: Slide): Slide {
+  return {
+    ...slide,
+    triggerDelayMs: clampSlideTriggerDelay(slide.triggerDelayMs),
+    transitionDurationMs: clampSlideTransitionDuration(
+      slide.transitionDurationMs,
+      slide.transitionType
+    ),
   }
 }
 
@@ -546,7 +571,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   createSlide: (slide) => {
-    const command = createSlideCommand(slide)
+    const command = createSlideCommand(normalizeSlideForStore(slide))
     get().executeDocumentCommand(command)
   },
 
@@ -555,7 +580,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (!before) {
       return
     }
-    const command = updateSlideCommand(slideId, before, next)
+    const normalizedNext = normalizeSlideForStore({
+      ...next,
+      id: slideId,
+    })
+    const command = updateSlideCommand(slideId, before, normalizedNext)
     get().executeDocumentCommand(command)
   },
 

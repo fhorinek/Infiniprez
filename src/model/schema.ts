@@ -119,19 +119,32 @@ const groupObjectSchema = baseObjectSchema.extend({
   groupData: groupDataSchema,
 })
 
-const slideSchema = z.object({
-  id: idSchema,
-  name: nonEmptyStringSchema,
-  x: z.number(),
-  y: z.number(),
-  zoom: z.number().positive(),
-  rotation: z.number(),
-  triggerMode: z.enum(['manual', 'timed']),
-  triggerDelayMs: z.number().int().min(0).max(3_600_000),
-  transitionType: z.enum(['ease', 'linear', 'instant']),
-  transitionDurationMs: z.number().int().min(1_000).max(10_000),
-  orderIndex: z.number().int().nonnegative(),
-})
+const slideSchema = z
+  .object({
+    id: idSchema,
+    name: nonEmptyStringSchema,
+    x: z.number(),
+    y: z.number(),
+    zoom: z.number().positive(),
+    rotation: z.number(),
+    triggerMode: z.enum(['manual', 'timed']),
+    triggerDelayMs: z.number().int().min(0).max(3_600_000),
+    transitionType: z.enum(['ease', 'linear', 'instant']),
+    transitionDurationMs: z.number().int().min(0).max(10_000),
+    orderIndex: z.number().int().nonnegative(),
+  })
+  .superRefine((slide, ctx) => {
+    if (
+      slide.transitionType !== 'instant' &&
+      (slide.transitionDurationMs < 1_000 || slide.transitionDurationMs > 10_000)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['transitionDurationMs'],
+        message: 'transitionDurationMs must be in 1000..10000 when transitionType is not instant',
+      })
+    }
+  })
 
 const assetSchema = z.object({
   id: idSchema,

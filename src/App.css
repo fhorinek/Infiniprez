@@ -119,6 +119,12 @@ button:disabled {
   padding: 0.35rem 0.2rem;
 }
 
+.slide-params-table input,
+.slide-params-table select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .property-list {
   margin: 0;
   padding: 0 0 0 1.1rem;

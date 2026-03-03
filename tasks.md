@@ -98,10 +98,10 @@ Done criteria:
 ## 8. Slide Management + Slide Parameters
 - [x] Build ordered slide list with drag-and-drop reorder.
 - [x] Add slide create/update/delete from camera state.
-- [ ] Add slide parameter table and two-way binding to selected slide.
-- [ ] Validate `triggerDelayMs` in `0..3600000`.
-- [ ] Validate `transitionDurationMs` in `1000..10000` when transition is not `instant`.
-- [ ] Treat `transitionType = ease` as fixed `easeInOutCubic` (no curve selector in MVP).
+- [x] Add slide parameter table and two-way binding to selected slide.
+- [x] Validate `triggerDelayMs` in `0..3600000`.
+- [x] Validate `transitionDurationMs` in `1000..10000` when transition is not `instant`.
+- [x] Treat `transitionType = ease` as fixed `easeInOutCubic` (no curve selector in MVP).
 
 Done criteria:
 - Slide order and parameters persist correctly after edits and reload.
