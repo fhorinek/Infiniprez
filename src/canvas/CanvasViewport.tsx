@@ -53,6 +53,7 @@ interface ObjectInteraction {
   cameraStart: CameraState
   centerStart: Point
   selectionBoundsStart: Rect
+  selectionFrameStart: SelectionFrameState | null
   centerScreenStart: Point
   startPointerAngle: number
 }
@@ -69,6 +70,17 @@ interface Rect {
   minY: number
   maxX: number
   maxY: number
+}
+
+interface SelectionFrame {
+  center: Point
+  width: number
+  height: number
+  rotation: number
+}
+
+interface SelectionFrameState extends SelectionFrame {
+  selectionKey: string
 }
 
 interface ContextMenuState {
@@ -267,6 +279,10 @@ function intersectsRect(a: Rect, b: Rect): boolean {
   return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY)
 }
 
+function getSelectionKey(ids: string[]): string {
+  return [...ids].sort().join('|')
+}
+
 export function CanvasViewport() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<PanInteraction | null>(null)
@@ -274,6 +290,7 @@ export function CanvasViewport() {
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -307,12 +324,47 @@ export function CanvasViewport() {
     () => selectedUnlockedObjects.map((object) => object.id),
     [selectedUnlockedObjects]
   )
-  const multiSelectionBounds = useMemo(() => {
+  const selectedUnlockedIdsKey = useMemo(
+    () => getSelectionKey(selectedUnlockedIds),
+    [selectedUnlockedIds]
+  )
+
+  useEffect(() => {
     if (selectedObject || selectedUnlockedObjects.length < 2) {
-      return null
+      setMultiSelectionFrame(null)
+      return
     }
-    return getObjectsWorldAabb(selectedUnlockedObjects)
-  }, [selectedObject, selectedUnlockedObjects])
+
+    const bounds = getObjectsWorldAabb(selectedUnlockedObjects)
+    if (!bounds) {
+      setMultiSelectionFrame(null)
+      return
+    }
+
+    setMultiSelectionFrame((current) => {
+      if (
+        current &&
+        current.selectionKey === selectedUnlockedIdsKey
+      ) {
+        return current
+      }
+
+      return {
+        center: {
+          x: (bounds.minX + bounds.maxX) / 2,
+          y: (bounds.minY + bounds.maxY) / 2,
+        },
+        width: Math.max(1, bounds.maxX - bounds.minX),
+        height: Math.max(1, bounds.maxY - bounds.minY),
+        rotation: 0,
+        selectionKey: selectedUnlockedIdsKey,
+      }
+    })
+  }, [
+    selectedObject,
+    selectedUnlockedIdsKey,
+    selectedUnlockedObjects,
+  ])
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -485,12 +537,25 @@ export function CanvasViewport() {
       return
     }
 
-    const selectionBoundsStart = getObjectsWorldAabb(unlockedTargets)
+    const interactionSelectionKey = getSelectionKey(unlockedTargets.map((target) => target.id))
+    const frameStart =
+      unlockedTargets.length > 1 && multiSelectionFrame?.selectionKey === interactionSelectionKey
+        ? multiSelectionFrame
+        : null
+
+    const selectionBoundsStart = frameStart
+      ? {
+          minX: frameStart.center.x - frameStart.width / 2,
+          minY: frameStart.center.y - frameStart.height / 2,
+          maxX: frameStart.center.x + frameStart.width / 2,
+          maxY: frameStart.center.y + frameStart.height / 2,
+        }
+      : getObjectsWorldAabb(unlockedTargets)
     if (!selectionBoundsStart) {
       return
     }
 
-    const centerStart = {
+    const centerStart = frameStart?.center ?? {
       x: (selectionBoundsStart.minX + selectionBoundsStart.maxX) / 2,
       y: (selectionBoundsStart.minY + selectionBoundsStart.maxY) / 2,
     }
@@ -519,6 +584,7 @@ export function CanvasViewport() {
       cameraStart: camera,
       centerStart,
       selectionBoundsStart,
+      selectionFrameStart: frameStart,
       centerScreenStart,
       startPointerAngle,
     }
@@ -550,6 +616,15 @@ export function CanvasViewport() {
           rotation: target.start.rotation,
         })
       })
+      if (interaction.selectionFrameStart) {
+        setMultiSelectionFrame({
+          ...interaction.selectionFrameStart,
+          center: {
+            x: interaction.selectionFrameStart.center.x + deltaWorld.x,
+            y: interaction.selectionFrameStart.center.y + deltaWorld.y,
+          },
+        })
+      }
       return
     }
 
@@ -603,6 +678,18 @@ export function CanvasViewport() {
           rotation: target.start.rotation,
         })
       })
+      if (interaction.selectionFrameStart) {
+        setMultiSelectionFrame({
+          center: {
+            x: anchorX + nextWidth / 2,
+            y: anchorY + nextHeight / 2,
+          },
+          width: nextWidth,
+          height: nextHeight,
+          rotation: interaction.selectionFrameStart.rotation,
+          selectionKey: interaction.selectionFrameStart.selectionKey,
+        })
+      }
       return
     }
 
@@ -612,6 +699,12 @@ export function CanvasViewport() {
       pointerScreen.x - interaction.centerScreenStart.x
     )
     const rotationDelta = currentAngle - interaction.startPointerAngle
+    if (interaction.selectionFrameStart) {
+      setMultiSelectionFrame({
+        ...interaction.selectionFrameStart,
+        rotation: interaction.selectionFrameStart.rotation + rotationDelta,
+      })
+    }
 
     interaction.targets.forEach((target) => {
       const startOffset = {
@@ -990,33 +1083,33 @@ export function CanvasViewport() {
         </div>
       )}
 
-      {!selectedObject && multiSelectionBounds && (
+      {!selectedObject && multiSelectionFrame && (
         <div
           className="selection-overlay"
           style={{
             left:
               worldToScreen(
                 {
-                  x: (multiSelectionBounds.minX + multiSelectionBounds.maxX) / 2,
-                  y: (multiSelectionBounds.minY + multiSelectionBounds.maxY) / 2,
+                  x: multiSelectionFrame.center.x,
+                  y: multiSelectionFrame.center.y,
                 },
                 camera,
                 viewportSize
               ).x -
-              ((multiSelectionBounds.maxX - multiSelectionBounds.minX) * camera.zoom) / 2,
+              (multiSelectionFrame.width * camera.zoom) / 2,
             top:
               worldToScreen(
                 {
-                  x: (multiSelectionBounds.minX + multiSelectionBounds.maxX) / 2,
-                  y: (multiSelectionBounds.minY + multiSelectionBounds.maxY) / 2,
+                  x: multiSelectionFrame.center.x,
+                  y: multiSelectionFrame.center.y,
                 },
                 camera,
                 viewportSize
               ).y -
-              ((multiSelectionBounds.maxY - multiSelectionBounds.minY) * camera.zoom) / 2,
-            width: (multiSelectionBounds.maxX - multiSelectionBounds.minX) * camera.zoom,
-            height: (multiSelectionBounds.maxY - multiSelectionBounds.minY) * camera.zoom,
-            transform: `rotate(${camera.rotation}rad)`,
+              (multiSelectionFrame.height * camera.zoom) / 2,
+            width: multiSelectionFrame.width * camera.zoom,
+            height: multiSelectionFrame.height * camera.zoom,
+            transform: `rotate(${camera.rotation + multiSelectionFrame.rotation}rad)`,
           }}
         >
           <button

@@ -34,16 +34,69 @@ import {
   deserializeDocument,
   serializeDocument,
   type CanvasObject,
+  type DocumentModel,
   type ShapeData,
 } from './model'
 import { useEditorStore } from './store'
+import type { CameraState } from './store/types'
 import './App.css'
+
+function parseCameraState(value: unknown): CameraState | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const entry = value as Partial<CameraState>
+  if (
+    typeof entry.x !== 'number' ||
+    typeof entry.y !== 'number' ||
+    typeof entry.zoom !== 'number' ||
+    typeof entry.rotation !== 'number'
+  ) {
+    return null
+  }
+
+  if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y) || !Number.isFinite(entry.rotation)) {
+    return null
+  }
+  if (!Number.isFinite(entry.zoom) || entry.zoom <= 0) {
+    return null
+  }
+
+  return {
+    x: entry.x,
+    y: entry.y,
+    zoom: entry.zoom,
+    rotation: entry.rotation,
+  }
+}
+
+function parseStoredFile(payload: string): { document: DocumentModel; camera: CameraState | null } {
+  const parsed = JSON.parse(payload) as unknown
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid file payload')
+  }
+
+  const entry = parsed as Record<string, unknown>
+  if ('document' in entry) {
+    return {
+      document: deserializeDocument(JSON.stringify(entry.document)),
+      camera: parseCameraState(entry.camera),
+    }
+  }
+
+  return {
+    document: deserializeDocument(payload),
+    camera: null,
+  }
+}
 
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
 
   const document = useEditorStore((state) => state.document)
   const camera = useEditorStore((state) => state.camera)
+  const setCamera = useEditorStore((state) => state.setCamera)
   const undo = useEditorStore((state) => state.undo)
   const canUndo = useEditorStore((state) => state.history.past.length > 0)
   const replaceDocument = useEditorStore((state) => state.replaceDocument)
@@ -193,7 +246,14 @@ function App() {
   }
 
   function handleSaveDocument() {
-    const serialized = serializeDocument(document)
+    const serialized = JSON.stringify(
+      {
+        document: JSON.parse(serializeDocument(document)),
+        camera,
+      },
+      null,
+      2
+    )
     const blob = new Blob([serialized], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
 
@@ -216,8 +276,11 @@ function App() {
 
     try {
       const payload = await file.text()
-      const loaded = deserializeDocument(payload)
-      replaceDocument(loaded)
+      const loaded = parseStoredFile(payload)
+      replaceDocument(loaded.document)
+      if (loaded.camera) {
+        setCamera(loaded.camera)
+      }
     } catch {
       window.alert('Failed to load file. Use a valid Infiniprez JSON document.')
     } finally {
