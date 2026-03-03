@@ -10,6 +10,7 @@ import {
   moveObjectCommand,
   recordExecutedCommand,
   redoCommand,
+  setObjectLockCommand,
   undoCommand,
   type Command,
 } from '../commands'
@@ -73,6 +74,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set((state) => ({
       ...state,
       camera,
+    })),
+
+  selectObjects: (objectIds) =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        selectedObjectIds: objectIds,
+      },
+    })),
+
+  clearSelection: () =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        selectedObjectIds: [],
+      },
     })),
 
   executeDocumentCommand: (command) =>
@@ -168,6 +187,22 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     const command = deleteObjectsCommand(objectIds, removed)
+    get().executeDocumentCommand(command)
+
+    const selectedSet = new Set(get().ui.selectedObjectIds)
+    const hasRemovedSelected = objectIds.some((id) => selectedSet.has(id))
+    if (hasRemovedSelected) {
+      get().clearSelection()
+    }
+  },
+
+  toggleObjectLock: (objectId) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target) {
+      return
+    }
+
+    const command = setObjectLockCommand(objectId, target.locked, !target.locked)
     get().executeDocumentCommand(command)
   },
 

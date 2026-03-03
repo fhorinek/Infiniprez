@@ -30,6 +30,8 @@ export interface EditorState {
 
 export interface EditorActions {
   setCamera: (camera: CameraState) => void
+  selectObjects: (objectIds: string[]) => void
+  clearSelection: () => void
   executeDocumentCommand: (command: Command<DocumentModel>) => void
   beginCommandBatch: (label: string) => void
   commitCommandBatch: () => void
@@ -42,6 +44,7 @@ export interface EditorActions {
     next: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
   ) => void
   deleteObjects: (objectIds: string[]) => void
+  toggleObjectLock: (objectId: string) => void
   createSlide: (slide: Slide) => void
   deleteSlide: (slideId: string) => void
 }

@@ -12,6 +12,8 @@ import {
   faFloppyDisk,
   faForwardStep,
   faLayerGroup,
+  faLock,
+  faLockOpen,
   faObjectUngroup,
   faPenToSquare,
   faPlay,
@@ -21,9 +23,21 @@ import {
   faUndo,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
+import type { CanvasObject, ShapeData } from './model'
+import { useEditorStore } from './store'
 import './App.css'
 
 function App() {
+  const document = useEditorStore((state) => state.document)
+  const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
+  const createObject = useEditorStore((state) => state.createObject)
+  const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+
+  const selectedObject =
+    selectedObjectIds.length === 1
+      ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
+      : null
+
   const projectActions = [
     { label: 'New Document', icon: faFileCirclePlus },
     { label: 'Load', icon: faFileArrowDown },
@@ -44,7 +58,111 @@ function App() {
     { label: 'Ungroup', icon: faObjectUngroup },
   ]
 
-  const propertyItems = ['X', 'Y', 'W', 'H', 'Rotation', 'Lock/Unlock', 'Layer: Top/Up/Down/Bottom']
+  function createId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+    return `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+  }
+
+  function getNextZIndex() {
+    const maxZ = document.objects.reduce((max, entry) => Math.max(max, entry.zIndex), 0)
+    return maxZ + 1
+  }
+
+  function getDefaultShapeData(): ShapeData {
+    return {
+      borderColor: '#9db5de',
+      borderType: 'solid',
+      borderWidth: 2,
+      fillMode: 'solid',
+      fillColor: '#244a80',
+      fillGradient: null,
+      opacityPercent: 100,
+    }
+  }
+
+  function handleObjectTool(label: string) {
+    const base = {
+      id: createId(),
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 160,
+      rotation: 0,
+      locked: false,
+      zIndex: getNextZIndex(),
+      parentGroupId: null,
+    } satisfies Pick<
+      CanvasObject,
+      'id' | 'x' | 'y' | 'w' | 'h' | 'rotation' | 'locked' | 'zIndex' | 'parentGroupId'
+    >
+
+    switch (label) {
+      case 'Textbox':
+        createObject({
+          ...base,
+          type: 'textbox',
+          textboxData: {
+            runs: [
+              {
+                text: 'New text',
+                bold: false,
+                italic: false,
+                underline: false,
+                color: '#f0f3fc',
+                fontSize: 28,
+              },
+            ],
+            fontFamily: 'Space Grotesk',
+            alignment: 'left',
+            listType: 'none',
+            autoHeight: true,
+          },
+        })
+        break
+      case 'Image':
+        createObject({
+          ...base,
+          type: 'image',
+          imageData: {
+            assetId: '',
+            intrinsicWidth: 1200,
+            intrinsicHeight: 800,
+            keepAspectRatio: true,
+          },
+        })
+        break
+      case 'Rectangle':
+        createObject({
+          ...base,
+          type: 'shape_rect',
+          shapeData: getDefaultShapeData(),
+        })
+        break
+      case 'Circle':
+        createObject({
+          ...base,
+          type: 'shape_circle',
+          shapeData: getDefaultShapeData(),
+        })
+        break
+      case 'Arrow':
+        createObject({
+          ...base,
+          w: 320,
+          h: 60,
+          type: 'shape_arrow',
+          shapeData: {
+            ...getDefaultShapeData(),
+            fillColor: 'transparent',
+          },
+        })
+        break
+      default:
+        break
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -121,7 +239,13 @@ function App() {
           <h2>Object Tools</h2>
           <div className="action-grid">
             {objectTools.map((tool) => (
-              <button key={tool.label} type="button" className="tool-btn">
+              <button
+                key={tool.label}
+                type="button"
+                className="tool-btn"
+                disabled={tool.label === 'Group' || tool.label === 'Ungroup'}
+                onClick={() => handleObjectTool(tool.label)}
+              >
                 <FontAwesomeIcon icon={tool.icon} />
                 <span>{tool.label}</span>
               </button>
@@ -131,11 +255,30 @@ function App() {
 
         <section className="panel">
           <h2>Selected Object</h2>
-          <ul className="property-list">
-            {propertyItems.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
+          {selectedObject ? (
+            <div className="selected-object-grid">
+              <div>X</div>
+              <div>{selectedObject.x.toFixed(1)}</div>
+              <div>Y</div>
+              <div>{selectedObject.y.toFixed(1)}</div>
+              <div>W</div>
+              <div>{selectedObject.w.toFixed(1)}</div>
+              <div>H</div>
+              <div>{selectedObject.h.toFixed(1)}</div>
+              <div>Rotation</div>
+              <div>{selectedObject.rotation.toFixed(2)}</div>
+              <button
+                type="button"
+                className="lock-toggle-btn"
+                onClick={() => toggleObjectLock(selectedObject.id)}
+              >
+                <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
+                <span>{selectedObject.locked ? 'Unlock' : 'Lock'}</span>
+              </button>
+            </div>
+          ) : (
+            <p className="panel-empty">Select one object to view transform properties.</p>
+          )}
         </section>
       </aside>
 

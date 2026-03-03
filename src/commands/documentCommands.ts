@@ -145,3 +145,33 @@ export function deleteSlideCommand(
       ),
   }
 }
+
+export function setObjectLockCommand(
+  objectId: string,
+  beforeLocked: boolean,
+  afterLocked: boolean
+): Command<DocumentModel> {
+  return {
+    label: afterLocked ? 'Lock object' : 'Unlock object',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target) {
+            return
+          }
+          target.locked = afterLocked
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target) {
+            return
+          }
+          target.locked = beforeLocked
+        })
+      ),
+  }
+}

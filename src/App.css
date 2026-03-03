@@ -97,6 +97,11 @@
   border-color: rgba(255, 139, 139, 0.5);
 }
 
+.tool-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .property-table {
   width: 100%;
   border-collapse: collapse;
@@ -115,6 +120,33 @@
 
 .property-list li {
   margin-bottom: 0.18rem;
+}
+
+.panel-empty {
+  margin: 0;
+  color: #95a6c5;
+  font-size: 0.9rem;
+}
+
+.selected-object-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.2rem 0.7rem;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.selected-object-grid > div:nth-child(odd) {
+  color: #95a6c5;
+}
+
+.lock-toggle-btn {
+  grid-column: 1 / -1;
+  margin-top: 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
 }
 
 .canvas-area {
@@ -160,6 +192,103 @@
 .major-grid {
   stroke: rgba(144, 180, 247, 0.34);
   stroke-width: 1;
+}
+
+.objects-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.canvas-object {
+  position: absolute;
+  pointer-events: auto;
+  transform-origin: center center;
+  border: 1px solid rgba(178, 198, 238, 0.4);
+  display: grid;
+  place-items: center;
+  color: #ecf3ff;
+  font-size: 0.88rem;
+  user-select: none;
+}
+
+.canvas-object.textbox,
+.canvas-object.image,
+.canvas-object.group {
+  background: rgba(31, 49, 81, 0.88);
+}
+
+.canvas-object.image {
+  border-style: dashed;
+}
+
+.canvas-object.selected {
+  outline: 2px solid rgba(130, 180, 255, 0.88);
+  outline-offset: 2px;
+}
+
+.canvas-object.locked {
+  box-shadow: inset 0 0 0 2px rgba(255, 186, 113, 0.5);
+}
+
+.arrow-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: currentColor;
+  color: #eaf3ff;
+}
+
+.arrow-svg line {
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.selection-overlay {
+  position: absolute;
+  transform-origin: center center;
+  border: 2px solid rgba(120, 175, 255, 0.94);
+  pointer-events: none;
+}
+
+.selection-overlay.locked {
+  border-color: rgba(255, 190, 117, 0.92);
+}
+
+.resize-handle,
+.rotate-handle,
+.lock-handle {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.resize-handle {
+  right: -8px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: rgba(130, 180, 255, 1);
+  border: 1px solid rgba(231, 244, 255, 0.9);
+}
+
+.rotate-handle {
+  top: -24px;
+  left: calc(50% - 8px);
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(130, 180, 255, 1);
+  border: 1px solid rgba(231, 244, 255, 0.9);
+}
+
+.lock-handle {
+  bottom: -32px;
+  left: calc(50% - 30px);
+  width: 60px;
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 0.15rem 0.3rem;
 }
 
 .camera-card {
