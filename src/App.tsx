@@ -1,3 +1,4 @@
+import { useRef, type ChangeEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowsLeftRightToLine,
@@ -17,18 +18,26 @@ import {
   faObjectUngroup,
   faPenToSquare,
   faPlay,
+  faRotateLeft,
   faRotate,
   faSquare,
   faTrashCan,
   faUndo,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
-import type { CanvasObject, ShapeData } from './model'
+import { deserializeDocument, serializeDocument, type CanvasObject, type ShapeData } from './model'
 import { useEditorStore } from './store'
 import './App.css'
 
 function App() {
+  const loadInputRef = useRef<HTMLInputElement>(null)
+
   const document = useEditorStore((state) => state.document)
+  const camera = useEditorStore((state) => state.camera)
+  const undo = useEditorStore((state) => state.undo)
+  const canUndo = useEditorStore((state) => state.history.past.length > 0)
+  const replaceDocument = useEditorStore((state) => state.replaceDocument)
+  const resetDocument = useEditorStore((state) => state.resetDocument)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
   const createObject = useEditorStore((state) => state.createObject)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
@@ -37,16 +46,6 @@ function App() {
     selectedObjectIds.length === 1
       ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
-
-  const projectActions = [
-    { label: 'New Document', icon: faFileCirclePlus },
-    { label: 'Load', icon: faFileArrowDown },
-    { label: 'Save', icon: faFloppyDisk },
-    { label: 'Export HTML', icon: faDownload },
-    { label: 'Undo', icon: faUndo },
-    { label: 'Present', icon: faPlay },
-    { label: 'Present Current', icon: faForwardStep },
-  ]
 
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
@@ -83,13 +82,16 @@ function App() {
   }
 
   function handleObjectTool(label: string) {
+    const safeZoom = Math.max(camera.zoom, 0.001)
+    const creationScale = 1 / safeZoom
+
     const base = {
       id: createId(),
-      x: 0,
-      y: 0,
-      w: 260,
-      h: 160,
-      rotation: 0,
+      x: camera.x,
+      y: camera.y,
+      w: 260 * creationScale,
+      h: 160 * creationScale,
+      rotation: -camera.rotation,
       locked: false,
       zIndex: getNextZIndex(),
       parentGroupId: null,
@@ -150,8 +152,8 @@ function App() {
       case 'Arrow':
         createObject({
           ...base,
-          w: 320,
-          h: 60,
+          w: 320 * creationScale,
+          h: 60 * creationScale,
           type: 'shape_arrow',
           shapeData: {
             ...getDefaultShapeData(),
@@ -164,21 +166,98 @@ function App() {
     }
   }
 
+  function handleNewDocument() {
+    const shouldReset = window.confirm(
+      'Reset to a new empty document? Unsaved changes will be lost.'
+    )
+    if (!shouldReset) {
+      return
+    }
+    resetDocument()
+  }
+
+  function handleSaveDocument() {
+    const serialized = serializeDocument(document)
+    const blob = new Blob([serialized], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+
+    const downloadLink = window.document.createElement('a')
+    downloadLink.href = url
+    downloadLink.download = 'infiniprez-document.json'
+    downloadLink.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function handleLoadClick() {
+    loadInputRef.current?.click()
+  }
+
+  async function handleLoadFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    try {
+      const payload = await file.text()
+      const loaded = deserializeDocument(payload)
+      replaceDocument(loaded)
+    } catch {
+      window.alert('Failed to load file. Use a valid Infiniprez JSON document.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const projectActions = [
+    { label: 'New Document', icon: faFileCirclePlus, onClick: handleNewDocument, disabled: false },
+    { label: 'Load', icon: faFileArrowDown, onClick: handleLoadClick, disabled: false },
+    { label: 'Save', icon: faFloppyDisk, onClick: handleSaveDocument, disabled: false },
+    {
+      label: 'Export HTML',
+      icon: faDownload,
+      onClick: () => undefined,
+      disabled: true,
+      disabledReason: 'Not implemented yet',
+    },
+    { label: 'Undo', icon: faUndo, onClick: undo, disabled: !canUndo },
+    {
+      label: 'Present',
+      icon: faPlay,
+      onClick: () => undefined,
+      disabled: true,
+      disabledReason: 'Not implemented yet',
+    },
+    {
+      label: 'Present Current',
+      icon: faForwardStep,
+      onClick: () => undefined,
+      disabled: true,
+      disabledReason: 'Not implemented yet',
+    },
+  ]
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <header className="sidebar-header">
-          <h1>Infiniprez</h1>
-          <p>React MVP shell</p>
-        </header>
-
         <section className="panel">
           <h2>Project + Session</h2>
           <div className="action-grid">
             {projectActions.map((action) => (
-              <button key={action.label} type="button" className="tool-btn">
+              <button
+                key={action.label}
+                type="button"
+                className="tool-btn icon-btn"
+                aria-label={action.label}
+                title={
+                  action.disabled
+                    ? `${action.label}: ${action.disabledReason ?? 'Unavailable'}`
+                    : action.label
+                }
+                onClick={action.onClick}
+                disabled={action.disabled}
+              >
                 <FontAwesomeIcon icon={action.icon} />
-                <span>{action.label}</span>
               </button>
             ))}
           </div>
@@ -187,7 +266,13 @@ function App() {
         <section className="panel">
           <div className="panel-title-row">
             <h2>Slides</h2>
-            <button type="button" className="panel-icon-btn" aria-label="Create slide">
+            <button
+              type="button"
+              className="panel-icon-btn icon-btn"
+              aria-label="Create slide"
+              title="Create slide (not implemented)"
+              disabled
+            >
               <FontAwesomeIcon icon={faFileCirclePlus} />
             </button>
           </div>
@@ -197,10 +282,23 @@ function App() {
             <li className="slide-item">Solution</li>
           </ol>
           <div className="inline-actions">
-            <button type="button">Update</button>
-            <button type="button" className="danger">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Update slide"
+              title="Update slide (not implemented)"
+              disabled
+            >
+              <FontAwesomeIcon icon={faRotateLeft} />
+            </button>
+            <button
+              type="button"
+              className="danger icon-btn"
+              aria-label="Delete slide"
+              title="Delete slide (not implemented)"
+              disabled
+            >
               <FontAwesomeIcon icon={faTrashCan} />
-              <span>Delete</span>
             </button>
           </div>
         </section>
@@ -242,12 +340,13 @@ function App() {
               <button
                 key={tool.label}
                 type="button"
-                className="tool-btn"
+                className="tool-btn icon-btn"
                 disabled={tool.label === 'Group' || tool.label === 'Ungroup'}
                 onClick={() => handleObjectTool(tool.label)}
+                aria-label={tool.label}
+                title={tool.label}
               >
                 <FontAwesomeIcon icon={tool.icon} />
-                <span>{tool.label}</span>
               </button>
             ))}
           </div>
@@ -269,11 +368,12 @@ function App() {
               <div>{selectedObject.rotation.toFixed(2)}</div>
               <button
                 type="button"
-                className="lock-toggle-btn"
+                className="lock-toggle-btn icon-btn"
                 onClick={() => toggleObjectLock(selectedObject.id)}
+                aria-label={selectedObject.locked ? 'Unlock object' : 'Lock object'}
+                title={selectedObject.locked ? 'Unlock object' : 'Lock object'}
               >
                 <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
-                <span>{selectedObject.locked ? 'Unlock' : 'Lock'}</span>
               </button>
             </div>
           ) : (
@@ -284,19 +384,42 @@ function App() {
 
       <main className="canvas-area">
         <div className="canvas-toolbar">
-          <button type="button">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Snap"
+            title="Snap (not implemented)"
+            disabled
+          >
             <FontAwesomeIcon icon={faArrowsLeftRightToLine} />
-            <span>Snap</span>
           </button>
-          <button type="button">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Rotate view"
+            title="Rotate view (not implemented)"
+            disabled
+          >
             <FontAwesomeIcon icon={faRotate} />
-            <span>Rotate View</span>
           </button>
-          <button type="button">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Copy"
+            title="Copy (not implemented)"
+            disabled
+          >
             <FontAwesomeIcon icon={faCopy} />
-            <span>Copy</span>
           </button>
         </div>
+
+        <input
+          ref={loadInputRef}
+          type="file"
+          accept="application/json"
+          onChange={handleLoadFile}
+          style={{ display: 'none' }}
+        />
 
         <CanvasViewport />
       </main>

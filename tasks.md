@@ -1,11 +1,11 @@
 # Infiniprez Implementation Tasks (React MVP)
 
 ## 0. Project Setup
-- [ ] Initialize app with Vite + React + TypeScript.
-- [ ] Add state + utility deps: `zustand`, `immer`, `zod`, `dnd-kit`.
-- [ ] Define folder structure: `model/`, `store/`, `commands/`, `canvas/`, `presentation/`, `persistence/`, `ui/`.
-- [ ] Add linting and formatting (`eslint`, `prettier`) and baseline scripts.
-- [ ] Create app shell with left sidebar + right canvas layout.
+- [x] Initialize app with Vite + React + TypeScript.
+- [x] Add state + utility deps: `zustand`, `immer`, `zod`, `dnd-kit`.
+- [x] Define folder structure: `model/`, `store/`, `commands/`, `canvas/`, `presentation/`, `persistence/`, `ui/`.
+- [x] Add linting and formatting (`eslint`, `prettier`) and baseline scripts.
+- [x] Create app shell with left sidebar + right canvas layout.
 - [ ] Add top-toolbar `New Document` icon action with confirmation dialog.
 
 Done criteria:
@@ -13,45 +13,45 @@ Done criteria:
 - Core layout matches design sections.
 
 ## 1. Document Model + Validation
-- [ ] Implement TypeScript model for `Document`, `Slide`, `Object`, and `Asset`.
-- [ ] Implement object union types: `textbox`, `image`, `shape_rect`, `shape_circle`, `shape_arrow`, `group`.
-- [ ] Add `zod` schemas for load/import validation.
-- [ ] Add explicit document/schema version field in `meta.version` (current version only, no backward migration in MVP).
+- [x] Implement TypeScript model for `Document`, `Slide`, `Object`, and `Asset`.
+- [x] Implement object union types: `textbox`, `image`, `shape_rect`, `shape_circle`, `shape_arrow`, `group`.
+- [x] Add `zod` schemas for load/import validation.
+- [x] Add explicit document/schema version field in `meta.version` (current version only, no backward migration in MVP).
 
 Done criteria:
 - Document can be created, serialized, and validated.
 - Invalid document input is rejected safely.
 
 ## 2. Editor Store + Command History
-- [ ] Create global editor store (document + UI state + camera state).
-- [ ] Implement command interface: `execute`, `undo`, `redo`.
-- [ ] Add history stacks and command batching for drag interactions.
-- [ ] Route all mutating actions through command bus.
+- [x] Create global editor store (document + UI state + camera state).
+- [x] Implement command interface: `execute`, `undo`, `redo`.
+- [x] Add history stacks and command batching for drag interactions.
+- [x] Route all mutating actions through command bus.
 
 Done criteria:
 - Undo/redo works for at least object create/move/delete and slide create/delete.
 
 ## 3. Canvas + Camera + Grid
-- [ ] Implement infinite canvas viewport with world coordinates.
-- [ ] Add camera pan (drag), zoom (wheel), rotate (`Alt + wheel`).
-- [ ] Render adaptive grid with hierarchical subdivisions.
-- [ ] Add coordinate conversion helpers (screen <-> world).
-- [ ] Implement canvas snap settings (`snapToGrid`, `snapToObjectEdges`, `snapTolerancePx`).
-- [ ] Set default `snapTolerancePx` to `8`.
+- [x] Implement infinite canvas viewport with world coordinates.
+- [x] Add camera pan (drag), zoom (wheel), rotate (`Alt + wheel`).
+- [x] Render adaptive grid with hierarchical subdivisions.
+- [x] Add coordinate conversion helpers (screen <-> world).
+- [x] Implement canvas snap settings (`snapToGrid`, `snapToObjectEdges`, `snapTolerancePx`).
+- [x] Set default `snapTolerancePx` to `8`.
 - [ ] Enable snapping by default and support temporary snap bypass with `Alt` during move/resize.
 
 Done criteria:
 - Navigation is smooth and grid scales correctly with zoom.
 
 ## 4. Object Creation + Selection + Transform
-- [ ] Add tools for textbox, image placeholder, rectangle, circle, arrow.
-- [ ] Implement `shape_arrow` MVP as straight single-headed only (defer variants).
-- [ ] Implement single-click select and clear selection on empty click.
-- [ ] Implement transform controls: move, resize handles, rotate handle.
+- [x] Add tools for textbox, image placeholder, rectangle, circle, arrow.
+- [x] Implement `shape_arrow` MVP as straight single-headed only (defer variants).
+- [x] Implement single-click select and clear selection on empty click.
+- [x] Implement transform controls: move, resize handles, rotate handle.
 - [ ] Apply grid and object-edge snapping during move/resize transforms.
 - [ ] For rotated objects, apply object-edge snapping against axis-aligned bounding boxes (MVP rule).
-- [ ] Implement lock/unlock behavior and lock icon control.
-- [ ] Implement shape fill modes: solid color and 2-stop linear gradient (`colorA`, `colorB`, `angleDeg`).
+- [x] Implement lock/unlock behavior and lock icon control.
+- [x] Implement shape fill modes: solid color and 2-stop linear gradient (`colorA`, `colorB`, `angleDeg`).
 - [ ] Implement shape opacity as percent (`0..100`) in model and UI controls.
 
 Done criteria:

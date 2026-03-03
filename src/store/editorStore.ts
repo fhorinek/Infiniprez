@@ -76,6 +76,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       camera,
     })),
 
+  replaceDocument: (document) =>
+    set((state) => ({
+      ...state,
+      document,
+      history: createEmptyHistory<DocumentModel>(),
+      pendingBatch: null,
+      ui: {
+        ...state.ui,
+        selectedObjectIds: [],
+        selectedSlideId: null,
+        activeGroupId: null,
+      },
+    })),
+
+  resetDocument: () =>
+    set((state) => ({
+      ...state,
+      ...createInitialState(),
+    })),
+
   selectObjects: (objectIds) =>
     set((state) => ({
       ...state,

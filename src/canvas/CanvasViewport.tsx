@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faCompass, faLock, faLockOpen, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import type { CanvasObject, ShapeData } from '../model'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
@@ -562,27 +564,25 @@ export function CanvasViewport() {
               event.stopPropagation()
               toggleObjectLock(selectedObject.id)
             }}
+            aria-label={selectedObject.locked ? 'Unlock object' : 'Lock object'}
+            title={selectedObject.locked ? 'Unlock object' : 'Lock object'}
           >
-            {selectedObject.locked ? 'Unlock' : 'Lock'}
+            <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
           </button>
         </div>
       )}
 
-      <div className="camera-card">
-        <h3>Canvas Viewport</h3>
-        <p>
-          Drag empty canvas to pan, wheel to zoom, and <strong>Alt + wheel</strong> to rotate.
-        </p>
-        <dl className="camera-stats">
-          <dt>X</dt>
-          <dd>{camera.x.toFixed(1)}</dd>
-          <dt>Y</dt>
-          <dd>{camera.y.toFixed(1)}</dd>
-          <dt>Zoom</dt>
-          <dd>{camera.zoom.toFixed(3)}</dd>
-          <dt>Rotation</dt>
-          <dd>{camera.rotation.toFixed(3)}</dd>
-        </dl>
+      <div className="camera-card" aria-label="Camera position">
+        <span className="camera-pos-item">X {camera.x.toFixed(1)}</span>
+        <span className="camera-pos-item">Y {camera.y.toFixed(1)}</span>
+        <span className="camera-pos-item">
+          <FontAwesomeIcon icon={faMagnifyingGlass} />
+          {camera.zoom.toFixed(2)}
+        </span>
+        <span className="camera-pos-item">
+          <FontAwesomeIcon icon={faCompass} />
+          {((camera.rotation * 180) / Math.PI).toFixed(1)}°
+        </span>
       </div>
     </div>
   )
