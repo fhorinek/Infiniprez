@@ -48,8 +48,8 @@ Done criteria:
 - [x] Implement `shape_arrow` MVP as straight single-headed only (defer variants).
 - [x] Implement single-click select and clear selection on empty click.
 - [x] Implement transform controls: move, resize handles, rotate handle.
-- [ ] Apply grid and object-edge snapping during move/resize transforms.
-- [ ] For rotated objects, apply object-edge snapping against axis-aligned bounding boxes (MVP rule).
+- [x] Apply grid and object-edge snapping during move/resize transforms.
+- [x] For rotated objects, apply object-edge snapping against axis-aligned bounding boxes (MVP rule).
 - [x] Implement lock/unlock behavior and lock icon control.
 - [x] Implement shape fill modes: solid color and 2-stop linear gradient (`colorA`, `colorB`, `angleDeg`).
 - [ ] Implement shape opacity as percent (`0..100`) in model and UI controls.

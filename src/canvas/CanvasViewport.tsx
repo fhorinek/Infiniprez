@@ -83,6 +83,11 @@ interface SelectionFrameState extends SelectionFrame {
   selectionKey: string
 }
 
+interface SnapCandidateEdges {
+  x: number[]
+  y: number[]
+}
+
 interface ContextMenuState {
   x: number
   y: number
@@ -286,6 +291,95 @@ function getSelectionKey(ids: string[]): string {
 function snapToGrid(value: number, gridSize: number): number {
   const safeGridSize = Math.max(0.00001, gridSize)
   return Math.round(value / safeGridSize) * safeGridSize
+}
+
+function getTransformAabb(transform: TransformSnapshot): Rect {
+  const halfW = transform.w / 2
+  const halfH = transform.h / 2
+  const localCorners = [
+    { x: -halfW, y: -halfH },
+    { x: halfW, y: -halfH },
+    { x: halfW, y: halfH },
+    { x: -halfW, y: halfH },
+  ]
+
+  const worldCorners = localCorners.map((corner) => {
+    const rotated = rotatePoint(corner, transform.rotation)
+    return {
+      x: transform.x + rotated.x,
+      y: transform.y + rotated.y,
+    }
+  })
+
+  return {
+    minX: Math.min(...worldCorners.map((point) => point.x)),
+    minY: Math.min(...worldCorners.map((point) => point.y)),
+    maxX: Math.max(...worldCorners.map((point) => point.x)),
+    maxY: Math.max(...worldCorners.map((point) => point.y)),
+  }
+}
+
+function offsetRect(rect: Rect, delta: Point): Rect {
+  return {
+    minX: rect.minX + delta.x,
+    minY: rect.minY + delta.y,
+    maxX: rect.maxX + delta.x,
+    maxY: rect.maxY + delta.y,
+  }
+}
+
+function collectSnapCandidateEdges(objects: CanvasObject[]): SnapCandidateEdges {
+  const x: number[] = []
+  const y: number[] = []
+
+  for (const object of objects) {
+    const bounds = getObjectWorldAabb(object)
+    x.push(bounds.minX, bounds.maxX, (bounds.minX + bounds.maxX) / 2)
+    y.push(bounds.minY, bounds.maxY, (bounds.minY + bounds.maxY) / 2)
+  }
+
+  return { x, y }
+}
+
+function getBestSnapDelta(values: number[], candidates: number[], tolerance: number): number {
+  let bestDelta = 0
+  let bestAbsDelta = tolerance + 1
+
+  for (const value of values) {
+    for (const candidate of candidates) {
+      const delta = candidate - value
+      const absDelta = Math.abs(delta)
+      if (absDelta <= tolerance && absDelta < bestAbsDelta) {
+        bestDelta = delta
+        bestAbsDelta = absDelta
+      }
+    }
+  }
+
+  return bestAbsDelta <= tolerance ? bestDelta : 0
+}
+
+function getObjectEdgeSnapOffset(
+  bounds: Rect,
+  candidates: SnapCandidateEdges,
+  tolerance: number
+): Point {
+  if (tolerance <= 0) {
+    return { x: 0, y: 0 }
+  }
+
+  return {
+    x: getBestSnapDelta(
+      [bounds.minX, bounds.maxX, (bounds.minX + bounds.maxX) / 2],
+      candidates.x,
+      tolerance
+    ),
+    y: getBestSnapDelta(
+      [bounds.minY, bounds.maxY, (bounds.minY + bounds.maxY) / 2],
+      candidates.y,
+      tolerance
+    ),
+  }
 }
 
 export function CanvasViewport() {
@@ -612,6 +706,12 @@ export function CanvasViewport() {
     const deltaWorld = cameraDragDeltaToWorld(deltaClient, interaction.cameraStart)
     const shouldSnapToGrid = canvasSettings.snapToGrid && !event.altKey
     const snapGridSize = canvasSettings.baseGridSize
+    const canSnapToObjectEdges = canvasSettings.snapToObjectEdges && !event.altKey
+    const snapToleranceWorld = canvasSettings.snapTolerancePx / Math.max(0.00001, camera.zoom)
+    const interactionIds = new Set(interaction.targets.map((target) => target.id))
+    const edgeCandidates = canSnapToObjectEdges
+      ? collectSnapCandidateEdges(orderedObjects.filter((object) => !interactionIds.has(object.id)))
+      : { x: [], y: [] }
 
     if (interaction.mode === 'move') {
       let appliedDelta = deltaWorld
@@ -623,6 +723,30 @@ export function CanvasViewport() {
         appliedDelta = {
           x: snappedCenter.x - interaction.centerStart.x,
           y: snappedCenter.y - interaction.centerStart.y,
+        }
+      }
+      if (canSnapToObjectEdges && edgeCandidates.x.length > 0) {
+        const startBounds = interaction.targets
+          .map((target) => getTransformAabb(target.start))
+          .reduce(
+            (acc, bounds) => ({
+              minX: Math.min(acc.minX, bounds.minX),
+              minY: Math.min(acc.minY, bounds.minY),
+              maxX: Math.max(acc.maxX, bounds.maxX),
+              maxY: Math.max(acc.maxY, bounds.maxY),
+            }),
+            {
+              minX: Number.POSITIVE_INFINITY,
+              minY: Number.POSITIVE_INFINITY,
+              maxX: Number.NEGATIVE_INFINITY,
+              maxY: Number.NEGATIVE_INFINITY,
+            } satisfies Rect
+          )
+        const movedBounds = offsetRect(startBounds, appliedDelta)
+        const snapOffset = getObjectEdgeSnapOffset(movedBounds, edgeCandidates, snapToleranceWorld)
+        appliedDelta = {
+          x: appliedDelta.x + snapOffset.x,
+          y: appliedDelta.y + snapOffset.y,
         }
       }
 
@@ -664,6 +788,22 @@ export function CanvasViewport() {
           y: appliedHeightDelta / 2,
         }
         const centerShiftWorld = rotatePoint(centerShiftLocal, target.start.rotation)
+        if (canSnapToObjectEdges && edgeCandidates.x.length > 0) {
+          const nextTransform = {
+            x: target.start.x + centerShiftWorld.x,
+            y: target.start.y + centerShiftWorld.y,
+            w: nextWidth,
+            h: nextHeight,
+            rotation: target.start.rotation,
+          } satisfies TransformSnapshot
+          const snapOffset = getObjectEdgeSnapOffset(
+            getTransformAabb(nextTransform),
+            edgeCandidates,
+            snapToleranceWorld
+          )
+          centerShiftWorld.x += snapOffset.x
+          centerShiftWorld.y += snapOffset.y
+        }
 
         moveObject(target.id, {
           x: target.start.x + centerShiftWorld.x,
@@ -695,11 +835,21 @@ export function CanvasViewport() {
       const scaleY = nextHeight / selectionHeight
       const anchorX = interaction.selectionBoundsStart.minX
       const anchorY = interaction.selectionBoundsStart.minY
+      let selectionOffset = { x: 0, y: 0 }
+      if (canSnapToObjectEdges && edgeCandidates.x.length > 0) {
+        const resizedBounds = {
+          minX: anchorX,
+          minY: anchorY,
+          maxX: anchorX + nextWidth,
+          maxY: anchorY + nextHeight,
+        }
+        selectionOffset = getObjectEdgeSnapOffset(resizedBounds, edgeCandidates, snapToleranceWorld)
+      }
 
       interaction.targets.forEach((target) => {
         moveObject(target.id, {
-          x: anchorX + (target.start.x - anchorX) * scaleX,
-          y: anchorY + (target.start.y - anchorY) * scaleY,
+          x: anchorX + (target.start.x - anchorX) * scaleX + selectionOffset.x,
+          y: anchorY + (target.start.y - anchorY) * scaleY + selectionOffset.y,
           w: Math.max(20, target.start.w * scaleX),
           h: Math.max(20, target.start.h * scaleY),
           rotation: target.start.rotation,
@@ -708,8 +858,8 @@ export function CanvasViewport() {
       if (interaction.selectionFrameStart) {
         setMultiSelectionFrame({
           center: {
-            x: anchorX + nextWidth / 2,
-            y: anchorY + nextHeight / 2,
+            x: anchorX + nextWidth / 2 + selectionOffset.x,
+            y: anchorY + nextHeight / 2 + selectionOffset.y,
           },
           width: nextWidth,
           height: nextHeight,
