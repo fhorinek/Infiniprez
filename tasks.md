@@ -1,273 +1,180 @@
-# Infiniprez Implementation Tasks (v0.1)
+# Infiniprez Implementation Tasks (React MVP)
 
-## 1. Planning Rules
+## 0. Project Setup
+- [ ] Initialize app with Vite + React + TypeScript.
+- [ ] Add state + utility deps: `zustand`, `immer`, `zod`, `dnd-kit`.
+- [ ] Define folder structure: `model/`, `store/`, `commands/`, `canvas/`, `presentation/`, `persistence/`, `ui/`.
+- [ ] Add linting and formatting (`eslint`, `prettier`) and baseline scripts.
+- [ ] Create app shell with left sidebar + right canvas layout.
+- [ ] Add top-toolbar `New Document` icon action with confirmation dialog.
 
-- Priority order: P0 > P1 > P2.
-- Each task includes acceptance criteria.
-- Execute phases in order unless a dependency explicitly allows parallel work.
+Done criteria:
+- App runs locally with stable TypeScript build.
+- Core layout matches design sections.
 
-## 2. Phase 0: Project Bootstrap
+## 1. Document Model + Validation
+- [ ] Implement TypeScript model for `Document`, `Slide`, `Object`, and `Asset`.
+- [ ] Implement object union types: `textbox`, `image`, `shape_rect`, `shape_circle`, `shape_arrow`, `group`.
+- [ ] Add `zod` schemas for load/import validation.
+- [ ] Add explicit document/schema version field in `meta.version` (current version only, no backward migration in MVP).
 
-## T-001 (P0) Initialize project scaffold
-- Description: Create React + TypeScript + Vite app with strict TS config.
-- Acceptance:
-  - `npm run dev` starts app.
-  - `npm run build` succeeds.
-  - TS strict mode enabled.
+Done criteria:
+- Document can be created, serialized, and validated.
+- Invalid document input is rejected safely.
 
-## T-002 (P0) Install baseline dependencies
-- Description: Add Mantine, Fabric.js, Zustand, dnd-kit, tiptap, XML utilities, and icon library.
-- Acceptance:
-  - Dependencies locked in `package.json`.
-  - App compiles after install.
-  - Font Awesome package is selected and documented.
+## 2. Editor Store + Command History
+- [ ] Create global editor store (document + UI state + camera state).
+- [ ] Implement command interface: `execute`, `undo`, `redo`.
+- [ ] Add history stacks and command batching for drag interactions.
+- [ ] Route all mutating actions through command bus.
 
-## T-003 (P0) Define folder structure
-- Description: Create module structure matching `technical-spec.md`.
-- Acceptance:
-  - `src/` contains app, ui, canvas, state, domain, persistence, features, utils.
-  - Basic placeholder files exist for each module.
+Done criteria:
+- Undo/redo works for at least object create/move/delete and slide create/delete.
 
-## 3. Phase 1: App Shell and Core State
+## 3. Canvas + Camera + Grid
+- [ ] Implement infinite canvas viewport with world coordinates.
+- [ ] Add camera pan (drag), zoom (wheel), rotate (`Alt + wheel`).
+- [ ] Render adaptive grid with hierarchical subdivisions.
+- [ ] Add coordinate conversion helpers (screen <-> world).
+- [ ] Implement canvas snap settings (`snapToGrid`, `snapToObjectEdges`, `snapTolerancePx`).
+- [ ] Set default `snapTolerancePx` to `8`.
+- [ ] Enable snapping by default and support temporary snap bypass with `Alt` during move/resize.
 
-## T-010 (P0) Build editor layout shell
-- Description: Implement left sidebar and right canvas region layout.
-- Acceptance:
-  - Sidebar sections present (top controls, slide list, slide params, object tools, object params).
-  - Canvas viewport fills right panel.
-  - Responsive behavior works on desktop and laptop widths.
+Done criteria:
+- Navigation is smooth and grid scales correctly with zoom.
 
-## T-011 (P0) Create global store slices
-- Description: Implement Zustand slices for document, slides, objects, selection, history, and UI mode.
-- Acceptance:
-  - Store actions typed.
-  - State can be inspected in devtools.
-  - Initial document loads with defaults.
+## 4. Object Creation + Selection + Transform
+- [ ] Add tools for textbox, image placeholder, rectangle, circle, arrow.
+- [ ] Implement `shape_arrow` MVP as straight single-headed only (defer variants).
+- [ ] Implement single-click select and clear selection on empty click.
+- [ ] Implement transform controls: move, resize handles, rotate handle.
+- [ ] Apply grid and object-edge snapping during move/resize transforms.
+- [ ] For rotated objects, apply object-edge snapping against axis-aligned bounding boxes (MVP rule).
+- [ ] Implement lock/unlock behavior and lock icon control.
+- [ ] Implement shape fill modes: solid color and 2-stop linear gradient (`colorA`, `colorB`, `angleDeg`).
+- [ ] Implement shape opacity as percent (`0..100`) in model and UI controls.
 
-## T-012 (P1) Keyboard shortcut framework
-- Description: Add command-based hotkey dispatcher.
-- Acceptance:
-  - Shortcuts work for undo/redo/copy/paste.
-  - Conflicts with text editing are handled.
+Done criteria:
+- Selected unlocked objects can be transformed.
+- Locked objects remain selectable but not transformable.
 
-## 4. Phase 2: Canvas Runtime
+## 5. Multi-Select + Marquee + Layering
+- [ ] Implement `Shift + drag` marquee selection.
+- [ ] Apply marquee mode by horizontal drag direction: right = containment, left = intersection.
+- [ ] Support multi-selection with additive selection logic.
+- [ ] Restrict numeric property panel edits (`X/Y/W/H/Rotation`) to single selection only.
+- [ ] Implement layer actions: top/up/down/bottom.
+- [ ] Add object context menu with enable/disable rules.
+- [ ] Implement `Delete` key to remove selected unlocked objects immediately.
+- [ ] Ensure `Backspace` does not delete objects (reserved for text editing).
+- [ ] Ensure locked objects are protected from keyboard/context delete actions.
 
-## T-020 (P0) Integrate Fabric canvas
-- Description: Create Fabric stage wrapper with mount/unmount lifecycle.
-- Acceptance:
-  - Canvas initializes cleanly.
-  - Resize observer keeps canvas dimensions synced with panel.
+Done criteria:
+- Multi-select operations apply consistently to all selected objects.
 
-## T-021 (P0) Implement camera controller
-- Description: Add pan, zoom, rotate controls with pointer-centered zoom and `Alt + wheel` rotate.
-- Acceptance:
-  - Drag pans camera.
-  - Wheel zooms smoothly.
-  - Alt+wheel rotates view.
-  - Camera state stored in app state.
-  - Gesture-level camera commands are undoable/redoable.
+## 6. Group / Ungroup + Isolated Group Edit
+- [ ] Implement `group` object creation from selected items.
+- [ ] Implement ungroup with child restoration.
+- [ ] Add enter-group flows: double-click, `Enter`, toolbar icon.
+- [ ] Add exit-group flows: `Esc`, explicit action.
+- [ ] Restrict hit testing/editing to active group while isolated.
 
-## T-022 (P1) Implement adaptive grid renderer
-- Description: Draw major/minor grid levels based on zoom density spec.
-- Acceptance:
-  - Grid follows pan/zoom/rotate.
-  - Base spacing appears as 100x100 px at normal zoom.
-  - Subdivision into 10x10 appears at higher zoom.
+Done criteria:
+- Group hierarchy remains valid after group/ungroup/undo/redo.
 
-## 5. Phase 3: Object System
+## 7. Clipboard + Duplicate + Image Drop
+- [ ] Implement copy/paste via shortcuts and context menu.
+- [ ] Deep clone selected objects with new ids and preserved styles.
+- [ ] Preserve relative positions for multi-object paste.
+- [ ] Apply progressive `+20,+20` offset on repeated pastes.
+- [ ] Reset paste offset sequence when user copies a different source selection.
+- [ ] Support copy/paste of groups with child id remapping.
+- [ ] Implement duplicate/remove context actions.
+- [ ] Add drag-and-drop image import (`png`, `jpg`, `jpeg`, `gif`, `svg`).
 
-## T-030 (P0) Object factories
-- Description: Implement create object actions for textbox, image, rectangle, circle, arrow.
-- Acceptance:
-  - Object creation buttons add object to canvas and state.
-  - Default dimensions and style are applied.
-  - Shape defaults include border color/type/width, fill color, and opacity.
+Done criteria:
+- Clipboard actions are safe on invalid payloads and never crash.
 
-## T-031 (P0) Selection and transform handles
-- Description: Wire selection, multi-selection, resize, rotate, drag, and lock behavior.
-- Acceptance:
-  - Selected objects show handles.
-  - `Shift + drag` on empty canvas shows marquee and multi-selects intersecting objects.
-  - Locked object is selectable but cannot transform.
-  - Transform updates property panel and state.
-  - Selection commands are undoable/redoable.
+## 8. Slide Management + Slide Parameters
+- [ ] Build ordered slide list with drag-and-drop reorder.
+- [ ] Add slide create/update/delete from camera state.
+- [ ] Add slide parameter table and two-way binding to selected slide.
+- [ ] Validate `triggerDelayMs` in `0..3600000`.
+- [ ] Validate `transitionDurationMs` in `1000..10000` when transition is not `instant`.
+- [ ] Treat `transitionType = ease` as fixed `easeInOutCubic` (no curve selector in MVP).
 
-## T-032 (P1) Object properties panel
-- Description: Bind x/y/w/h/rotation/lock and layer actions to selected object(s).
-- Acceptance:
-  - Editing properties updates canvas immediately.
-  - Layer commands top/up/down/bottom are functional and undoable.
-  - Shape properties support editing border color/type/width, body fill color/gradient, and opacity.
-  - Shape contextual toolbar appears above edited shape object with quick shape style controls.
+Done criteria:
+- Slide order and parameters persist correctly after edits and reload.
 
-## T-034 (P1) Contextual floating toolbars
-- Description: Implement object-type-specific floating toolbars anchored above edited object.
-- Acceptance:
-  - Text toolbar appears above selected/edited text object.
-  - Shape toolbar appears above selected/edited shape object.
-  - Toolbar tracks object position during pan/zoom/rotate and object transforms.
-  - Toolbar hides when selection is cleared or object type is not eligible.
-  - Toolbar actions are undoable/redoable.
+## 9. Present Mode Runtime
+- [ ] Implement present mode entry from beginning and from current slide.
+- [ ] Implement camera transition engine: `ease`, `linear`, `instant`.
+- [ ] Implement slide progression for manual next/previous and timed auto-advance.
+- [ ] Fullscreen support and keyboard navigation.
+- [ ] Implement present-mode keys: next (`Right/Down/Space/PageDown`), previous (`Left/Up/PageUp`), exit (`Esc`).
 
-## T-033 (P1) Group and ungroup
-- Description: Implement grouping model and group transforms.
-- Acceptance:
-  - Multi-select can be grouped.
-  - Group can be ungrouped.
-  - User can enter group-isolated edit mode by double-click, `Enter` key, or enter-group icon next to lock icon.
-  - While in group mode, objects outside active group cannot be selected or edited.
-  - `Esc` exits group mode.
-  - Undo/redo supports group/ungroup and enter/exit group mode.
+Done criteria:
+- Presentation follows slide order and per-slide trigger/transition settings.
 
-## 6. Phase 4: Clipboard and Asset Input
+## 10. Floating Contextual Toolbars
+- [ ] Add text toolbar shown only for selected/edited textboxes.
+- [ ] Add shape toolbar shown only for selected shape objects.
+- [ ] Anchor toolbars above object in screen space.
+- [ ] Keep toolbar position synced during pan/zoom/rotate.
 
-## T-040 (P0) Copy/paste object graph
-- Description: Implement in-app clipboard payload and paste offset logic.
-- Acceptance:
-  - Ctrl/Cmd+C and Ctrl/Cmd+V work.
-  - Deep copy with new IDs.
-  - Repeated paste offsets by +20/+20.
-  - Groups paste with remapped child IDs.
+Done criteria:
+- Toolbars appear only when relevant and track object position reliably.
 
-## T-041 (P1) Object context menu actions
-- Description: Add right-click object context menu integration for object and grouping/layer actions.
-- Acceptance:
-  - Context menu opens for selected object(s).
-  - Actions include duplicate, remove, group, ungroup, and layer top/up/down/bottom.
-  - Existing copy/paste actions remain available from context menu.
-  - Disabled state shown when action unavailable.
-  - All context-menu actions are undoable/redoable.
+## 11. Persistence (Autosave + Manual Save/Load)
+- [ ] Implement autosave every 20s only when document changed.
+- [ ] Store latest snapshot + timestamp in local storage.
+- [ ] Keep rolling backups capped to 200 snapshots.
+- [ ] Auto-load latest snapshot on startup.
+- [ ] Treat autosave as default startup source priority.
+- [ ] Implement `New Document` reset flow (blank document defaults + fresh timestamps/ids + clean undo/redo history).
+- [ ] Implement XML save with embedded Base64 assets.
+- [ ] Implement XML load restoring full document state.
+- [ ] Implement strict XML v1.0 layout with fixed section order (`meta`, `canvas`, `slides`, `objects`, `assets`) and stable element names.
 
-## T-042 (P0) Drag-and-drop image import
-- Description: Support image file drop onto canvas using native browser drag-and-drop and asset registration.
-- Acceptance:
-  - Supported image files (`png`, `jpeg`/`jpg`, `gif`, `svg`) can be dropped.
-  - New image object appears at drop location.
-  - Asset stored in document model.
+Done criteria:
+- Restarting app restores latest autosave state.
+- XML round-trip preserves slides, objects, and assets.
 
-## 7. Phase 5: Slide System and Present Mode
+## 12. Standalone Presentation HTML Export
+- [ ] Build export pipeline that produces single HTML file.
+- [ ] Embed assets/styles/scripts as inline Base64 or inline text.
+- [ ] Remove editor UI and include presentation runtime only.
+- [ ] Ensure export opens from `file://` without network access.
+- [ ] Start playback from first slide.
 
-## T-050 (P0) Slide CRUD from camera
-- Description: Add create/update/delete actions for slide bookmarks.
-- Acceptance:
-  - Create from current camera works.
-  - Update selected slide from current camera works.
-  - Delete removes slide and updates order index.
+Done criteria:
+- Exported file runs offline and presents correctly on a fresh browser profile.
 
-## T-051 (P0) Slide reorder with drag-and-drop
-- Description: Implement sortable slide list.
-- Acceptance:
-  - Reordering updates `orderIndex`.
-  - Reorder action is undoable.
+## 13. Text Editing and Formatting
+- [ ] Implement in-place textbox editing.
+- [ ] Support basic rich text formatting controls.
+- [ ] Add bullets and numbered list support in text model.
+- [ ] Implement textbox auto-height as default behavior (grow with content, no internal scroll in MVP).
 
-## T-052 (P0) Slide parameters panel
-- Description: Bind name, position, zoom, rotation, trigger, and transition fields.
-- Acceptance:
-  - Panel edits update selected slide.
-  - Validation enforces `triggerDelayMs` in range `0..3_600_000`.
-  - Validation enforces `transitionDurationMs` in range `1_000..10_000` for `ease/linear`.
-  - Per-slide transition duration ignored when transition is instant.
+Done criteria:
+- Rich text edits persist through save/load and undo/redo.
 
-## T-053 (P0) Present mode runtime
-- Description: Build fullscreen presentation runtime with start-from-beginning/current entry.
-- Acceptance:
-  - Both start buttons work.
-  - Manual progression works.
-  - Timed progression starts timer on slide entry and auto-advances.
-  - Per-slide transition type and duration are applied.
-  - Presentation commands (`start`, `next`, `previous`) are undoable/redoable.
+## 14. QA + Regression Tests
+- [ ] Unit tests for geometry transforms and command reducers.
+- [ ] Unit tests for slide timing and transition selection.
+- [ ] Add integration test for group isolate mode.
+- [ ] Add integration test for copy/paste with groups.
+- [ ] Add integration test for paste offset reset after copying a different source selection.
+- [ ] Add integration test for autosave restore.
+- [ ] Add integration test for `New Document` reset behavior.
+- [ ] Add integration test for export runtime boot.
+- [ ] Add smoke E2E: create content -> create slides -> present -> export.
 
-## 8. Phase 6: Rich Text
+Done criteria:
+- Critical editor flows pass in CI.
 
-## T-060 (P1) Rich text editor integration
-- Description: Integrate tiptap editor for text object editing.
-- Acceptance:
-  - Text supports basic formatting.
-  - Bullet list and numbered list supported.
-  - Content stored as stable JSON payload.
-  - Text contextual toolbar appears above edited text object with quick formatting actions.
-
-## T-061 (P1) Canvas text render bridge
-- Description: Convert rich text document to canvas rendering format.
-- Acceptance:
-  - Text style renders consistently after save/load.
-  - Editing existing text object restores previous formatting.
-
-## 9. Phase 7: Persistence and XML
-
-## T-070 (P0) Autosave service
-- Description: Save full document every 20 seconds only when changed, and on lifecycle events.
-- Acceptance:
-  - Autosave timestamp updates.
-  - No autosave snapshot is written when document has no changes.
-  - Rolling backup snapshots are capped at `200`.
-  - Last autosave restores automatically on startup.
-
-## T-071 (P0) XML serializer
-- Description: Serialize full document model including embedded Base64 assets.
-- Acceptance:
-  - Generated XML includes meta/canvas/slides/objects/assets sections.
-  - Exported file can be re-imported losslessly for core properties.
-
-## T-072 (P0) XML parser
-- Description: Parse XML into document model using `fast-xml-parser` with validation and unknown-tag tolerance.
-- Acceptance:
-  - Valid XML loads into editor.
-  - Unknown tags do not break loading.
-  - Invalid XML returns safe, actionable error.
-
-## T-073 (P0) Standalone presentation HTML exporter
-- Description: Generate one self-contained HTML file for presentation playback only.
-- Acceptance:
-  - Export generates a single `.html` file.
-  - File embeds document data and all used assets using Base64 encoding.
-  - File contains no external dependencies (no CDN/local sidecar files).
-  - Opening exported file locally (`file://`) starts presentation runtime and works offline.
-  - Exported presentation starts from first slide.
-  - Exported runtime exposes no edit UI/features.
-
-## 10. Phase 8: History, Quality, and Hardening
-
-## T-080 (P0) Undo/redo command engine
-- Description: Implement command stack and wire all user commands.
-- Acceptance:
-  - Undo/redo works for object, slide, clipboard, layer, grouping, group enter/exit, property, selection, camera, and presentation actions.
-  - History reset behavior on file load is defined and implemented.
-
-## T-081 (P1) Unit tests
-- Description: Add tests for transform math, clipboard remap, XML round-trip, and command stack.
-- Acceptance:
-  - Test suite runs in CI.
-  - Core modules have baseline coverage.
-
-## T-082 (P1) Integration tests
-- Description: Add end-to-end scenarios for core editing and presentation workflows.
-- Acceptance:
-  - Test scripts cover create->edit->present->save->reload cycle.
-  - Group isolation behavior is verified (enter group, external objects unavailable, `Esc` exit).
-  - Exported standalone HTML presentation is validated in offline/local-open flow.
-  - No critical regressions in main flow.
-
-## T-083 (P2) Performance pass
-- Description: Profile rendering and interaction with large object counts.
-- Acceptance:
-  - Pan/zoom remains smooth on target document size.
-  - Hot paths documented and optimized.
-
-## 11. Immediate Next Sprint Proposal
-
-Sprint objective: Deliver a minimal usable editor with camera navigation and basic objects.
-
-Sprint backlog:
-1. T-001
-2. T-002
-3. T-003
-4. T-010
-5. T-011
-6. T-020
-7. T-021
-8. T-030
-9. T-031
-
-Sprint done criteria:
-- User can navigate canvas, create and transform objects, and see state reflected in UI.
+## Suggested Delivery Milestones
+- [ ] Milestone A: Tasks 0-4 (interactive editor foundation).
+- [ ] Milestone B: Tasks 5-8 (editing power + slide authoring).
+- [ ] Milestone C: Tasks 9-12 (presentation + persistence + export).
+- [ ] Milestone D: Tasks 13-14 (text depth + hardening).
