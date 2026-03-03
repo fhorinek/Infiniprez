@@ -158,6 +158,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       ...state,
       ui: {
         ...state.ui,
+        selectedObjectIds: [],
         activeGroupId: groupId,
       },
     })),
@@ -167,6 +168,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       ...state,
       ui: {
         ...state.ui,
+        selectedObjectIds: [],
         activeGroupId: null,
       },
     })),

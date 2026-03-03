@@ -77,7 +77,7 @@ Done criteria:
 - [x] Implement ungroup with child restoration.
 - [x] Add enter-group flows: double-click, `Enter`, toolbar icon.
 - [x] Add exit-group flows: `Esc`, explicit action.
-- [ ] Restrict hit testing/editing to active group while isolated.
+- [x] Restrict hit testing/editing to active group while isolated.
 
 Done criteria:
 - Group hierarchy remains valid after group/ungroup/undo/redo.

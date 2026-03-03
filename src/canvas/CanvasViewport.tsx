@@ -412,14 +412,20 @@ export function CanvasViewport() {
 
   const viewportSize = useViewportSize(viewportRef)
   const orderedObjects = useMemo(() => [...objects].sort((a, b) => a.zIndex - b.zIndex), [objects])
+  const editableObjects = useMemo(() => {
+    if (!activeGroupId) {
+      return orderedObjects
+    }
+    return orderedObjects.filter((object) => object.parentGroupId === activeGroupId)
+  }, [activeGroupId, orderedObjects])
   const selectedObject =
     selectedObjectIds.length === 1
       ? (orderedObjects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
   const selectedObjects = useMemo(() => {
     const selectedSet = new Set(selectedObjectIds)
-    return orderedObjects.filter((object) => selectedSet.has(object.id))
-  }, [orderedObjects, selectedObjectIds])
+    return editableObjects.filter((object) => selectedSet.has(object.id))
+  }, [editableObjects, selectedObjectIds])
   const selectedGroup =
     selectedObjects.length === 1 && selectedObjects[0]?.type === 'group' ? selectedObjects[0] : null
   const selectedUnlockedObjects = useMemo(
@@ -572,8 +578,8 @@ export function CanvasViewport() {
   const contextSelectionIds = contextMenu?.selectionIds ?? selectedObjectIds
   const contextSelectionObjects = useMemo(() => {
     const selectedSet = new Set(contextSelectionIds)
-    return orderedObjects.filter((object) => selectedSet.has(object.id))
-  }, [contextSelectionIds, orderedObjects])
+    return editableObjects.filter((object) => selectedSet.has(object.id))
+  }, [contextSelectionIds, editableObjects])
   const contextUnlockedIds = useMemo(
     () => contextSelectionObjects.filter((object) => !object.locked).map((object) => object.id),
     [contextSelectionObjects]
@@ -737,7 +743,7 @@ export function CanvasViewport() {
     const snapToleranceWorld = canvasSettings.snapTolerancePx / Math.max(0.00001, camera.zoom)
     const interactionIds = new Set(interaction.targets.map((target) => target.id))
     const edgeCandidates = canSnapToObjectEdges
-      ? collectSnapCandidateEdges(orderedObjects.filter((object) => !interactionIds.has(object.id)))
+      ? collectSnapCandidateEdges(editableObjects.filter((object) => !interactionIds.has(object.id)))
       : { x: [], y: [] }
 
     if (interaction.mode === 'move') {
@@ -936,7 +942,7 @@ export function CanvasViewport() {
     }
 
     const usesContainMode = interaction.currentScreen.x >= interaction.startScreen.x
-    const hits = orderedObjects
+    const hits = editableObjects
       .filter((object) => {
         const bounds = getObjectScreenAabb(object, camera, viewportSize)
         return usesContainMode ? containsRect(rect, bounds) : intersectsRect(rect, bounds)
@@ -1108,7 +1114,7 @@ export function CanvasViewport() {
       </svg>
 
       <div className="objects-layer">
-        {orderedObjects.map((object) => {
+        {editableObjects.map((object) => {
           const center = worldToScreen({ x: object.x, y: object.y }, camera, viewportSize)
           const widthPx = object.w * camera.zoom
           const heightPx = object.h * camera.zoom
