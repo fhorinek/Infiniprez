@@ -50,6 +50,7 @@ export interface EditorActions {
   toggleObjectLock: (objectId: string) => void
   setShapeOpacity: (objectId: string, opacityPercent: number) => void
   groupObjects: (objectIds: string[]) => void
+  ungroupObjects: (objectIds: string[]) => void
   createSlide: (slide: Slide) => void
   deleteSlide: (slideId: string) => void
 }

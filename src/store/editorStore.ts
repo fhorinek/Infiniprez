@@ -14,6 +14,7 @@ import {
   setShapeOpacityCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
+  ungroupObjectCommand,
   undoCommand,
   type Command,
 } from '../commands'
@@ -353,6 +354,33 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const command = groupObjectsCommand(groupObject, childParentBefore)
     get().executeDocumentCommand(command)
     get().selectObjects([groupId])
+  },
+
+  ungroupObjects: (objectIds) => {
+    if (objectIds.length === 0) {
+      return
+    }
+
+    const targets = get().document.objects.filter(
+      (entry): entry is Extract<CanvasObject, { type: 'group' }> =>
+        objectIds.includes(entry.id) && entry.type === 'group'
+    )
+    if (targets.length === 0) {
+      return
+    }
+
+    for (const group of targets) {
+      const childParentBefore = Object.fromEntries(
+        group.groupData.childIds.map((childId: string) => [childId, group.id])
+      ) as Record<string, string | null>
+      const command = ungroupObjectCommand(group, childParentBefore)
+      get().executeDocumentCommand(command)
+    }
+
+    const restoredChildren = targets.flatMap((group) => group.groupData.childIds)
+    if (restoredChildren.length > 0) {
+      get().selectObjects(restoredChildren)
+    }
   },
 
   createSlide: (slide) => {

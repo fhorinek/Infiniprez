@@ -402,6 +402,7 @@ export function CanvasViewport() {
   const deleteObjects = useEditorStore((state) => state.deleteObjects)
   const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const groupObjects = useEditorStore((state) => state.groupObjects)
+  const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
@@ -1354,6 +1355,10 @@ export function CanvasViewport() {
             type="button"
             disabled={!canUngroup}
             title={canUngroup ? 'Ungroup' : 'Select one group object'}
+            onClick={() => {
+              ungroupObjects(contextSelectionIds)
+              closeContextMenu()
+            }}
           >
             <FontAwesomeIcon icon={faObjectUngroup} />
             Ungroup
