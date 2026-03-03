@@ -1,5 +1,5 @@
 import type { Command, HistoryState } from '../commands'
-import type { CanvasObject, DocumentModel, LayerOrderAction, Slide } from '../model'
+import type { Asset, CanvasObject, DocumentModel, LayerOrderAction, Slide } from '../model'
 
 export interface CameraState {
   x: number
@@ -43,6 +43,7 @@ export interface EditorActions {
   undo: () => void
   redo: () => void
   createObject: (object: CanvasObject) => void
+  createAsset: (asset: Asset) => void
   moveObject: (
     objectId: string,
     next: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>

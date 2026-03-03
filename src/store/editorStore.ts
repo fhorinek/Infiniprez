@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   combineCommands,
   createEmptyHistory,
+  createAssetCommand,
   createObjectCommand,
   createSlideCommand,
   deleteObjectsCommand,
@@ -21,6 +22,7 @@ import {
 import {
   computeLayerZIndexSnapshots,
   createEmptyDocument,
+  type Asset,
   type CanvasObject,
   type DocumentModel,
 } from '../model'
@@ -234,6 +236,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   createObject: (object) => {
     const command = createObjectCommand(object)
+    get().executeDocumentCommand(command)
+  },
+
+  createAsset: (asset: Asset) => {
+    const command = createAssetCommand(asset)
     get().executeDocumentCommand(command)
   },
 

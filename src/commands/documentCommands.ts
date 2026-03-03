@@ -35,6 +35,27 @@ export function createObjectCommand(object: CanvasObject): Command<DocumentModel
   }
 }
 
+export function createAssetCommand(asset: DocumentModel['assets'][number]): Command<DocumentModel> {
+  return {
+    label: 'Create asset',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const exists = draft.assets.some((entry) => entry.id === asset.id)
+          if (!exists) {
+            draft.assets.push(asset)
+          }
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.assets = draft.assets.filter((entry) => entry.id !== asset.id)
+        })
+      ),
+  }
+}
+
 export function deleteObjectsCommand(
   objectIds: string[],
   removed: Array<{ object: CanvasObject; index: number }>

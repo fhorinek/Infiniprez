@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type PointerEvent,
+  type RefObject,
+} from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowsDownToLine,
@@ -14,7 +22,13 @@ import {
   faObjectUngroup,
   faTrashCan,
 } from '@fortawesome/free-solid-svg-icons'
-import { canReorderLayer, type CanvasObject, type LayerOrderAction, type ShapeData } from '../model'
+import {
+  canReorderLayer,
+  type Asset,
+  type CanvasObject,
+  type LayerOrderAction,
+  type ShapeData,
+} from '../model'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
 import {
@@ -100,6 +114,14 @@ interface ContextMenuState {
   y: number
   selectionIds: string[]
 }
+
+const SUPPORTED_IMAGE_TYPES = new Set([
+  'image/png',
+  'image/jpg',
+  'image/jpeg',
+  'image/gif',
+  'image/svg+xml',
+])
 
 function useViewportSize(ref: RefObject<HTMLElement>) {
   const [size, setSize] = useState<ViewportSize>({ width: 1, height: 1 })
@@ -396,6 +418,35 @@ function createId() {
   return `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error('Failed to read file'))
+      }
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function getImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
+    image.onerror = () => reject(new Error('Failed to load image dimensions'))
+    image.src = dataUrl
+  })
+}
+
+function toAssetBase64(dataUrl: string): string {
+  const [, base64] = dataUrl.split(',', 2)
+  return base64 ?? ''
+}
+
 export function CanvasViewport() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<PanInteraction | null>(null)
@@ -414,6 +465,7 @@ export function CanvasViewport() {
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
+  const createAsset = useEditorStore((state) => state.createAsset)
   const createObject = useEditorStore((state) => state.createObject)
   const enterGroup = useEditorStore((state) => state.enterGroup)
   const exitGroup = useEditorStore((state) => state.exitGroup)
@@ -712,6 +764,71 @@ export function CanvasViewport() {
     clipboardRef.current = {
       ...clipboard,
       pasteCount: clipboard.pasteCount + 1,
+    }
+  }
+
+  async function handleViewportDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    closeContextMenu()
+
+    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
+      SUPPORTED_IMAGE_TYPES.has(file.type)
+    )
+    if (files.length === 0) {
+      return
+    }
+
+    const pointer = getViewportRelativePoint(event.clientX, event.clientY)
+    const world = screenToWorld(pointer, camera, viewportSize)
+    const zIndexStart = objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1
+    const createdIds: string[] = []
+
+    beginCommandBatch('Import images')
+    try {
+      for (const [index, file] of files.entries()) {
+        const dataUrl = await readFileAsDataUrl(file)
+        const dimensions = await getImageDimensions(dataUrl).catch(() => ({
+          width: 1200,
+          height: 800,
+        }))
+        const asset: Asset = {
+          id: createId(),
+          name: file.name || `image-${index + 1}`,
+          mimeType: file.type,
+          dataBase64: toAssetBase64(dataUrl),
+        }
+        createAsset(asset)
+
+        const aspectRatio = Math.max(0.0001, dimensions.width / Math.max(1, dimensions.height))
+        const width = 260
+        const height = Math.max(40, width / aspectRatio)
+        const objectId = createId()
+        createObject({
+          id: objectId,
+          type: 'image',
+          x: world.x + index * 20,
+          y: world.y + index * 20,
+          w: width,
+          h: height,
+          rotation: -camera.rotation,
+          locked: false,
+          zIndex: zIndexStart + index,
+          parentGroupId: activeGroupId,
+          imageData: {
+            assetId: asset.id,
+            intrinsicWidth: dimensions.width,
+            intrinsicHeight: dimensions.height,
+            keepAspectRatio: true,
+          },
+        })
+        createdIds.push(objectId)
+      }
+      commitCommandBatch()
+      if (createdIds.length > 0) {
+        selectObjects(createdIds)
+      }
+    } catch {
+      commitCommandBatch()
     }
   }
 
@@ -1171,6 +1288,12 @@ export function CanvasViewport() {
     <div
       ref={viewportRef}
       className="canvas-stage"
+      onDragOver={(event) => {
+        if (Array.from(event.dataTransfer.types).includes('Files')) {
+          event.preventDefault()
+        }
+      }}
+      onDrop={handleViewportDrop}
       onPointerDown={handleViewportPointerDown}
       onPointerMove={handleViewportPointerMove}
       onPointerUp={handleViewportPointerUp}

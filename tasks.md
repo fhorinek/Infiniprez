@@ -90,7 +90,7 @@ Done criteria:
 - [x] Reset paste offset sequence when user copies a different source selection.
 - [x] Support copy/paste of groups with child id remapping.
 - [x] Implement duplicate/remove context actions.
-- [ ] Add drag-and-drop image import (`png`, `jpg`, `jpeg`, `gif`, `svg`).
+- [x] Add drag-and-drop image import (`png`, `jpg`, `jpeg`, `gif`, `svg`).
 
 Done criteria:
 - Clipboard actions are safe on invalid payloads and never crash.
