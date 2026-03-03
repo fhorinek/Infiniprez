@@ -40,13 +40,19 @@ interface PanInteraction {
   cameraStart: CameraState
 }
 
+type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+
 interface ObjectInteraction {
   pointerId: number
-  objectId: string
+  targets: Array<{
+    id: string
+    start: TransformSnapshot
+  }>
   mode: 'move' | 'resize' | 'rotate'
   originClient: Point
-  objectStart: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
   cameraStart: CameraState
+  centerStart: Point
+  selectionBoundsStart: Rect
   centerScreenStart: Point
   startPointerAngle: number
 }
@@ -205,6 +211,49 @@ function getObjectScreenAabb(
   }
 }
 
+function getObjectWorldAabb(object: CanvasObject): Rect {
+  const halfW = object.w / 2
+  const halfH = object.h / 2
+  const localCorners = [
+    { x: -halfW, y: -halfH },
+    { x: halfW, y: -halfH },
+    { x: halfW, y: halfH },
+    { x: -halfW, y: halfH },
+  ]
+
+  const worldCorners = localCorners.map((corner) => {
+    const rotated = rotatePoint(corner, object.rotation)
+    return {
+      x: object.x + rotated.x,
+      y: object.y + rotated.y,
+    }
+  })
+
+  return {
+    minX: Math.min(...worldCorners.map((point) => point.x)),
+    minY: Math.min(...worldCorners.map((point) => point.y)),
+    maxX: Math.max(...worldCorners.map((point) => point.x)),
+    maxY: Math.max(...worldCorners.map((point) => point.y)),
+  }
+}
+
+function getObjectsWorldAabb(objects: CanvasObject[]): Rect | null {
+  if (objects.length === 0) {
+    return null
+  }
+
+  const bounds = getObjectWorldAabb(objects[0])
+  for (const object of objects.slice(1)) {
+    const objectBounds = getObjectWorldAabb(object)
+    bounds.minX = Math.min(bounds.minX, objectBounds.minX)
+    bounds.minY = Math.min(bounds.minY, objectBounds.minY)
+    bounds.maxX = Math.max(bounds.maxX, objectBounds.maxX)
+    bounds.maxY = Math.max(bounds.maxY, objectBounds.maxY)
+  }
+
+  return bounds
+}
+
 function containsRect(outer: Rect, inner: Rect): boolean {
   return (
     inner.minX >= outer.minX &&
@@ -250,10 +299,20 @@ export function CanvasViewport() {
     const selectedSet = new Set(selectedObjectIds)
     return orderedObjects.filter((object) => selectedSet.has(object.id))
   }, [orderedObjects, selectedObjectIds])
-  const selectedUnlockedIds = useMemo(
-    () => selectedObjects.filter((object) => !object.locked).map((object) => object.id),
+  const selectedUnlockedObjects = useMemo(
+    () => selectedObjects.filter((object) => !object.locked),
     [selectedObjects]
   )
+  const selectedUnlockedIds = useMemo(
+    () => selectedUnlockedObjects.map((object) => object.id),
+    [selectedUnlockedObjects]
+  )
+  const multiSelectionBounds = useMemo(() => {
+    if (selectedObject || selectedUnlockedObjects.length < 2) {
+      return null
+    }
+    return getObjectsWorldAabb(selectedUnlockedObjects)
+  }, [selectedObject, selectedUnlockedObjects])
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -418,34 +477,48 @@ export function CanvasViewport() {
 
   function beginObjectInteraction(
     event: PointerEvent<HTMLElement>,
-    object: CanvasObject,
+    targets: CanvasObject[],
     mode: ObjectInteraction['mode']
   ) {
-    if (object.locked) {
+    const unlockedTargets = targets.filter((target) => !target.locked)
+    if (unlockedTargets.length === 0) {
       return
     }
 
-    const centerScreenStart = worldToScreen({ x: object.x, y: object.y }, camera, viewportSize)
+    const selectionBoundsStart = getObjectsWorldAabb(unlockedTargets)
+    if (!selectionBoundsStart) {
+      return
+    }
+
+    const centerStart = {
+      x: (selectionBoundsStart.minX + selectionBoundsStart.maxX) / 2,
+      y: (selectionBoundsStart.minY + selectionBoundsStart.maxY) / 2,
+    }
+    const centerScreenStart = worldToScreen(centerStart, camera, viewportSize)
     const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
     const startPointerAngle = Math.atan2(
       pointerScreen.y - centerScreenStart.y,
       pointerScreen.x - centerScreenStart.x
     )
 
-    beginCommandBatch('Object transform')
+    beginCommandBatch(unlockedTargets.length > 1 ? 'Objects transform' : 'Object transform')
     objectInteractionRef.current = {
       pointerId: event.pointerId,
-      objectId: object.id,
+      targets: unlockedTargets.map((target) => ({
+        id: target.id,
+        start: {
+          x: target.x,
+          y: target.y,
+          w: target.w,
+          h: target.h,
+          rotation: target.rotation,
+        },
+      })),
       mode,
       originClient: { x: event.clientX, y: event.clientY },
-      objectStart: {
-        x: object.x,
-        y: object.y,
-        w: object.w,
-        h: object.h,
-        rotation: object.rotation,
-      },
       cameraStart: camera,
+      centerStart,
+      selectionBoundsStart,
       centerScreenStart,
       startPointerAngle,
     }
@@ -457,6 +530,10 @@ export function CanvasViewport() {
     event: PointerEvent<HTMLDivElement>,
     interaction: ObjectInteraction
   ) {
+    if (interaction.targets.length === 0) {
+      return
+    }
+
     const deltaClient = {
       x: event.clientX - interaction.originClient.x,
       y: event.clientY - interaction.originClient.y,
@@ -464,36 +541,67 @@ export function CanvasViewport() {
     const deltaWorld = cameraDragDeltaToWorld(deltaClient, interaction.cameraStart)
 
     if (interaction.mode === 'move') {
-      moveObject(interaction.objectId, {
-        x: interaction.objectStart.x + deltaWorld.x,
-        y: interaction.objectStart.y + deltaWorld.y,
-        w: interaction.objectStart.w,
-        h: interaction.objectStart.h,
-        rotation: interaction.objectStart.rotation,
+      interaction.targets.forEach((target) => {
+        moveObject(target.id, {
+          x: target.start.x + deltaWorld.x,
+          y: target.start.y + deltaWorld.y,
+          w: target.start.w,
+          h: target.start.h,
+          rotation: target.start.rotation,
+        })
       })
       return
     }
 
     if (interaction.mode === 'resize') {
-      // Resize is computed in the object's local axis space so dragging
-      // follows the selected handle even when object is rotated.
-      const localDelta = rotatePoint(deltaWorld, -interaction.objectStart.rotation)
-      const nextWidth = Math.max(20, interaction.objectStart.w + localDelta.x)
-      const nextHeight = Math.max(20, interaction.objectStart.h + localDelta.y)
-      const appliedWidthDelta = nextWidth - interaction.objectStart.w
-      const appliedHeightDelta = nextHeight - interaction.objectStart.h
-      const centerShiftLocal = {
-        x: appliedWidthDelta / 2,
-        y: appliedHeightDelta / 2,
-      }
-      const centerShiftWorld = rotatePoint(centerShiftLocal, interaction.objectStart.rotation)
+      if (interaction.targets.length === 1) {
+        const target = interaction.targets[0]
+        const localDelta = rotatePoint(deltaWorld, -target.start.rotation)
+        const nextWidth = Math.max(20, target.start.w + localDelta.x)
+        const nextHeight = Math.max(20, target.start.h + localDelta.y)
+        const appliedWidthDelta = nextWidth - target.start.w
+        const appliedHeightDelta = nextHeight - target.start.h
+        const centerShiftLocal = {
+          x: appliedWidthDelta / 2,
+          y: appliedHeightDelta / 2,
+        }
+        const centerShiftWorld = rotatePoint(centerShiftLocal, target.start.rotation)
 
-      moveObject(interaction.objectId, {
-        x: interaction.objectStart.x + centerShiftWorld.x,
-        y: interaction.objectStart.y + centerShiftWorld.y,
-        w: nextWidth,
-        h: nextHeight,
-        rotation: interaction.objectStart.rotation,
+        moveObject(target.id, {
+          x: target.start.x + centerShiftWorld.x,
+          y: target.start.y + centerShiftWorld.y,
+          w: nextWidth,
+          h: nextHeight,
+          rotation: target.start.rotation,
+        })
+        return
+      }
+
+      // Multi-resize scales each unlocked selected object from the
+      // selection bounds top-left anchor in world space.
+      const selectionWidth = Math.max(
+        1,
+        interaction.selectionBoundsStart.maxX - interaction.selectionBoundsStart.minX
+      )
+      const selectionHeight = Math.max(
+        1,
+        interaction.selectionBoundsStart.maxY - interaction.selectionBoundsStart.minY
+      )
+      const nextWidth = Math.max(20, selectionWidth + deltaWorld.x)
+      const nextHeight = Math.max(20, selectionHeight + deltaWorld.y)
+      const scaleX = nextWidth / selectionWidth
+      const scaleY = nextHeight / selectionHeight
+      const anchorX = interaction.selectionBoundsStart.minX
+      const anchorY = interaction.selectionBoundsStart.minY
+
+      interaction.targets.forEach((target) => {
+        moveObject(target.id, {
+          x: anchorX + (target.start.x - anchorX) * scaleX,
+          y: anchorY + (target.start.y - anchorY) * scaleY,
+          w: Math.max(20, target.start.w * scaleX),
+          h: Math.max(20, target.start.h * scaleY),
+          rotation: target.start.rotation,
+        })
       })
       return
     }
@@ -505,12 +613,20 @@ export function CanvasViewport() {
     )
     const rotationDelta = currentAngle - interaction.startPointerAngle
 
-    moveObject(interaction.objectId, {
-      x: interaction.objectStart.x,
-      y: interaction.objectStart.y,
-      w: interaction.objectStart.w,
-      h: interaction.objectStart.h,
-      rotation: interaction.objectStart.rotation + rotationDelta,
+    interaction.targets.forEach((target) => {
+      const startOffset = {
+        x: target.start.x - interaction.centerStart.x,
+        y: target.start.y - interaction.centerStart.y,
+      }
+      const rotatedOffset = rotatePoint(startOffset, rotationDelta)
+
+      moveObject(target.id, {
+        x: interaction.centerStart.x + rotatedOffset.x,
+        y: interaction.centerStart.y + rotatedOffset.y,
+        w: target.start.w,
+        h: target.start.h,
+        rotation: target.start.rotation + rotationDelta,
+      })
     })
   }
 
@@ -756,8 +872,17 @@ export function CanvasViewport() {
                   return
                 }
 
+                const isSelected = selectedObjectIds.includes(object.id)
+                if (isSelected && selectedUnlockedObjects.length > 1) {
+                  if (object.locked) {
+                    return
+                  }
+                  beginObjectInteraction(event, selectedUnlockedObjects, 'move')
+                  return
+                }
+
                 selectObjects([object.id])
-                beginObjectInteraction(event, object, 'move')
+                beginObjectInteraction(event, [object], 'move')
               }}
               onContextMenu={(event) => {
                 event.preventDefault()
@@ -830,7 +955,7 @@ export function CanvasViewport() {
                 onPointerDown={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  beginObjectInteraction(event, selectedObject, 'resize')
+                  beginObjectInteraction(event, [selectedObject], 'resize')
                 }}
               />
               <button
@@ -840,7 +965,7 @@ export function CanvasViewport() {
                 onPointerDown={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  beginObjectInteraction(event, selectedObject, 'rotate')
+                  beginObjectInteraction(event, [selectedObject], 'rotate')
                 }}
               />
             </>
@@ -849,6 +974,10 @@ export function CanvasViewport() {
           <button
             type="button"
             className="lock-handle"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
             onClick={(event) => {
               event.stopPropagation()
               toggleObjectLock(selectedObject.id)
@@ -858,6 +987,58 @@ export function CanvasViewport() {
           >
             <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
           </button>
+        </div>
+      )}
+
+      {!selectedObject && multiSelectionBounds && (
+        <div
+          className="selection-overlay"
+          style={{
+            left:
+              worldToScreen(
+                {
+                  x: (multiSelectionBounds.minX + multiSelectionBounds.maxX) / 2,
+                  y: (multiSelectionBounds.minY + multiSelectionBounds.maxY) / 2,
+                },
+                camera,
+                viewportSize
+              ).x -
+              ((multiSelectionBounds.maxX - multiSelectionBounds.minX) * camera.zoom) / 2,
+            top:
+              worldToScreen(
+                {
+                  x: (multiSelectionBounds.minX + multiSelectionBounds.maxX) / 2,
+                  y: (multiSelectionBounds.minY + multiSelectionBounds.maxY) / 2,
+                },
+                camera,
+                viewportSize
+              ).y -
+              ((multiSelectionBounds.maxY - multiSelectionBounds.minY) * camera.zoom) / 2,
+            width: (multiSelectionBounds.maxX - multiSelectionBounds.minX) * camera.zoom,
+            height: (multiSelectionBounds.maxY - multiSelectionBounds.minY) * camera.zoom,
+            transform: `rotate(${camera.rotation}rad)`,
+          }}
+        >
+          <button
+            type="button"
+            className="resize-handle"
+            aria-label="Resize selection"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              beginObjectInteraction(event, selectedUnlockedObjects, 'resize')
+            }}
+          />
+          <button
+            type="button"
+            className="rotate-handle"
+            aria-label="Rotate selection"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              beginObjectInteraction(event, selectedUnlockedObjects, 'rotate')
+            }}
+          />
         </div>
       )}
 
