@@ -382,11 +382,19 @@ function getObjectEdgeSnapOffset(
   }
 }
 
+function createId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+}
+
 export function CanvasViewport() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<PanInteraction | null>(null)
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
+  const clipboardRef = useRef<CanvasObject[] | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
@@ -399,6 +407,7 @@ export function CanvasViewport() {
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
+  const createObject = useEditorStore((state) => state.createObject)
   const enterGroup = useEditorStore((state) => state.enterGroup)
   const exitGroup = useEditorStore((state) => state.exitGroup)
   const moveObject = useEditorStore((state) => state.moveObject)
@@ -615,9 +624,55 @@ export function CanvasViewport() {
     reorderObjectsLayer(contextSelectionIds, action)
   }
 
+  function copySelection(ids: string[]) {
+    if (ids.length === 0) {
+      return
+    }
+    const selectedSet = new Set(ids)
+    const copied = objects
+      .filter((object) => selectedSet.has(object.id))
+      .map((object) => JSON.parse(JSON.stringify(object)) as CanvasObject)
+    clipboardRef.current = copied.length > 0 ? copied : null
+  }
+
+  function pasteClipboard() {
+    const source = clipboardRef.current
+    if (!source || source.length === 0) {
+      return
+    }
+
+    const zIndexStart = objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1
+    const clones = source.map((object, index) => {
+      const next = JSON.parse(JSON.stringify(object)) as CanvasObject
+      next.id = createId()
+      next.parentGroupId = null
+      next.zIndex = zIndexStart + index
+      return next
+    })
+
+    beginCommandBatch('Paste objects')
+    clones.forEach((entry) => createObject(entry))
+    commitCommandBatch()
+    selectObjects(clones.map((entry) => entry.id))
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTextInputTarget(event.target)) {
+        return
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
+        if (selectedObjectIds.length > 0) {
+          event.preventDefault()
+          copySelection(selectedObjectIds)
+        }
+        return
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
+        event.preventDefault()
+        pasteClipboard()
         return
       }
 
@@ -651,9 +706,13 @@ export function CanvasViewport() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     activeGroupId,
+    beginCommandBatch,
+    commitCommandBatch,
+    createObject,
     deleteObjects,
     enterGroup,
     exitGroup,
+    objects,
     selectedGroup,
     selectedObjectIds,
     selectedUnlockedIds,
@@ -1363,9 +1422,29 @@ export function CanvasViewport() {
           }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <button type="button" disabled title="Not implemented in this step">
+          <button
+            type="button"
+            disabled={contextSelectionIds.length === 0}
+            onClick={() => {
+              copySelection(contextSelectionIds)
+              closeContextMenu()
+            }}
+            title={contextSelectionIds.length === 0 ? 'No objects selected' : 'Copy'}
+          >
             <FontAwesomeIcon icon={faClone} />
-            Duplicate
+            Copy
+          </button>
+          <button
+            type="button"
+            disabled={!clipboardRef.current}
+            onClick={() => {
+              pasteClipboard()
+              closeContextMenu()
+            }}
+            title={clipboardRef.current ? 'Paste' : 'Clipboard empty'}
+          >
+            <FontAwesomeIcon icon={faClone} />
+            Paste
           </button>
           <button
             type="button"
