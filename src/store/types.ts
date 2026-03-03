@@ -29,6 +29,7 @@ export interface EditorState {
 }
 
 export interface EditorActions {
+  setCamera: (camera: CameraState) => void
   executeDocumentCommand: (command: Command<DocumentModel>) => void
   beginCommandBatch: (label: string) => void
   commitCommandBatch: () => void

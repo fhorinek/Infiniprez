@@ -33,8 +33,8 @@ const DEFAULT_UI: UiState = {
 function createInitialState(): EditorState {
   return {
     document: createEmptyDocument(),
-    camera: DEFAULT_CAMERA,
-    ui: DEFAULT_UI,
+    camera: { ...DEFAULT_CAMERA },
+    ui: { ...DEFAULT_UI },
     history: createEmptyHistory<DocumentModel>(),
     pendingBatch: null,
   }
@@ -68,6 +68,12 @@ function captureRemovedObjects(document: DocumentModel, objectIds: string[]) {
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   ...createInitialState(),
+
+  setCamera: (camera) =>
+    set((state) => ({
+      ...state,
+      camera,
+    })),
 
   executeDocumentCommand: (command) =>
     set((state) => {

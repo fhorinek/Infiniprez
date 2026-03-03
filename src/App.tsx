@@ -20,6 +20,7 @@ import {
   faTrashCan,
   faUndo,
 } from '@fortawesome/free-solid-svg-icons'
+import { CanvasViewport } from './canvas'
 import './App.css'
 
 function App() {
@@ -154,16 +155,7 @@ function App() {
           </button>
         </div>
 
-        <div className="canvas-stage" role="img" aria-label="Infinite canvas placeholder with grid">
-          <div className="grid-overlay" />
-          <div className="camera-card">
-            <h3>Canvas Viewport</h3>
-            <p>
-              Infinite canvas, adaptive grid, object interactions, and camera controls land in Step
-              1+.
-            </p>
-          </div>
-        </div>
+        <CanvasViewport />
       </main>
     </div>
   )
