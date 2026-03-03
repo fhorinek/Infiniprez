@@ -84,7 +84,7 @@ Done criteria:
 
 ## 7. Clipboard + Duplicate + Image Drop
 - [x] Implement copy/paste via shortcuts and context menu.
-- [ ] Deep clone selected objects with new ids and preserved styles.
+- [x] Deep clone selected objects with new ids and preserved styles.
 - [ ] Preserve relative positions for multi-object paste.
 - [ ] Apply progressive `+20,+20` offset on repeated pastes.
 - [ ] Reset paste offset sequence when user copies a different source selection.
