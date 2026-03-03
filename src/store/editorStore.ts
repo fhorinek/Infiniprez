@@ -153,6 +153,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       },
     })),
 
+  enterGroup: (groupId) =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        activeGroupId: groupId,
+      },
+    })),
+
+  exitGroup: () =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        activeGroupId: null,
+      },
+    })),
+
   executeDocumentCommand: (command) =>
     set((state) => {
       return executeOrQueueCommand(state, command)

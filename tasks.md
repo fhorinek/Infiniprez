@@ -75,8 +75,8 @@ Done criteria:
 ## 6. Group / Ungroup + Isolated Group Edit
 - [x] Implement `group` object creation from selected items.
 - [x] Implement ungroup with child restoration.
-- [ ] Add enter-group flows: double-click, `Enter`, toolbar icon.
-- [ ] Add exit-group flows: `Esc`, explicit action.
+- [x] Add enter-group flows: double-click, `Enter`, toolbar icon.
+- [x] Add exit-group flows: `Esc`, explicit action.
 - [ ] Restrict hit testing/editing to active group while isolated.
 
 Done criteria:

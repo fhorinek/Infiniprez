@@ -34,6 +34,8 @@ export interface EditorActions {
   resetDocument: () => void
   selectObjects: (objectIds: string[]) => void
   clearSelection: () => void
+  enterGroup: (groupId: string) => void
+  exitGroup: () => void
   executeDocumentCommand: (command: Command<DocumentModel>) => void
   beginCommandBatch: (label: string) => void
   commitCommandBatch: () => void

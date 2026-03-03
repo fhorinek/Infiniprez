@@ -102,10 +102,13 @@ function App() {
   const replaceDocument = useEditorStore((state) => state.replaceDocument)
   const resetDocument = useEditorStore((state) => state.resetDocument)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
+  const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const createObject = useEditorStore((state) => state.createObject)
   const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
+  const enterGroup = useEditorStore((state) => state.enterGroup)
+  const exitGroup = useEditorStore((state) => state.exitGroup)
 
   const selectedObject =
     selectedObjectIds.length === 1
@@ -119,6 +122,8 @@ function App() {
       selectedObject.type === 'shape_arrow')
       ? selectedObject
       : null
+  const selectedGroupObject =
+    selectedObject && selectedObject.type === 'group' ? selectedObject : null
   const canBringToFront = canReorderLayer(document.objects, selectedObjectIds, 'top')
   const canBringForward = canReorderLayer(document.objects, selectedObjectIds, 'up')
   const canSendBackward = canReorderLayer(document.objects, selectedObjectIds, 'down')
@@ -553,6 +558,30 @@ function App() {
 
       <main className="canvas-area">
         <div className="canvas-toolbar">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Enter group"
+            title={selectedGroupObject ? 'Enter group' : 'Select one group to enter'}
+            onClick={() => {
+              if (selectedGroupObject) {
+                enterGroup(selectedGroupObject.id)
+              }
+            }}
+            disabled={!selectedGroupObject}
+          >
+            <FontAwesomeIcon icon={faLayerGroup} />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Exit group"
+            title={activeGroupId ? 'Exit group' : 'Not inside a group'}
+            onClick={exitGroup}
+            disabled={!activeGroupId}
+          >
+            <FontAwesomeIcon icon={faObjectUngroup} />
+          </button>
           <button
             type="button"
             className="icon-btn"

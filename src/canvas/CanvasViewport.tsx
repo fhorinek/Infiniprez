@@ -396,8 +396,11 @@ export function CanvasViewport() {
   const canvasSettings = useEditorStore((state) => state.document.canvas)
   const objects = useEditorStore((state) => state.document.objects)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
+  const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
+  const enterGroup = useEditorStore((state) => state.enterGroup)
+  const exitGroup = useEditorStore((state) => state.exitGroup)
   const moveObject = useEditorStore((state) => state.moveObject)
   const deleteObjects = useEditorStore((state) => state.deleteObjects)
   const reorderObjectsLayer = useEditorStore((state) => state.reorderObjectsLayer)
@@ -417,6 +420,8 @@ export function CanvasViewport() {
     const selectedSet = new Set(selectedObjectIds)
     return orderedObjects.filter((object) => selectedSet.has(object.id))
   }, [orderedObjects, selectedObjectIds])
+  const selectedGroup =
+    selectedObjects.length === 1 && selectedObjects[0]?.type === 'group' ? selectedObjects[0] : null
   const selectedUnlockedObjects = useMemo(
     () => selectedObjects.filter((object) => !object.locked),
     [selectedObjects]
@@ -621,12 +626,32 @@ export function CanvasViewport() {
 
       if (event.key === 'Backspace' && selectedObjectIds.length > 0) {
         event.preventDefault()
+        return
+      }
+
+      if (event.key === 'Enter' && selectedGroup) {
+        event.preventDefault()
+        enterGroup(selectedGroup.id)
+        return
+      }
+
+      if (event.key === 'Escape' && activeGroupId) {
+        event.preventDefault()
+        exitGroup()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [deleteObjects, selectedObjectIds, selectedUnlockedIds])
+  }, [
+    activeGroupId,
+    deleteObjects,
+    enterGroup,
+    exitGroup,
+    selectedGroup,
+    selectedObjectIds,
+    selectedUnlockedIds,
+  ])
 
   function beginObjectInteraction(
     event: PointerEvent<HTMLElement>,
@@ -1171,6 +1196,15 @@ export function CanvasViewport() {
                   y: pointer.y,
                   selectionIds,
                 })
+              }}
+              onDoubleClick={(event) => {
+                if (object.type !== 'group') {
+                  return
+                }
+                event.preventDefault()
+                event.stopPropagation()
+                selectObjects([object.id])
+                enterGroup(object.id)
               }}
             >
               {object.type === 'shape_arrow' ? (
