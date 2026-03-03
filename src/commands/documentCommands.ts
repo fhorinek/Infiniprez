@@ -3,6 +3,7 @@ import type { Command } from './types'
 import type { CanvasObject, DocumentModel, LayerOrderAction, Slide, ZIndexSnapshot } from '../model'
 
 type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+type SlideOrderSnapshot = Record<string, number>
 
 function withUpdatedTimestamp(document: DocumentModel): DocumentModel {
   return produce(document, (draft) => {
@@ -162,6 +163,42 @@ export function deleteSlideCommand(
           const rebuiltSlides = [...draft.slides]
           rebuiltSlides.splice(removedIndex, 0, removedSlide)
           draft.slides = sortSlidesByOrderIndex(rebuiltSlides)
+        })
+      ),
+  }
+}
+
+function applySlideOrderSnapshot(draft: DocumentModel, snapshot: SlideOrderSnapshot) {
+  if (Object.keys(snapshot).length === 0) {
+    return
+  }
+
+  for (const slide of draft.slides) {
+    const next = snapshot[slide.id]
+    if (next !== undefined) {
+      slide.orderIndex = next
+    }
+  }
+
+  draft.slides = sortSlidesByOrderIndex(draft.slides)
+}
+
+export function setSlideOrderCommand(
+  beforeSnapshot: SlideOrderSnapshot,
+  afterSnapshot: SlideOrderSnapshot
+): Command<DocumentModel> {
+  return {
+    label: 'Reorder slides',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          applySlideOrderSnapshot(draft, afterSnapshot)
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          applySlideOrderSnapshot(draft, beforeSnapshot)
         })
       ),
   }

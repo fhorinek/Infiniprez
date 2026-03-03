@@ -96,7 +96,7 @@ Done criteria:
 - Clipboard actions are safe on invalid payloads and never crash.
 
 ## 8. Slide Management + Slide Parameters
-- [ ] Build ordered slide list with drag-and-drop reorder.
+- [x] Build ordered slide list with drag-and-drop reorder.
 - [ ] Add slide create/update/delete from camera state.
 - [ ] Add slide parameter table and two-way binding to selected slide.
 - [ ] Validate `triggerDelayMs` in `0..3600000`.

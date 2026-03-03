@@ -56,6 +56,7 @@ export interface EditorActions {
   ungroupObjects: (objectIds: string[]) => void
   createSlide: (slide: Slide) => void
   deleteSlide: (slideId: string) => void
+  reorderSlides: (orderedSlideIds: string[]) => void
 }
 
 export type EditorStore = EditorState & EditorActions

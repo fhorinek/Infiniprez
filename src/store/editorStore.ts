@@ -12,6 +12,7 @@ import {
   moveObjectCommand,
   recordExecutedCommand,
   redoCommand,
+  setSlideOrderCommand,
   setShapeOpacityCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
@@ -547,6 +548,33 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const removedSlide = get().document.slides[removedIndex]
     const command = deleteSlideCommand(slideId, removedSlide, removedIndex)
+    get().executeDocumentCommand(command)
+  },
+
+  reorderSlides: (orderedSlideIds) => {
+    const slides = get().document.slides
+    if (orderedSlideIds.length !== slides.length) {
+      return
+    }
+
+    const slideSet = new Set(slides.map((slide) => slide.id))
+    if (orderedSlideIds.some((id) => !slideSet.has(id))) {
+      return
+    }
+
+    const beforeSnapshot = Object.fromEntries(
+      slides.map((slide) => [slide.id, slide.orderIndex])
+    ) as Record<string, number>
+    const afterSnapshot = Object.fromEntries(
+      orderedSlideIds.map((slideId, orderIndex) => [slideId, orderIndex])
+    ) as Record<string, number>
+
+    const hasChanges = slides.some((slide) => beforeSnapshot[slide.id] !== afterSnapshot[slide.id])
+    if (!hasChanges) {
+      return
+    }
+
+    const command = setSlideOrderCommand(beforeSnapshot, afterSnapshot)
     get().executeDocumentCommand(command)
   },
 }))

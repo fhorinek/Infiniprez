@@ -1,4 +1,19 @@
-import { useRef, type ChangeEvent } from 'react'
+import { useRef, type ChangeEvent, type CSSProperties } from 'react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowsLeftRightToLine,
@@ -31,10 +46,34 @@ import {
   type CanvasObject,
   type DocumentModel,
   type ShapeData,
+  type Slide,
 } from './model'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
 import './App.css'
+
+function SortableSlideItem({ slide, isActive }: { slide: Slide; isActive: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: slide.id,
+  })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`slide-item ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+      {...attributes}
+      {...listeners}
+      title="Drag to reorder"
+    >
+      {slide.name || `Slide ${slide.orderIndex + 1}`}
+    </li>
+  )
+}
 
 function parseCameraState(value: unknown): CameraState | null {
   if (!value || typeof value !== 'object') {
@@ -117,6 +156,8 @@ function App() {
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const enterGroup = useEditorStore((state) => state.enterGroup)
+  const reorderSlides = useEditorStore((state) => state.reorderSlides)
+  const selectedSlideId = useEditorStore((state) => state.ui.selectedSlideId)
 
   const selectedObject =
     selectedObjectIds.length === 1
@@ -136,6 +177,13 @@ function App() {
     ? hasLockedAncestor(selectedObject, objectById)
     : false
   const canToggleGroupFromSelection = Boolean(selectedGroupObject && activeGroupId === null)
+  const orderedSlides = [...document.slides].sort((a, b) => a.orderIndex - b.orderIndex)
+  const activeSlideId = selectedSlideId ?? orderedSlides[0]?.id ?? null
+  const slideDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 4 },
+    })
+  )
 
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
@@ -274,6 +322,23 @@ function App() {
     setShapeOpacity(objectId, parsed)
   }
 
+  function handleSlideDragEnd(event: DragEndEvent) {
+    const activeId = String(event.active.id)
+    const overId = event.over ? String(event.over.id) : null
+    if (!overId || activeId === overId) {
+      return
+    }
+
+    const oldIndex = orderedSlides.findIndex((slide) => slide.id === activeId)
+    const newIndex = orderedSlides.findIndex((slide) => slide.id === overId)
+    if (oldIndex < 0 || newIndex < 0) {
+      return
+    }
+
+    const reordered = arrayMove(orderedSlides, oldIndex, newIndex)
+    reorderSlides(reordered.map((slide) => slide.id))
+  }
+
   function handleSaveDocument() {
     const serialized = JSON.stringify(
       {
@@ -384,11 +449,30 @@ function App() {
               <FontAwesomeIcon icon={faFileCirclePlus} />
             </button>
           </div>
-          <ol className="slide-list">
-            <li className="slide-item active">Intro Shot</li>
-            <li className="slide-item">Problem</li>
-            <li className="slide-item">Solution</li>
-          </ol>
+          {orderedSlides.length > 0 ? (
+            <DndContext
+              sensors={slideDnDSensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleSlideDragEnd}
+            >
+              <SortableContext
+                items={orderedSlides.map((slide) => slide.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <ol className="slide-list">
+                  {orderedSlides.map((slide) => (
+                    <SortableSlideItem
+                      key={slide.id}
+                      slide={slide}
+                      isActive={slide.id === activeSlideId}
+                    />
+                  ))}
+                </ol>
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <p className="panel-empty">No slides yet.</p>
+          )}
           <div className="inline-actions">
             <button
               type="button"

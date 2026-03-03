@@ -76,11 +76,18 @@
   border-radius: 0.35rem;
   padding: 0.15rem 0.3rem;
   margin-bottom: 0.2rem;
+  cursor: grab;
+  user-select: none;
 }
 
 .slide-item.active {
   background: rgba(93, 151, 255, 0.2);
   color: #d9e9ff;
+}
+
+.slide-item.dragging {
+  opacity: 0.75;
+  cursor: grabbing;
 }
 
 .inline-actions {
