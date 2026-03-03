@@ -36,7 +36,7 @@ Core promise:
 - Fullscreen
 - Present from beginning
 - Present from current
-- Icons should use either Material Design Icons or Font Awesome (project-wide consistent set).
+- Icons use Font Awesome (project-wide consistent set).
 
 ### Middle section: Slide List
 - Ordered list of slides.
@@ -56,9 +56,9 @@ Core promise:
   - Zoom
   - Rotation
   - Trigger mode (`manual` or `timed`)
-  - Trigger delay (for timed trigger)
+  - Trigger delay (for timed trigger, range `0..3600` seconds)
   - Transition type (`ease`, `linear`, `instant`)
-  - Transition duration (per slide, ignored for `instant`)
+  - Transition duration (per slide for `ease/linear`, range `1..10` seconds, ignored for `instant`)
 
 ### Bottom section: Object Tools
 - Add textbox
@@ -79,10 +79,21 @@ Core promise:
 - Rotation
 - Lock/Unlock
 - Layer order:
+  - Top
   - Up
   - Down
-  - Top
   - Bottom
+- For basic shapes (`shape_rect`, `shape_circle`, `shape_arrow`):
+  - Border color
+  - Border type (`solid`, `dashed`, `dotted`)
+  - Border width
+  - Body fill color
+  - Body fill gradient
+  - Opacity
+- Special contextual toolbars:
+  - Text toolbar floats above edited text object.
+  - Shape toolbar floats above edited shape object.
+  - These toolbars show only when relevant object type is selected/edited.
 
 ## 3.2 Right Side: Canvas
 
@@ -118,7 +129,7 @@ Core promise:
 ## 4.3 Image Placement
 - Drag-and-drop image files directly onto canvas.
 - Dropped image creates new image object at drop location.
-- Supported types: any image type the runtime/browser can decode and display.
+- Supported types: `png`, `jpeg`/`jpg`, `gif`, `svg`.
 
 ## 4.4 Copy/Paste Objects
 - Copy selected objects with:
@@ -129,17 +140,39 @@ Core promise:
   - Context menu `Paste`
 - Pasted objects are deep copies with new object `id`s and preserved visual properties.
 - Multi-selection paste keeps relative positions between objects.
-- First paste is offset from original (for example `+20,+20` world units) so the copy is visible.
+- First paste is offset from original by `+20,+20` world units so the copy is visible.
 - Repeated paste offsets again from the last pasted result.
 - Locked objects can be copied; pasted copies keep the same lock state.
 - Groups can be copied/pasted as full hierarchies with remapped child ids.
 - If clipboard content is invalid/unsupported, paste action is ignored safely.
 
 ## 4.5 Group Isolated Edit Mode
-- User can enter a selected group (for example by double-click or context action).
+- User can enter a selected group by:
+  - Double-clicking the group
+  - Pressing `Enter` when the group is selected
+  - Clicking enter-group icon next to lock icon
 - While inside a group, only objects in that group are selectable/editable.
 - Objects outside the active group are unavailable for interaction.
-- Exit group mode using `Esc` or explicit `Exit group` action.
+- Exit group mode using `Esc` or explicit `Exit group` action/icon.
+
+## 4.6 Object Context Menu
+- Right-clicking selected object(s) opens context menu.
+- Context menu actions:
+  - Duplicate
+  - Remove
+  - Group
+  - Ungroup
+  - Layer: Top, Up, Down, Bottom
+- Actions are enabled/disabled based on current selection:
+  - Group enabled for multi-selection of ungrouped objects.
+  - Ungroup enabled when a group is selected.
+
+## 4.7 Contextual Floating Toolbars
+- Toolbar position is anchored above the currently edited object on canvas.
+- Toolbar follows object position while panning/zooming/rotating view.
+- Text toolbar includes quick text formatting controls.
+- Shape toolbar includes quick border/fill/opacity controls.
+- Object-specific toolbar hides when selection is cleared or object type changes.
 
 ## 5. Slide Model
 
@@ -151,9 +184,9 @@ A slide is a named camera bookmark:
 - `zoom`
 - `rotation`
 - `triggerMode` (`manual` | `timed`)
-- `triggerDelayMs` (used when `triggerMode = timed`)
+- `triggerDelayMs` (used when `triggerMode = timed`, range `0..3600000`)
 - `transitionType` (`ease` | `linear` | `instant`)
-- `transitionDurationMs` (optional, ignored for `instant`)
+- `transitionDurationMs` (range `1000..10000` for `ease/linear`, ignored for `instant`)
 - `orderIndex`
 
 Slides represent viewpoints; objects remain globally on canvas.
@@ -186,17 +219,17 @@ Shared object fields:
 Type-specific fields:
 - `textbox`: rich text runs, font, size, color, alignment, bullets/numbered-list markers
 - `image`: asset reference, fit mode
-- `shape_*`: stroke, fill, strokeWidth
+- `shape_*`: borderColor, borderType, borderWidth, fillColor/fillGradient, opacity
 - `group`: children object ids
 
 ## 7. Persistence
 
 ## 7.1 Autosave
-- Every 20 seconds, serialize current document to browser local storage.
+- Every 20 seconds, serialize current document to browser local storage only if document state changed since last autosave.
 - Keep at least:
   - Latest autosave snapshot
   - Timestamp
-  - Optional rolling backups (TBD count)
+  - Rolling backups capped at `200` snapshots
 - On app startup, automatically load the latest autosave snapshot.
 
 ## 7.2 Manual Save/Load
@@ -206,10 +239,11 @@ Type-specific fields:
 
 ## 7.3 Standalone Presentation Export
 - Export generates one standalone HTML file.
-- Exported file embeds all required assets (images, styles, scripts) internally.
+- Exported file embeds all required assets (images, styles, scripts) internally using Base64 encoding.
 - Exported file has no external dependencies and no network requirement.
 - Exported HTML can be opened locally (for example via `file://`) and used for presentation only.
 - Exported HTML includes presentation runtime only (no edit mode UI/tools).
+- Exported presentation starts from the first slide.
 
 ## 8. Undo/Redo
 
@@ -217,6 +251,7 @@ Type-specific fields:
 - Every user command must support both undo and redo.
 - Command history includes:
   - Object create/delete/edit/transform
+  - Object duplicate/remove commands
   - Object copy/paste
   - Group/ungroup operations
   - Enter/exit group isolated edit mode
@@ -249,7 +284,7 @@ Type-specific fields:
 6. Slide bookmark CRUD + manual ordering.
 7. Per-slide trigger and transition settings.
 8. Present mode with start-from-beginning/start-from-current.
-9. Layer ordering controls (`up`, `down`, `top`, `bottom`).
+9. Layer ordering controls (`top`, `up`, `down`, `bottom`).
 10. Local autosave + XML import/export.
 11. Standalone presentation HTML export (single-file, offline).
 12. Undo/redo for core actions.
@@ -261,8 +296,8 @@ No open questions currently.
 ## 12. Initial Technical Direction (Optional)
 
 - Frontend: React + TypeScript
-- Canvas rendering: `Konva` or `Fabric.js` for transform handles + hit testing
-- State: Zustand/Redux with immutable history slices for undo/redo
+- Canvas rendering: `Fabric.js` for transform handles + hit testing
+- State: Zustand with immutable history slices for undo/redo
 - Persistence:
   - Local storage for autosave
   - Custom XML serializer/deserializer for import/export (with embedded image data)

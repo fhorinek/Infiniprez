@@ -20,7 +20,7 @@
 - Acceptance:
   - Dependencies locked in `package.json`.
   - App compiles after install.
-  - One icon package selected and documented.
+  - Font Awesome package is selected and documented.
 
 ## T-003 (P0) Define folder structure
 - Description: Create module structure matching `technical-spec.md`.
@@ -81,6 +81,7 @@
 - Acceptance:
   - Object creation buttons add object to canvas and state.
   - Default dimensions and style are applied.
+  - Shape defaults include border color/type/width, fill color, and opacity.
 
 ## T-031 (P0) Selection and transform handles
 - Description: Wire selection, multi-selection, resize, rotate, drag, and lock behavior.
@@ -95,14 +96,25 @@
 - Description: Bind x/y/w/h/rotation/lock and layer actions to selected object(s).
 - Acceptance:
   - Editing properties updates canvas immediately.
-  - Layer commands up/down/top/bottom are functional and undoable.
+  - Layer commands top/up/down/bottom are functional and undoable.
+  - Shape properties support editing border color/type/width, body fill color/gradient, and opacity.
+  - Shape contextual toolbar appears above edited shape object with quick shape style controls.
+
+## T-034 (P1) Contextual floating toolbars
+- Description: Implement object-type-specific floating toolbars anchored above edited object.
+- Acceptance:
+  - Text toolbar appears above selected/edited text object.
+  - Shape toolbar appears above selected/edited shape object.
+  - Toolbar tracks object position during pan/zoom/rotate and object transforms.
+  - Toolbar hides when selection is cleared or object type is not eligible.
+  - Toolbar actions are undoable/redoable.
 
 ## T-033 (P1) Group and ungroup
 - Description: Implement grouping model and group transforms.
 - Acceptance:
   - Multi-select can be grouped.
   - Group can be ungrouped.
-  - User can enter group-isolated edit mode for a selected group.
+  - User can enter group-isolated edit mode by double-click, `Enter` key, or enter-group icon next to lock icon.
   - While in group mode, objects outside active group cannot be selected or edited.
   - `Esc` exits group mode.
   - Undo/redo supports group/ungroup and enter/exit group mode.
@@ -117,16 +129,19 @@
   - Repeated paste offsets by +20/+20.
   - Groups paste with remapped child IDs.
 
-## T-041 (P1) Context menu copy/paste
-- Description: Add right-click context menu integration for clipboard operations.
+## T-041 (P1) Object context menu actions
+- Description: Add right-click object context menu integration for object and grouping/layer actions.
 - Acceptance:
-  - Copy/paste available from context menu.
+  - Context menu opens for selected object(s).
+  - Actions include duplicate, remove, group, ungroup, and layer top/up/down/bottom.
+  - Existing copy/paste actions remain available from context menu.
   - Disabled state shown when action unavailable.
+  - All context-menu actions are undoable/redoable.
 
 ## T-042 (P0) Drag-and-drop image import
-- Description: Support image file drop onto canvas and asset registration.
+- Description: Support image file drop onto canvas using native browser drag-and-drop and asset registration.
 - Acceptance:
-  - Browser-supported image files can be dropped.
+  - Supported image files (`png`, `jpeg`/`jpg`, `gif`, `svg`) can be dropped.
   - New image object appears at drop location.
   - Asset stored in document model.
 
@@ -149,6 +164,8 @@
 - Description: Bind name, position, zoom, rotation, trigger, and transition fields.
 - Acceptance:
   - Panel edits update selected slide.
+  - Validation enforces `triggerDelayMs` in range `0..3_600_000`.
+  - Validation enforces `transitionDurationMs` in range `1_000..10_000` for `ease/linear`.
   - Per-slide transition duration ignored when transition is instant.
 
 ## T-053 (P0) Present mode runtime
@@ -168,6 +185,7 @@
   - Text supports basic formatting.
   - Bullet list and numbered list supported.
   - Content stored as stable JSON payload.
+  - Text contextual toolbar appears above edited text object with quick formatting actions.
 
 ## T-061 (P1) Canvas text render bridge
 - Description: Convert rich text document to canvas rendering format.
@@ -178,9 +196,11 @@
 ## 9. Phase 7: Persistence and XML
 
 ## T-070 (P0) Autosave service
-- Description: Save full document every 20 seconds and on lifecycle events.
+- Description: Save full document every 20 seconds only when changed, and on lifecycle events.
 - Acceptance:
   - Autosave timestamp updates.
+  - No autosave snapshot is written when document has no changes.
+  - Rolling backup snapshots are capped at `200`.
   - Last autosave restores automatically on startup.
 
 ## T-071 (P0) XML serializer
@@ -190,7 +210,7 @@
   - Exported file can be re-imported losslessly for core properties.
 
 ## T-072 (P0) XML parser
-- Description: Parse XML into document model with validation and unknown-tag tolerance.
+- Description: Parse XML into document model using `fast-xml-parser` with validation and unknown-tag tolerance.
 - Acceptance:
   - Valid XML loads into editor.
   - Unknown tags do not break loading.
@@ -200,9 +220,10 @@
 - Description: Generate one self-contained HTML file for presentation playback only.
 - Acceptance:
   - Export generates a single `.html` file.
-  - File embeds document data and all used assets.
+  - File embeds document data and all used assets using Base64 encoding.
   - File contains no external dependencies (no CDN/local sidecar files).
   - Opening exported file locally (`file://`) starts presentation runtime and works offline.
+  - Exported presentation starts from first slide.
   - Exported runtime exposes no edit UI/features.
 
 ## 10. Phase 8: History, Quality, and Hardening

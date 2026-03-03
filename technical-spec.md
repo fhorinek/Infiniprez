@@ -1,4 +1,4 @@
-# Infiniprez Technical Specification (v0.2)
+# Infiniprez Technical Specification (v0.3)
 
 ## 1. Scope
 
@@ -25,9 +25,7 @@ Out of scope:
 ## 2.1 Frontend
 - `React 19` + `TypeScript` + `Vite`.
 - `Mantine` for application shell, forms, panels, menus, modals.
-- Icons: choose one and keep consistent project-wide:
-  - Option A: Material Design Icons (`@mdi/js` + wrapper components), or
-  - Option B: Font Awesome (`@fortawesome/*`).
+- Icons: Font Awesome (`@fortawesome/*`) project-wide.
 
 ## 2.2 Canvas + Interaction
 - `Fabric.js` as primary canvas runtime.
@@ -39,15 +37,16 @@ Out of scope:
 ## 2.3 Editor Features
 - Rich text: `tiptap` + `@mantine/tiptap` for bullets/numbered lists.
 - Drag-and-drop:
-  - File/image drop to canvas: `react-dropzone` (or native DnD wrapper).
+  - File/image drop to canvas: native browser drag-and-drop API.
+  - Supported image formats: `png`, `jpeg`/`jpg`, `gif`, `svg`.
   - Slide reordering: `@dnd-kit/core` + `@dnd-kit/sortable`.
 
 ## 2.4 State + Persistence
 - Global state: `Zustand`.
 - Undo/redo: command history plugin in store.
-- Autosave storage: browser `localStorage` (simple) or `IndexedDB` via `Dexie` (recommended if doc grows).
+- Autosave storage: browser `localStorage`.
 - XML import/export:
-  - Parse: `DOMParser` (or `fast-xml-parser`).
+  - Parse: `fast-xml-parser`.
   - Serialize: `XMLSerializer`.
 - Standalone HTML export:
   - Build one HTML document string with inline CSS + inline JS.
@@ -121,6 +120,7 @@ src/
 ```ts
 export type TriggerMode = "manual" | "timed";
 export type TransitionType = "ease" | "linear" | "instant";
+export type StrokeType = "solid" | "dashed" | "dotted";
 export type ObjectType =
   | "textbox"
   | "image"
@@ -137,9 +137,9 @@ export interface Slide {
   zoom: number;
   rotation: number;
   triggerMode: TriggerMode;
-  triggerDelayMs?: number;
+  triggerDelayMs?: number; // timed mode: 0..3_600_000 ms
   transitionType: TransitionType;
-  transitionDurationMs?: number;
+  transitionDurationMs?: number; // ease/linear: 1_000..10_000 ms
   orderIndex: number;
 }
 
@@ -168,9 +168,16 @@ export interface ImageObject extends BaseObject {
 
 export interface ShapeObject extends BaseObject {
   type: "shape_rect" | "shape_circle" | "shape_arrow";
-  stroke: string;
-  fill: string;
-  strokeWidth: number;
+  borderColor: string;
+  borderType: StrokeType;
+  borderWidth: number;
+  fillColor?: string;
+  fillGradient?: {
+    kind: "linear" | "radial";
+    stops: Array<{ offset: number; color: string }>;
+    angleDeg?: number;
+  };
+  opacity: number; // 0..1
 }
 
 export interface GroupObject extends BaseObject {
@@ -252,6 +259,10 @@ export interface DocumentModel {
 - `Ungroup` removes group object and restores children as selected.
 - Transforming group applies transform to all children.
 - User can enter group-isolated edit mode for a selected group.
+- Enter methods:
+  - double-click selected group
+  - `Enter` key on selected group
+  - enter-group icon next to lock icon
 - In group-isolated mode, hit-testing and editing are restricted to descendants of the active group.
 - Objects outside active group are unavailable for selection/edit until exit.
 - `Esc` exits current group level (or full group mode if at root level).
@@ -259,9 +270,9 @@ export interface DocumentModel {
 
 ## 6.3 Layering
 - Commands:
+  - `top`
   - `up`
   - `down`
-  - `top`
   - `bottom`
 - Layer commands mutate `zIndex` deterministically and are undoable.
 
@@ -271,6 +282,34 @@ export interface DocumentModel {
 - Paste deep-clones with new IDs and remapped child IDs.
 - Paste offset increments by `(+20, +20)` from last paste anchor.
 - Clipboard operations are undoable commands.
+
+## 6.5 Object Context Menu
+- Right-click on selected object(s) opens context menu bound to selection.
+- Supported actions:
+  - `duplicate`
+  - `remove`
+  - `group`
+  - `ungroup`
+  - `layer_top`
+  - `layer_up`
+  - `layer_down`
+  - `layer_bottom`
+- Menu item availability depends on selection state:
+  - `group` enabled only for valid multi-selection.
+  - `ungroup` enabled only when selected node is group.
+- Context-menu actions dispatch existing command handlers and are undoable/redoable.
+
+## 6.6 Contextual Floating Toolbars
+- UI overlay renders object-type-specific toolbar above active edited object.
+- Toolbar anchor is computed from object world bounds transformed into screen coordinates.
+- Toolbar updates position during camera pan/zoom/rotation and object transforms.
+- Toolbar variants:
+  - text toolbar (rich text quick actions)
+  - shape toolbar (border/fill/gradient/opacity quick actions)
+- Toolbar visibility rules:
+  - shown only for selected editable object type
+  - hidden on deselect, mode switch, or when object is not editable
+- Toolbar actions dispatch existing property-edit commands and are undoable/redoable.
 
 ## 7. Slides and Presentation
 
@@ -288,6 +327,7 @@ export interface DocumentModel {
 ## 7.3 Slide Progression
 - `manual`: wait for user next action.
 - `timed`: start timer on slide entry and auto-advance after `triggerDelayMs`.
+- Timed delay range: `0..3_600_000` ms (`0..1h`).
 - Manual presentation navigation commands (`next`, `previous`) are undoable/redoable.
 
 ## 7.4 Camera Transitions
@@ -295,17 +335,18 @@ export interface DocumentModel {
   - `ease`
   - `linear`
   - `instant`
-- Per-slide duration for `ease`/`linear`.
+- Per-slide duration for `ease`/`linear`: `1_000..10_000` ms (`1..10s`).
 - `instant` ignores duration.
 
 ## 8. Persistence
 
 ## 8.1 Autosave
-- Save full document every 20 seconds.
+- Save full document every 20 seconds only when document state has changed.
 - Save on significant events:
   - before unload
   - explicit save
   - mode switch Edit/Present
+- Keep rolling backup snapshots capped at `200`.
 - On startup, automatically restore latest autosave snapshot.
 
 ## 8.2 XML File Format
@@ -326,14 +367,14 @@ export interface DocumentModel {
 - Export action generates exactly one `.html` file.
 - The file must include:
   - embedded presentation document data
-  - embedded assets (Base64 or equivalent inline encoding)
+  - embedded assets (Base64 encoding)
   - inline CSS/JS runtime required for playback
 - The file must not depend on:
   - remote CDN scripts
   - remote fonts/styles
   - local sidecar files (`.js`, `.css`, images)
 - Exported runtime is presentation-only:
-  - starts in presenter mode
+  - starts in presenter mode from the first slide
   - supports slide progression and transitions
   - does not expose edit tools, editing shortcuts, or persistence UI
 - Exported file must run when opened locally via `file://`.
@@ -354,6 +395,7 @@ interface Command {
 
 ## 9.2 Command Categories
 - Object operations.
+- Object context-menu actions.
 - Transform operations.
 - Group/ungroup.
 - Enter/exit group-isolated edit mode.
@@ -390,6 +432,7 @@ interface Command {
 
 ## 11.2 Integration Tests
 - Object create/select/transform workflow.
+- Shape style edit workflow (border/fill/gradient/opacity) with save/load round-trip.
 - Group + ungroup + undo/redo.
 - Slide reorder + present from current.
 - Timed trigger auto-advance.
