@@ -47,6 +47,7 @@ import {
   type ShapeData,
   type Slide,
 } from './model'
+import { serializeDocumentToXml } from './persistence'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
 import './App.css'
@@ -752,6 +753,18 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  function handleSaveDocumentXml() {
+    const xml = serializeDocumentToXml(document)
+    const blob = new Blob([xml], { type: 'application/xml' })
+    const url = URL.createObjectURL(blob)
+
+    const downloadLink = window.document.createElement('a')
+    downloadLink.href = url
+    downloadLink.download = 'infiniprez-document.xml'
+    downloadLink.click()
+    URL.revokeObjectURL(url)
+  }
+
   function handleLoadClick() {
     loadInputRef.current?.click()
   }
@@ -780,6 +793,7 @@ function App() {
     { label: 'New Document', icon: faFileCirclePlus, onClick: handleNewDocument, disabled: false },
     { label: 'Load', icon: faFileArrowDown, onClick: handleLoadClick, disabled: false },
     { label: 'Save', icon: faFloppyDisk, onClick: handleSaveDocument, disabled: false },
+    { label: 'Save XML', icon: faFloppyDisk, onClick: handleSaveDocumentXml, disabled: false },
     {
       label: 'Export HTML',
       icon: faDownload,
