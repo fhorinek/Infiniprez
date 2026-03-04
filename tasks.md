@@ -128,7 +128,7 @@ Done criteria:
 ## 11. Persistence (Autosave + Manual Save/Load)
 - [x] Implement autosave every 20s only when document changed.
 - [x] Store latest snapshot + timestamp in local storage.
-- [ ] Keep rolling backups capped to 200 snapshots.
+- [x] Keep rolling backups capped to 200 snapshots.
 - [ ] Auto-load latest snapshot on startup.
 - [ ] Treat autosave as default startup source priority.
 - [ ] Implement `New Document` reset flow (blank document defaults + fresh timestamps/ids + clean undo/redo history).

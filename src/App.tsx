@@ -153,6 +153,13 @@ function easeInOutCubic(t: number) {
 }
 
 const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
+const AUTOSAVE_BACKUPS_KEY = 'infiniprez.autosave.backups'
+const AUTOSAVE_BACKUP_LIMIT = 200
+
+interface AutosavePayload {
+  snapshot: string
+  savedAt: string
+}
 
 function interpolateCamera(start: CameraState, end: CameraState, t: number): CameraState {
   return {
@@ -575,6 +582,13 @@ function App() {
       }
       try {
         window.localStorage.setItem(AUTOSAVE_LATEST_KEY, JSON.stringify(payload))
+
+        const rawBackups = window.localStorage.getItem(AUTOSAVE_BACKUPS_KEY)
+        const parsedBackups = rawBackups ? (JSON.parse(rawBackups) as unknown) : []
+        const backups = Array.isArray(parsedBackups) ? (parsedBackups as AutosavePayload[]) : []
+        backups.push(payload)
+        const cappedBackups = backups.slice(-AUTOSAVE_BACKUP_LIMIT)
+        window.localStorage.setItem(AUTOSAVE_BACKUPS_KEY, JSON.stringify(cappedBackups))
       } catch {
         // Ignore storage failures in restricted browser modes.
       }
