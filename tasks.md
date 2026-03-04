@@ -144,7 +144,7 @@ Done criteria:
 - [x] Build export pipeline that produces single HTML file.
 - [x] Embed assets/styles/scripts as inline Base64 or inline text.
 - [x] Remove editor UI and include presentation runtime only.
-- [ ] Ensure export opens from `file://` without network access.
+- [x] Ensure export opens from `file://` without network access.
 - [ ] Start playback from first slide.
 
 Done criteria:
