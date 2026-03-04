@@ -126,7 +126,7 @@ Done criteria:
 - Toolbars appear only when relevant and track object position reliably.
 
 ## 11. Persistence (Autosave + Manual Save/Load)
-- [ ] Implement autosave every 20s only when document changed.
+- [x] Implement autosave every 20s only when document changed.
 - [ ] Store latest snapshot + timestamp in local storage.
 - [ ] Keep rolling backups capped to 200 snapshots.
 - [ ] Auto-load latest snapshot on startup.

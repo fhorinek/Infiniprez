@@ -163,6 +163,9 @@ function interpolateCamera(start: CameraState, end: CameraState, t: number): Cam
 
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
+  const latestDocumentSnapshotRef = useRef<string>('')
+  const latestAutosavedSnapshotRef = useRef<string>('')
+  const inMemoryAutosaveSnapshotRef = useRef<{ snapshot: string; savedAt: string } | null>(null)
 
   const document = useEditorStore((state) => state.document)
   const camera = useEditorStore((state) => state.camera)
@@ -553,6 +556,28 @@ function App() {
     }
     return parsed
   }
+
+  useEffect(() => {
+    latestDocumentSnapshotRef.current = serializeDocument(document)
+  }, [document])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const snapshot = latestDocumentSnapshotRef.current
+      if (!snapshot || snapshot === latestAutosavedSnapshotRef.current) {
+        return
+      }
+
+      // Task 11.2 persists this autosave payload to localStorage.
+      inMemoryAutosaveSnapshotRef.current = {
+        snapshot,
+        savedAt: new Date().toISOString(),
+      }
+      latestAutosavedSnapshotRef.current = snapshot
+    }, 20_000)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   useEffect(() => {
     if (mode !== 'present') {
