@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CanvasViewport } from '../canvas'
 import type { CanvasObject, ShapeCircleObject, ShapeRectObject } from '../model'
@@ -80,5 +80,25 @@ describe('integration: group isolate mode', () => {
 
     const outside = screen.getByText('Circle').closest('.canvas-object')
     expect(outside?.className).toContain('inactive')
+  })
+})
+
+describe('integration: copy/paste', () => {
+  it('copies and pastes groups with child remapping', () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'a', x: 0, y: 0, zIndex: 1 }))
+    createObject(createShapeRect({ id: 'b', x: 140, y: 0, zIndex: 2 }))
+    state.groupObjects(['a', 'b'])
+    const groupId = useEditorStore.getState().ui.selectedObjectIds[0]
+    expect(groupId).toBeTruthy()
+    state.selectObjects([groupId!])
+
+    render(<CanvasViewport />)
+    fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
+    fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+
+    const objects = useEditorStore.getState().document.objects
+    expect(objects.filter((entry) => entry.type === 'group')).toHaveLength(2)
+    expect(objects).toHaveLength(6)
   })
 })
