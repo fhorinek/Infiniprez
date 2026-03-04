@@ -162,7 +162,7 @@ Done criteria:
 ## 14. QA + Regression Tests
 - [x] Unit tests for geometry transforms and command reducers.
 - [x] Unit tests for slide timing and transition selection.
-- [ ] Add integration test for group isolate mode.
+- [x] Add integration test for group isolate mode.
 - [ ] Add integration test for copy/paste with groups.
 - [ ] Add integration test for paste offset reset after copying a different source selection.
 - [ ] Add integration test for autosave restore.
