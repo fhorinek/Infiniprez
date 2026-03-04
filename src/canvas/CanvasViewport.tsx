@@ -883,6 +883,40 @@ export function CanvasViewport() {
     selectObjects([target.id])
   }
 
+  function applyTextboxAutoHeight(target: Extract<CanvasObject, { type: 'textbox' }>, nextText: string) {
+    if (!target.textboxData.autoHeight) {
+      return
+    }
+
+    const firstRun = target.textboxData.runs[0] ?? {
+      text: '',
+      bold: false,
+      italic: false,
+      underline: false,
+      color: '#f0f3fc',
+      fontSize: 28,
+    }
+    const lines = Math.max(1, nextText.split('\n').length)
+    const lineHeightPx = Math.max(12, firstRun.fontSize * 1.35)
+    const verticalPaddingPx = 14
+    const desiredHeightWorld = Math.max(
+      24,
+      (lines * lineHeightPx + verticalPaddingPx) / Math.max(0.001, camera.zoom)
+    )
+
+    if (Math.abs(target.h - desiredHeightWorld) < 0.5) {
+      return
+    }
+
+    moveObject(target.id, {
+      x: target.x,
+      y: target.y,
+      w: target.w,
+      h: desiredHeightWorld,
+      rotation: target.rotation,
+    })
+  }
+
   function finishTextboxEditing(commit: boolean) {
     if (!editingTextboxObject) {
       setEditingTextboxId(null)
@@ -891,6 +925,7 @@ export function CanvasViewport() {
     }
 
     if (commit) {
+      applyTextboxAutoHeight(editingTextboxObject, editingTextboxText)
       const firstRun = editingTextboxObject.textboxData.runs[0] ?? {
         text: '',
         bold: false,
@@ -1817,7 +1852,11 @@ export function CanvasViewport() {
                       event.stopPropagation()
                     }}
                     onChange={(event) => {
-                      setEditingTextboxText(event.target.value)
+                      const nextText = event.target.value
+                      setEditingTextboxText(nextText)
+                      if (object.type === 'textbox') {
+                        applyTextboxAutoHeight(object, nextText)
+                      }
                     }}
                     onBlur={() => {
                       finishTextboxEditing(true)

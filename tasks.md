@@ -154,7 +154,7 @@ Done criteria:
 - [x] Implement in-place textbox editing.
 - [x] Support basic rich text formatting controls.
 - [x] Add bullets and numbered list support in text model.
-- [ ] Implement textbox auto-height as default behavior (grow with content, no internal scroll in MVP).
+- [x] Implement textbox auto-height as default behavior (grow with content, no internal scroll in MVP).
 
 Done criteria:
 - Rich text edits persist through save/load and undo/redo.
