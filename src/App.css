@@ -517,6 +517,11 @@ button:disabled {
   height: 1.95rem;
 }
 
+.text-context-toolbar .icon-btn.active {
+  background: rgba(111, 166, 252, 0.32);
+  border-color: rgba(179, 211, 255, 0.45);
+}
+
 .shape-context-toolbar label {
   display: inline-flex;
   align-items: center;

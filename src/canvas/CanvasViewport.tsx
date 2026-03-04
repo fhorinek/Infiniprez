@@ -28,6 +28,7 @@ import {
   type CanvasObject,
   type LayerOrderAction,
   type ShapeData,
+  type TextRun,
 } from '../model'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
@@ -593,6 +594,7 @@ export function CanvasViewport() {
     : false
   const selectedTextboxObject =
     selectedObject?.type === 'textbox' ? selectedObject : null
+  const selectedTextboxFirstRun = selectedTextboxObject?.textboxData.runs[0] ?? null
   const selectedShapeObject =
     selectedObject &&
     (selectedObject.type === 'shape_rect' ||
@@ -840,6 +842,26 @@ export function CanvasViewport() {
       return
     }
     reorderObjectsLayer(contextSelectionIds, action)
+  }
+
+  function updateSelectedTextboxRun(patch: Partial<TextRun>) {
+    if (!selectedTextboxObject) {
+      return
+    }
+
+    const firstRun = selectedTextboxObject.textboxData.runs[0] ?? {
+      text: '',
+      bold: false,
+      italic: false,
+      underline: false,
+      color: '#f0f3fc',
+      fontSize: 28,
+    }
+
+    setTextboxData(selectedTextboxObject.id, {
+      ...selectedTextboxObject.textboxData,
+      runs: [{ ...firstRun, ...patch }],
+    })
   }
 
   function startTextboxEditing(target: Extract<CanvasObject, { type: 'textbox' }>) {
@@ -1633,6 +1655,7 @@ export function CanvasViewport() {
           const imageSrc = imageAsset
             ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
             : null
+          const textboxFirstRun = object.type === 'textbox' ? object.textboxData.runs[0] ?? null : null
 
           return (
             <div
@@ -1796,7 +1819,16 @@ export function CanvasViewport() {
                     autoFocus
                   />
                 ) : (
-                  <span className="textbox-content">{getObjectLabel(object)}</span>
+                  <span
+                    className="textbox-content"
+                    style={{
+                      fontWeight: textboxFirstRun?.bold ? 700 : 400,
+                      fontStyle: textboxFirstRun?.italic ? 'italic' : 'normal',
+                      textDecoration: textboxFirstRun?.underline ? 'underline' : 'none',
+                    }}
+                  >
+                    {getObjectLabel(object)}
+                  </span>
                 )
               ) : object.type === 'group' ? null : (
                 <span>{getObjectLabel(object)}</span>
@@ -1852,13 +1884,34 @@ export function CanvasViewport() {
             event.stopPropagation()
           }}
         >
-          <button type="button" className="icon-btn" disabled title="Bold formatting (Task 13)">
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxFirstRun?.bold ? 'active' : ''}`}
+            title="Bold"
+            onClick={() => {
+              updateSelectedTextboxRun({ bold: !selectedTextboxFirstRun?.bold })
+            }}
+          >
             B
           </button>
-          <button type="button" className="icon-btn" disabled title="Italic formatting (Task 13)">
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxFirstRun?.italic ? 'active' : ''}`}
+            title="Italic"
+            onClick={() => {
+              updateSelectedTextboxRun({ italic: !selectedTextboxFirstRun?.italic })
+            }}
+          >
             I
           </button>
-          <button type="button" className="icon-btn" disabled title="Underline formatting (Task 13)">
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxFirstRun?.underline ? 'active' : ''}`}
+            title="Underline"
+            onClick={() => {
+              updateSelectedTextboxRun({ underline: !selectedTextboxFirstRun?.underline })
+            }}
+          >
             U
           </button>
         </div>
