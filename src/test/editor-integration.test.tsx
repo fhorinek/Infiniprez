@@ -101,4 +101,28 @@ describe('integration: copy/paste', () => {
     expect(objects.filter((entry) => entry.type === 'group')).toHaveLength(2)
     expect(objects).toHaveLength(6)
   })
+
+  it('resets paste offset after copying a different source selection', () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'rect-a', x: 0, y: 0, zIndex: 1 }))
+    createObject(createShapeCircle({ id: 'circle-b', x: 200, y: 0, zIndex: 2 }))
+
+    render(<CanvasViewport />)
+
+    state.selectObjects(['rect-a'])
+    fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
+    fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+    fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+
+    state.selectObjects(['circle-b'])
+    fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
+    fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+
+    const circles = useEditorStore
+      .getState()
+      .document.objects.filter((entry) => entry.type === 'shape_circle')
+    expect(circles).toHaveLength(2)
+    const pastedCircle = circles.find((entry) => entry.id !== 'circle-b')
+    expect(pastedCircle?.x).toBe(220)
+  })
 })
