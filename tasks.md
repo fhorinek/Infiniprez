@@ -153,7 +153,7 @@ Done criteria:
 ## 13. Text Editing and Formatting
 - [x] Implement in-place textbox editing.
 - [x] Support basic rich text formatting controls.
-- [ ] Add bullets and numbered list support in text model.
+- [x] Add bullets and numbered list support in text model.
 - [ ] Implement textbox auto-height as default behavior (grow with content, no internal scroll in MVP).
 
 Done criteria:

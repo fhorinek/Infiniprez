@@ -864,6 +864,19 @@ export function CanvasViewport() {
     })
   }
 
+  function updateSelectedTextboxListType(
+    nextListType: Extract<CanvasObject, { type: 'textbox' }>['textboxData']['listType']
+  ) {
+    if (!selectedTextboxObject || selectedTextboxObject.textboxData.listType === nextListType) {
+      return
+    }
+
+    setTextboxData(selectedTextboxObject.id, {
+      ...selectedTextboxObject.textboxData,
+      listType: nextListType,
+    })
+  }
+
   function startTextboxEditing(target: Extract<CanvasObject, { type: 'textbox' }>) {
     setEditingTextboxId(target.id)
     setEditingTextboxText(target.textboxData.runs.map((run) => run.text).join(''))
@@ -1656,6 +1669,10 @@ export function CanvasViewport() {
             ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
             : null
           const textboxFirstRun = object.type === 'textbox' ? object.textboxData.runs[0] ?? null : null
+          const textboxLines =
+            object.type === 'textbox'
+              ? (textboxFirstRun?.text.split('\n').filter((line) => line.length > 0) ?? [])
+              : []
 
           return (
             <div
@@ -1819,7 +1836,7 @@ export function CanvasViewport() {
                     autoFocus
                   />
                 ) : (
-                  <span
+                  <div
                     className="textbox-content"
                     style={{
                       fontWeight: textboxFirstRun?.bold ? 700 : 400,
@@ -1827,8 +1844,20 @@ export function CanvasViewport() {
                       textDecoration: textboxFirstRun?.underline ? 'underline' : 'none',
                     }}
                   >
-                    {getObjectLabel(object)}
-                  </span>
+                    {object.textboxData.listType === 'none' ? (
+                      getObjectLabel(object)
+                    ) : (
+                      <div className="textbox-list">
+                        {(textboxLines.length > 0 ? textboxLines : ['']).map((line, index) => (
+                          <div key={`${object.id}-line-${index}`} className="textbox-list-item">
+                            {object.textboxData.listType === 'bullet'
+                              ? `• ${line}`
+                              : `${index + 1}. ${line}`}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )
               ) : object.type === 'group' ? null : (
                 <span>{getObjectLabel(object)}</span>
@@ -1913,6 +1942,36 @@ export function CanvasViewport() {
             }}
           >
             U
+          </button>
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'none' ? 'active' : ''}`}
+            title="No list"
+            onClick={() => {
+              updateSelectedTextboxListType('none')
+            }}
+          >
+            N
+          </button>
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'bullet' ? 'active' : ''}`}
+            title="Bulleted list"
+            onClick={() => {
+              updateSelectedTextboxListType('bullet')
+            }}
+          >
+            •
+          </button>
+          <button
+            type="button"
+            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'numbered' ? 'active' : ''}`}
+            title="Numbered list"
+            onClick={() => {
+              updateSelectedTextboxListType('numbered')
+            }}
+          >
+            1.
           </button>
         </div>
       )}
