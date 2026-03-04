@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { CanvasViewport } from '../canvas'
 import {
@@ -12,6 +12,7 @@ import {
 import { useEditorStore } from '../store'
 
 const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
+const AUTOSAVE_BACKUPS_KEY = 'infiniprez.autosave.backups'
 
 function createShapeRect(overrides: Partial<ShapeRectObject> = {}): ShapeRectObject {
   return {
@@ -152,5 +153,26 @@ describe('integration: autosave restore', () => {
     expect(useEditorStore.getState().document.objects.some((entry) => entry.id === 'autosave-object')).toBe(
       true
     )
+  })
+})
+
+describe('integration: new document reset', () => {
+  it('resets store state and clears autosave keys', () => {
+    render(<App />)
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'to-reset', zIndex: 1 }))
+    expect(state.document.objects).toHaveLength(1)
+
+    window.localStorage.setItem(AUTOSAVE_LATEST_KEY, '{"snapshot":"x","savedAt":"y"}')
+    window.localStorage.setItem(AUTOSAVE_BACKUPS_KEY, '[{"snapshot":"x","savedAt":"y"}]')
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: 'New Document' }))
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(useEditorStore.getState().document.objects).toHaveLength(0)
+    expect(useEditorStore.getState().history.past).toHaveLength(0)
+    expect(window.localStorage.getItem(AUTOSAVE_LATEST_KEY)).toBeNull()
+    expect(window.localStorage.getItem(AUTOSAVE_BACKUPS_KEY)).toBeNull()
   })
 })
