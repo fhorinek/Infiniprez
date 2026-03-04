@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { JSDOM } from 'jsdom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -113,7 +113,7 @@ describe('integration: group isolate mode', () => {
 })
 
 describe('integration: copy/paste', () => {
-  it('copies and pastes groups with child remapping', () => {
+  it('copies and pastes groups with child remapping', async () => {
     const state = useEditorStore.getState()
     createObject(createShapeRect({ id: 'a', x: 0, y: 0, zIndex: 1 }))
     createObject(createShapeRect({ id: 'b', x: 140, y: 0, zIndex: 2 }))
@@ -121,6 +121,7 @@ describe('integration: copy/paste', () => {
     const groupId = useEditorStore.getState().ui.selectedObjectIds[0]
     expect(groupId).toBeTruthy()
     state.selectObjects([groupId!])
+    await act(async () => {})
 
     render(<CanvasViewport />)
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
@@ -131,7 +132,7 @@ describe('integration: copy/paste', () => {
     expect(objects).toHaveLength(6)
   })
 
-  it('resets paste offset after copying a different source selection', () => {
+  it('resets paste offset after copying a different source selection', async () => {
     const state = useEditorStore.getState()
     createObject(createShapeRect({ id: 'rect-a', x: 0, y: 0, zIndex: 1 }))
     createObject(createShapeCircle({ id: 'circle-b', x: 200, y: 0, zIndex: 2 }))
@@ -139,11 +140,13 @@ describe('integration: copy/paste', () => {
     render(<CanvasViewport />)
 
     state.selectObjects(['rect-a'])
+    await act(async () => {})
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
 
     state.selectObjects(['circle-b'])
+    await act(async () => {})
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
 
@@ -178,9 +181,8 @@ describe('integration: autosave restore', () => {
 describe('integration: new document reset', () => {
   it('resets store state and clears autosave keys', () => {
     render(<App />)
-    const state = useEditorStore.getState()
     createObject(createShapeRect({ id: 'to-reset', zIndex: 1 }))
-    expect(state.document.objects).toHaveLength(1)
+    expect(useEditorStore.getState().document.objects).toHaveLength(1)
 
     window.localStorage.setItem(AUTOSAVE_LATEST_KEY, '{"snapshot":"x","savedAt":"y"}')
     window.localStorage.setItem(AUTOSAVE_BACKUPS_KEY, '[{"snapshot":"x","savedAt":"y"}]')
