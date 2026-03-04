@@ -174,7 +174,7 @@ Done criteria:
 - Critical editor flows pass in CI.
 
 ## Suggested Delivery Milestones
-- [ ] Milestone A: Tasks 0-4 (interactive editor foundation).
+- [x] Milestone A: Tasks 0-4 (interactive editor foundation).
 - [ ] Milestone B: Tasks 5-8 (editing power + slide authoring).
 - [ ] Milestone C: Tasks 9-12 (presentation + persistence + export).
 - [ ] Milestone D: Tasks 13-14 (text depth + hardening).
