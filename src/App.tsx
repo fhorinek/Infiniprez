@@ -161,6 +161,25 @@ interface AutosavePayload {
   savedAt: string
 }
 
+function readLatestAutosavePayload(): AutosavePayload | null {
+  try {
+    const raw = window.localStorage.getItem(AUTOSAVE_LATEST_KEY)
+    if (!raw) {
+      return null
+    }
+    const payload = JSON.parse(raw) as Partial<AutosavePayload>
+    if (!payload || typeof payload.snapshot !== 'string' || typeof payload.savedAt !== 'string') {
+      return null
+    }
+    return {
+      snapshot: payload.snapshot,
+      savedAt: payload.savedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
 function interpolateCamera(start: CameraState, end: CameraState, t: number): CameraState {
   return {
     x: start.x + (end.x - start.x) * t,
@@ -572,16 +591,11 @@ function App() {
     }
     didAttemptAutosaveRestoreRef.current = true
 
+    const payload = readLatestAutosavePayload()
+    if (!payload) {
+      return
+    }
     try {
-      const raw = window.localStorage.getItem(AUTOSAVE_LATEST_KEY)
-      if (!raw) {
-        return
-      }
-      const payload = JSON.parse(raw) as Partial<AutosavePayload>
-      if (!payload || typeof payload.snapshot !== 'string') {
-        return
-      }
-
       const loaded = parseStoredFile(payload.snapshot)
       replaceDocument(loaded.document)
       if (loaded.camera) {
