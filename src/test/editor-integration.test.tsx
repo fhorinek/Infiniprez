@@ -213,3 +213,19 @@ describe('integration: export runtime boot', () => {
     expect(dom.window.document.querySelectorAll('.export-object')).toHaveLength(1)
   })
 })
+
+describe('integration: smoke flow', () => {
+  it('creates content, creates slide, enters present mode, and exports runtime html', () => {
+    render(<App />)
+
+    createObject(createShapeRect({ id: 'smoke-rect', x: 40, y: 40, zIndex: 1 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create slide' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Present' }))
+
+    expect(useEditorStore.getState().ui.mode).toBe('present')
+
+    const exportedHtml = buildPresentationExportHtml(useEditorStore.getState().document)
+    expect(exportedHtml).toContain('__INFINIPREZ_EXPORT__')
+    expect(exportedHtml).toContain('<div id=\"stage\"></div>')
+  })
+})

@@ -168,7 +168,7 @@ Done criteria:
 - [x] Add integration test for autosave restore.
 - [x] Add integration test for `New Document` reset behavior.
 - [x] Add integration test for export runtime boot.
-- [ ] Add smoke E2E: create content -> create slides -> present -> export.
+- [x] Add smoke E2E: create content -> create slides -> present -> export.
 
 Done criteria:
 - Critical editor flows pass in CI.
