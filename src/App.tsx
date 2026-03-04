@@ -152,6 +152,8 @@ function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
 }
 
+const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
+
 function interpolateCamera(start: CameraState, end: CameraState, t: number): CameraState {
   return {
     x: start.x + (end.x - start.x) * t,
@@ -165,7 +167,6 @@ function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
   const latestDocumentSnapshotRef = useRef<string>('')
   const latestAutosavedSnapshotRef = useRef<string>('')
-  const inMemoryAutosaveSnapshotRef = useRef<{ snapshot: string; savedAt: string } | null>(null)
 
   const document = useEditorStore((state) => state.document)
   const camera = useEditorStore((state) => state.camera)
@@ -568,10 +569,14 @@ function App() {
         return
       }
 
-      // Task 11.2 persists this autosave payload to localStorage.
-      inMemoryAutosaveSnapshotRef.current = {
+      const payload = {
         snapshot,
         savedAt: new Date().toISOString(),
+      }
+      try {
+        window.localStorage.setItem(AUTOSAVE_LATEST_KEY, JSON.stringify(payload))
+      } catch {
+        // Ignore storage failures in restricted browser modes.
       }
       latestAutosavedSnapshotRef.current = snapshot
     }, 20_000)
