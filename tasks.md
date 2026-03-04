@@ -145,7 +145,7 @@ Done criteria:
 - [x] Embed assets/styles/scripts as inline Base64 or inline text.
 - [x] Remove editor UI and include presentation runtime only.
 - [x] Ensure export opens from `file://` without network access.
-- [ ] Start playback from first slide.
+- [x] Start playback from first slide.
 
 Done criteria:
 - Exported file runs offline and presents correctly on a fresh browser profile.

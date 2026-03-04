@@ -36,6 +36,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   const slides = Array.isArray(model.slides)
     ? [...model.slides].sort((a, b) => a.orderIndex - b.orderIndex)
     : [];
+  const START_SLIDE_INDEX = 0;
   let currentSlideIndex = 0;
 
   const rotatePoint = (point, radians) => {
@@ -155,7 +156,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   prevBtn.addEventListener('click', () => setSlideIndex(currentSlideIndex - 1));
   nextBtn.addEventListener('click', () => setSlideIndex(currentSlideIndex + 1));
   window.addEventListener('resize', () => setSlideIndex(currentSlideIndex));
-  setSlideIndex(0);
+  setSlideIndex(START_SLIDE_INDEX);
 })();
 `.trim()
 
