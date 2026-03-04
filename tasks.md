@@ -160,7 +160,7 @@ Done criteria:
 - Rich text edits persist through save/load and undo/redo.
 
 ## 14. QA + Regression Tests
-- [ ] Unit tests for geometry transforms and command reducers.
+- [x] Unit tests for geometry transforms and command reducers.
 - [ ] Unit tests for slide timing and transition selection.
 - [ ] Add integration test for group isolate mode.
 - [ ] Add integration test for copy/paste with groups.
