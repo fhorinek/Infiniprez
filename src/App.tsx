@@ -212,6 +212,7 @@ function App() {
   )
   const activeSlideId = selectedSlideId ?? orderedSlides[0]?.id ?? null
   const activeSlide = orderedSlides.find((slide) => slide.id === activeSlideId) ?? null
+  const activeSlideRotationDeg = activeSlide ? (activeSlide.rotation * 180) / Math.PI : 0
   const activeSlideIndex = activeSlide ? orderedSlides.findIndex((slide) => slide.id === activeSlide.id) : -1
   const slideDnDSensors = useSensors(
     useSensor(PointerSensor, {
@@ -427,6 +428,27 @@ function App() {
     transitionCameraToSlide(target)
   }
 
+  function focusCameraOnSlide(slide: Slide) {
+    transitionCameraToSlide({
+      ...slide,
+      transitionType: 'ease',
+      transitionDurationMs: 700,
+    })
+  }
+
+  function handleSlideSelection(slideId: string) {
+    const target = orderedSlides.find((slide) => slide.id === slideId)
+    if (!target) {
+      return
+    }
+    selectSlide(slideId)
+    if (mode === 'present') {
+      transitionCameraToSlide(target)
+      return
+    }
+    focusCameraOnSlide(target)
+  }
+
   function goToNextSlide() {
     if (activeSlideIndex < 0) {
       return
@@ -443,15 +465,17 @@ function App() {
 
   function enterPresentMode(fromCurrent: boolean) {
     if (orderedSlides.length === 0) {
-      return
+      setMode('present')
+      selectSlide(null)
+    } else {
+      const startSlide =
+        fromCurrent && activeSlide
+          ? activeSlide
+          : orderedSlides[0]
+      selectSlide(startSlide.id)
+      setMode('present')
+      transitionCameraToSlide(startSlide, true)
     }
-    const startSlide =
-      fromCurrent && activeSlide
-        ? activeSlide
-        : orderedSlides[0]
-    selectSlide(startSlide.id)
-    setMode('present')
-    transitionCameraToSlide(startSlide, true)
 
     if (typeof window.document.documentElement.requestFullscreen === 'function') {
       void window.document.documentElement.requestFullscreen().catch(() => undefined)
@@ -673,15 +697,13 @@ function App() {
       label: 'Present',
       icon: faPlay,
       onClick: () => enterPresentMode(false),
-      disabled: orderedSlides.length === 0,
-      disabledReason: orderedSlides.length === 0 ? 'Create at least one slide first' : undefined,
+      disabled: false,
     },
     {
       label: 'Present Current',
       icon: faForwardStep,
       onClick: () => enterPresentMode(true),
-      disabled: orderedSlides.length === 0,
-      disabledReason: orderedSlides.length === 0 ? 'Create at least one slide first' : undefined,
+      disabled: false,
     },
   ]
 
@@ -712,18 +734,7 @@ function App() {
         </section>
 
         <section className="panel">
-          <div className="panel-title-row">
-            <h2>Slides</h2>
-            <button
-              type="button"
-              className="panel-icon-btn icon-btn"
-              aria-label="Create slide"
-              title="Create slide from current camera"
-              onClick={handleCreateSlide}
-            >
-              <FontAwesomeIcon icon={faFileCirclePlus} />
-            </button>
-          </div>
+          <h2>Slides</h2>
           {orderedSlides.length > 0 ? (
             <DndContext
               sensors={slideDnDSensors}
@@ -740,7 +751,7 @@ function App() {
                       key={slide.id}
                       slide={slide}
                       isActive={slide.id === activeSlideId}
-                      onClick={() => selectSlide(slide.id)}
+                      onClick={() => handleSlideSelection(slide.id)}
                     />
                   ))}
                 </ol>
@@ -750,6 +761,15 @@ function App() {
             <p className="panel-empty">No slides yet.</p>
           )}
           <div className="inline-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Create slide"
+              title="Create slide from current camera"
+              onClick={handleCreateSlide}
+            >
+              <FontAwesomeIcon icon={faFileCirclePlus} />
+            </button>
             <button
               type="button"
               className="icon-btn"
@@ -776,161 +796,182 @@ function App() {
         <section className="panel">
           <h2>Slide Parameters</h2>
           {activeSlide ? (
-            <table className="property-table slide-params-table" aria-label="Slide parameters">
-              <tbody>
-                <tr>
-                  <td>Name</td>
-                  <td>
-                    <input
-                      type="text"
-                      value={activeSlide.name}
-                      onChange={(event) => updateActiveSlide({ name: event.target.value })}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>X</td>
-                  <td>
-                    <input
-                      type="number"
-                      step={1}
-                      value={activeSlide.x}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateActiveSlide({ x: parsed })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Y</td>
-                  <td>
-                    <input
-                      type="number"
-                      step={1}
-                      value={activeSlide.y}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateActiveSlide({ y: parsed })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Zoom</td>
-                  <td>
-                    <input
-                      type="number"
-                      step={0.05}
-                      min={0.1}
-                      value={activeSlide.zoom}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateActiveSlide({ zoom: Math.max(0.1, parsed) })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Rotation</td>
-                  <td>
-                    <input
-                      type="number"
-                      step={0.01}
-                      value={activeSlide.rotation}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateActiveSlide({ rotation: parsed })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Trigger</td>
-                  <td>
-                    <select
-                      value={activeSlide.triggerMode}
-                      onChange={(event) =>
-                        updateActiveSlide({
-                          triggerMode: event.target.value as Slide['triggerMode'],
-                        })
+            <div className="slide-params-panel" aria-label="Slide parameters">
+              <label className="slide-param-field">
+                <span>Name</span>
+                <input
+                  type="text"
+                  value={activeSlide.name}
+                  onChange={(event) => updateActiveSlide({ name: event.target.value })}
+                />
+              </label>
+
+              <div className="slide-param-coords">
+                <label className="slide-param-field">
+                  <span>X</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={activeSlide.x}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateActiveSlide({ x: parsed })
                       }
-                    >
-                      <option value="manual">manual</option>
-                      <option value="timed">timed</option>
-                    </select>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Trigger Delay (ms)</td>
-                  <td>
-                    <input
-                      type="number"
-                      min={0}
-                      max={3_600_000}
-                      step={100}
-                      value={activeSlide.triggerDelayMs}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateActiveSlide({
-                            triggerDelayMs: Math.min(3_600_000, Math.max(0, Math.round(parsed))),
-                          })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Transition</td>
-                  <td>
-                    <select
-                      value={activeSlide.transitionType}
-                      onChange={(event) =>
-                        updateActiveSlide({
-                          transitionType: event.target.value as Slide['transitionType'],
-                        })
+                    }}
+                  />
+                </label>
+                <label className="slide-param-field">
+                  <span>Y</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={activeSlide.y}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateActiveSlide({ y: parsed })
                       }
-                    >
-                      <option value="ease">ease</option>
-                      <option value="linear">linear</option>
-                      <option value="instant">instant</option>
-                    </select>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Duration (ms)</td>
-                  <td>
-                    <input
-                      type="number"
-                      min={activeSlide.transitionType === 'instant' ? 0 : 1000}
-                      max={10_000}
-                      step={100}
-                      value={activeSlide.transitionDurationMs}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          const rounded = Math.round(parsed)
-                          const clamped =
-                            activeSlide.transitionType === 'instant'
-                              ? Math.min(10_000, Math.max(0, rounded))
-                              : Math.min(10_000, Math.max(1_000, rounded))
-                          updateActiveSlide({ transitionDurationMs: clamped })
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="slide-param-switch-row">
+                <span>Trigger</span>
+                <div className="slide-param-switch" role="group" aria-label="Trigger mode">
+                  <button
+                    type="button"
+                    className={activeSlide.triggerMode === 'manual' ? 'active' : ''}
+                    onClick={() => updateActiveSlide({ triggerMode: 'manual' })}
+                  >
+                    Manual
+                  </button>
+                  <button
+                    type="button"
+                    className={activeSlide.triggerMode === 'timed' ? 'active' : ''}
+                    onClick={() => updateActiveSlide({ triggerMode: 'timed' })}
+                  >
+                    Timed
+                  </button>
+                </div>
+              </div>
+
+              <div className="slide-param-switch-row">
+                <span>Transition</span>
+                <div className="slide-param-switch switch-3" role="group" aria-label="Transition type">
+                  <button
+                    type="button"
+                    className={activeSlide.transitionType === 'ease' ? 'active' : ''}
+                    onClick={() => updateActiveSlide({ transitionType: 'ease' })}
+                  >
+                    Ease
+                  </button>
+                  <button
+                    type="button"
+                    className={activeSlide.transitionType === 'linear' ? 'active' : ''}
+                    onClick={() => updateActiveSlide({ transitionType: 'linear' })}
+                  >
+                    Linear
+                  </button>
+                  <button
+                    type="button"
+                    className={activeSlide.transitionType === 'instant' ? 'active' : ''}
+                    onClick={() => updateActiveSlide({ transitionType: 'instant' })}
+                  >
+                    Instant
+                  </button>
+                </div>
+              </div>
+
+              <label className="slide-param-slider">
+                <span>
+                  Zoom
+                  <strong>{activeSlide.zoom.toFixed(2)}x</strong>
+                </span>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={4}
+                  step={0.01}
+                  value={activeSlide.zoom}
+                  onChange={(event) => {
+                    const parsed = parseNumberInput(event.target.value)
+                    if (parsed !== null) {
+                      updateActiveSlide({ zoom: Math.max(0.1, parsed) })
+                    }
+                  }}
+                />
+              </label>
+
+              <label className="slide-param-slider">
+                <span>
+                  Rotation
+                  <strong>{activeSlideRotationDeg.toFixed(0)}deg</strong>
+                </span>
+                <input
+                  type="range"
+                  min={-180}
+                  max={180}
+                  step={1}
+                  value={activeSlideRotationDeg}
+                  onChange={(event) => {
+                    const parsed = parseNumberInput(event.target.value)
+                    if (parsed !== null) {
+                      updateActiveSlide({ rotation: (parsed * Math.PI) / 180 })
+                    }
+                  }}
+                />
+              </label>
+
+              <label className="slide-param-slider">
+                <span>
+                  Trigger Delay
+                  <strong>{activeSlide.triggerDelayMs}ms</strong>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={3_600_000}
+                  step={1_000}
+                  value={activeSlide.triggerDelayMs}
+                  disabled={activeSlide.triggerMode !== 'timed'}
+                  onChange={(event) => {
+                    const parsed = parseNumberInput(event.target.value)
+                    if (parsed !== null) {
+                      updateActiveSlide({
+                        triggerDelayMs: Math.min(3_600_000, Math.max(0, Math.round(parsed))),
+                      })
+                    }
+                  }}
+                />
+              </label>
+
+              <label className="slide-param-slider">
+                <span>
+                  Duration
+                  <strong>{activeSlide.transitionDurationMs}ms</strong>
+                </span>
+                <input
+                  type="range"
+                  min={activeSlide.transitionType === 'instant' ? 0 : 1000}
+                  max={10_000}
+                  step={100}
+                  value={activeSlide.transitionDurationMs}
+                  onChange={(event) => {
+                    const parsed = parseNumberInput(event.target.value)
+                    if (parsed !== null) {
+                      const rounded = Math.round(parsed)
+                      const clamped =
+                        activeSlide.transitionType === 'instant'
+                          ? Math.min(10_000, Math.max(0, rounded))
+                          : Math.min(10_000, Math.max(1_000, rounded))
+                      updateActiveSlide({ transitionDurationMs: clamped })
+                    }
+                  }}
+                />
+              </label>
+            </div>
           ) : (
             <p className="panel-empty">Create or select a slide to edit parameters.</p>
           )}
@@ -1080,10 +1121,23 @@ function App() {
 
         {mode === 'present' && (
           <div className="present-hud">
-            <button type="button" className="icon-btn" onClick={goToPreviousSlide} title="Previous slide">
+            {!activeSlide && <span className="present-hud-status">No slides</span>}
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={goToPreviousSlide}
+              title="Previous slide"
+              disabled={!activeSlide || activeSlideIndex <= 0}
+            >
               <FontAwesomeIcon icon={faRotateLeft} />
             </button>
-            <button type="button" className="icon-btn" onClick={goToNextSlide} title="Next slide">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={goToNextSlide}
+              title="Next slide"
+              disabled={!activeSlide || activeSlideIndex >= orderedSlides.length - 1}
+            >
               <FontAwesomeIcon icon={faForwardStep} />
             </button>
             <button type="button" className="icon-btn" onClick={exitPresentMode} title="Exit present mode">

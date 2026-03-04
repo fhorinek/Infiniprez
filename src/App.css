@@ -127,10 +127,100 @@ button:disabled {
   padding: 0.35rem 0.2rem;
 }
 
-.slide-params-table input,
-.slide-params-table select {
+.slide-params-panel {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.slide-param-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.slide-param-field > span {
+  font-size: 0.76rem;
+  color: #95a6c5;
+  letter-spacing: 0.02em;
+}
+
+.slide-param-field > input {
   width: 100%;
-  box-sizing: border-box;
+  border: 1px solid rgba(173, 202, 255, 0.22);
+  border-radius: 0.45rem;
+  background: rgba(8, 14, 30, 0.65);
+  color: #e9f3ff;
+  padding: 0.32rem 0.45rem;
+}
+
+.slide-param-coords {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.slide-param-switch-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.slide-param-switch-row > span {
+  font-size: 0.78rem;
+  color: #95a6c5;
+  min-width: 68px;
+}
+
+.slide-param-switch {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(173, 202, 255, 0.2);
+  background: rgba(8, 14, 30, 0.58);
+}
+
+.slide-param-switch.switch-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.slide-param-switch button {
+  width: auto;
+  height: 1.75rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 0.62rem;
+  background: transparent;
+  color: #9fb5da;
+  font-size: 0.75rem;
+}
+
+.slide-param-switch button.active {
+  background: rgba(111, 166, 252, 0.3);
+  color: #eff6ff;
+}
+
+.slide-param-slider {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.slide-param-slider > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.78rem;
+  color: #95a6c5;
+}
+
+.slide-param-slider strong {
+  color: #d8e8ff;
+  font-weight: 600;
+}
+
+.slide-param-slider input[type='range'] {
+  width: 100%;
 }
 
 .property-list {
@@ -220,6 +310,13 @@ button:disabled {
   border: 1px solid rgba(167, 196, 247, 0.24);
   background: rgba(9, 14, 27, 0.72);
   backdrop-filter: blur(6px);
+}
+
+.present-hud-status {
+  align-self: center;
+  font-size: 0.78rem;
+  color: #95a6c5;
+  padding: 0 0.2rem;
 }
 
 .present-mode .canvas-stage {
