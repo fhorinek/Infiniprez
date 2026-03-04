@@ -142,7 +142,7 @@ Done criteria:
 
 ## 12. Standalone Presentation HTML Export
 - [x] Build export pipeline that produces single HTML file.
-- [ ] Embed assets/styles/scripts as inline Base64 or inline text.
+- [x] Embed assets/styles/scripts as inline Base64 or inline text.
 - [ ] Remove editor UI and include presentation runtime only.
 - [ ] Ensure export opens from `file://` without network access.
 - [ ] Start playback from first slide.
