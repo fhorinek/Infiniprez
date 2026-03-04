@@ -1,8 +1,17 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
+import App from '../App'
 import { CanvasViewport } from '../canvas'
-import type { CanvasObject, ShapeCircleObject, ShapeRectObject } from '../model'
+import {
+  createEmptyDocument,
+  serializeDocument,
+  type CanvasObject,
+  type ShapeCircleObject,
+  type ShapeRectObject,
+} from '../model'
 import { useEditorStore } from '../store'
+
+const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
 
 function createShapeRect(overrides: Partial<ShapeRectObject> = {}): ShapeRectObject {
   return {
@@ -124,5 +133,24 @@ describe('integration: copy/paste', () => {
     expect(circles).toHaveLength(2)
     const pastedCircle = circles.find((entry) => entry.id !== 'circle-b')
     expect(pastedCircle?.x).toBe(220)
+  })
+})
+
+describe('integration: autosave restore', () => {
+  it('restores latest autosave on app startup', () => {
+    const snapshot = serializeDocument({
+      ...createEmptyDocument(),
+      objects: [createShapeRect({ id: 'autosave-object', zIndex: 1 })],
+    })
+    window.localStorage.setItem(
+      AUTOSAVE_LATEST_KEY,
+      JSON.stringify({ snapshot, savedAt: new Date().toISOString() })
+    )
+
+    render(<App />)
+
+    expect(useEditorStore.getState().document.objects.some((entry) => entry.id === 'autosave-object')).toBe(
+      true
+    )
   })
 })

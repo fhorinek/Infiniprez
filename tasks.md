@@ -165,7 +165,7 @@ Done criteria:
 - [x] Add integration test for group isolate mode.
 - [x] Add integration test for copy/paste with groups.
 - [x] Add integration test for paste offset reset after copying a different source selection.
-- [ ] Add integration test for autosave restore.
+- [x] Add integration test for autosave restore.
 - [ ] Add integration test for `New Document` reset behavior.
 - [ ] Add integration test for export runtime boot.
 - [ ] Add smoke E2E: create content -> create slides -> present -> export.
