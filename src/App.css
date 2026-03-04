@@ -9,6 +9,10 @@
     linear-gradient(120deg, #0f1828 0%, #131726 45%, #171421 100%);
 }
 
+.app-shell.present-mode {
+  grid-template-columns: 0 1fr;
+}
+
 .sidebar {
   border-right: 1px solid rgba(185, 200, 255, 0.16);
   height: 100vh;
@@ -16,6 +20,10 @@
   overflow-y: auto;
   background: rgba(8, 12, 23, 0.78);
   backdrop-filter: blur(8px);
+}
+
+.present-mode .sidebar {
+  display: none;
 }
 
 .panel {
@@ -198,6 +206,28 @@ button:disabled {
   border: 1px solid rgba(167, 196, 247, 0.24);
   background: rgba(9, 14, 27, 0.72);
   backdrop-filter: blur(6px);
+}
+
+.present-hud {
+  position: absolute;
+  right: 0.9rem;
+  top: 0.9rem;
+  z-index: 35;
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  border-radius: 0.65rem;
+  border: 1px solid rgba(167, 196, 247, 0.24);
+  background: rgba(9, 14, 27, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.present-mode .canvas-stage {
+  pointer-events: none;
+}
+
+.present-mode .canvas-toolbar {
+  display: none;
 }
 
 .canvas-toolbar button {

@@ -107,11 +107,11 @@ Done criteria:
 - Slide order and parameters persist correctly after edits and reload.
 
 ## 9. Present Mode Runtime
-- [ ] Implement present mode entry from beginning and from current slide.
-- [ ] Implement camera transition engine: `ease`, `linear`, `instant`.
-- [ ] Implement slide progression for manual next/previous and timed auto-advance.
-- [ ] Fullscreen support and keyboard navigation.
-- [ ] Implement present-mode keys: next (`Right/Down/Space/PageDown`), previous (`Left/Up/PageUp`), exit (`Esc`).
+- [x] Implement present mode entry from beginning and from current slide.
+- [x] Implement camera transition engine: `ease`, `linear`, `instant`.
+- [x] Implement slide progression for manual next/previous and timed auto-advance.
+- [x] Fullscreen support and keyboard navigation.
+- [x] Implement present-mode keys: next (`Right/Down/Space/PageDown`), previous (`Left/Up/PageUp`), exit (`Esc`).
 
 Done criteria:
 - Presentation follows slide order and per-slide trigger/transition settings.

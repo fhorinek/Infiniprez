@@ -219,6 +219,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       camera,
     })),
 
+  setMode: (mode) =>
+    set((state) => ({
+      ...state,
+      ui: {
+        ...state.ui,
+        mode,
+      },
+    })),
+
   replaceDocument: (document) =>
     set((state) => ({
       ...state,

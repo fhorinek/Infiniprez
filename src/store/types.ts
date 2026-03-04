@@ -30,6 +30,7 @@ export interface EditorState {
 
 export interface EditorActions {
   setCamera: (camera: CameraState) => void
+  setMode: (mode: UiState['mode']) => void
   replaceDocument: (document: DocumentModel) => void
   resetDocument: () => void
   selectObjects: (objectIds: string[]) => void

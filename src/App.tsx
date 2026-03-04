@@ -1,4 +1,4 @@
-import { useRef, type ChangeEvent, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, type ChangeEvent, type CSSProperties } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -148,6 +148,19 @@ function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasO
   return false
 }
 
+function easeInOutCubic(t: number) {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+}
+
+function interpolateCamera(start: CameraState, end: CameraState, t: number): CameraState {
+  return {
+    x: start.x + (end.x - start.x) * t,
+    y: start.y + (end.y - start.y) * t,
+    zoom: start.zoom + (end.zoom - start.zoom) * t,
+    rotation: start.rotation + (end.rotation - start.rotation) * t,
+  }
+}
+
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
 
@@ -158,6 +171,8 @@ function App() {
   const canUndo = useEditorStore((state) => state.history.past.length > 0)
   const replaceDocument = useEditorStore((state) => state.replaceDocument)
   const resetDocument = useEditorStore((state) => state.resetDocument)
+  const mode = useEditorStore((state) => state.ui.mode)
+  const setMode = useEditorStore((state) => state.setMode)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const createObject = useEditorStore((state) => state.createObject)
@@ -170,6 +185,8 @@ function App() {
   const deleteSlide = useEditorStore((state) => state.deleteSlide)
   const selectSlide = useEditorStore((state) => state.selectSlide)
   const selectedSlideId = useEditorStore((state) => state.ui.selectedSlideId)
+  const transitionFrameRef = useRef<number | null>(null)
+  const timedAdvanceTimeoutRef = useRef<number | null>(null)
 
   const selectedObject =
     selectedObjectIds.length === 1
@@ -189,14 +206,63 @@ function App() {
     ? hasLockedAncestor(selectedObject, objectById)
     : false
   const canToggleGroupFromSelection = Boolean(selectedGroupObject && activeGroupId === null)
-  const orderedSlides = [...document.slides].sort((a, b) => a.orderIndex - b.orderIndex)
+  const orderedSlides = useMemo(
+    () => [...document.slides].sort((a, b) => a.orderIndex - b.orderIndex),
+    [document.slides]
+  )
   const activeSlideId = selectedSlideId ?? orderedSlides[0]?.id ?? null
   const activeSlide = orderedSlides.find((slide) => slide.id === activeSlideId) ?? null
+  const activeSlideIndex = activeSlide ? orderedSlides.findIndex((slide) => slide.id === activeSlide.id) : -1
   const slideDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 4 },
     })
   )
+
+  function stopSlideTransition() {
+    if (transitionFrameRef.current !== null) {
+      cancelAnimationFrame(transitionFrameRef.current)
+      transitionFrameRef.current = null
+    }
+  }
+
+  function transitionCameraToSlide(slide: Slide, forceInstant = false) {
+    stopSlideTransition()
+    const targetCamera: CameraState = {
+      x: slide.x,
+      y: slide.y,
+      zoom: slide.zoom,
+      rotation: slide.rotation,
+    }
+
+    const transitionType = forceInstant ? 'instant' : slide.transitionType
+    const durationMs =
+      transitionType === 'instant'
+        ? 0
+        : Math.min(10_000, Math.max(1_000, slide.transitionDurationMs))
+    if (durationMs <= 0) {
+      setCamera(targetCamera)
+      return
+    }
+
+    const easing = transitionType === 'linear' ? (t: number) => t : easeInOutCubic
+    const startCamera = camera
+    const startedAtMs = performance.now()
+
+    const tick = (nowMs: number) => {
+      const elapsed = nowMs - startedAtMs
+      const progress = Math.min(1, Math.max(0, elapsed / durationMs))
+      const eased = easing(progress)
+      setCamera(interpolateCamera(startCamera, targetCamera, eased))
+      if (progress < 1) {
+        transitionFrameRef.current = requestAnimationFrame(tick)
+      } else {
+        transitionFrameRef.current = null
+      }
+    }
+
+    transitionFrameRef.current = requestAnimationFrame(tick)
+  }
 
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
@@ -352,6 +418,62 @@ function App() {
     reorderSlides(reordered.map((slide) => slide.id))
   }
 
+  function goToSlideByIndex(index: number) {
+    const target = orderedSlides[index]
+    if (!target) {
+      return
+    }
+    selectSlide(target.id)
+    transitionCameraToSlide(target)
+  }
+
+  function goToNextSlide() {
+    if (activeSlideIndex < 0) {
+      return
+    }
+    goToSlideByIndex(activeSlideIndex + 1)
+  }
+
+  function goToPreviousSlide() {
+    if (activeSlideIndex < 0) {
+      return
+    }
+    goToSlideByIndex(activeSlideIndex - 1)
+  }
+
+  function enterPresentMode(fromCurrent: boolean) {
+    if (orderedSlides.length === 0) {
+      return
+    }
+    const startSlide =
+      fromCurrent && activeSlide
+        ? activeSlide
+        : orderedSlides[0]
+    selectSlide(startSlide.id)
+    setMode('present')
+    transitionCameraToSlide(startSlide, true)
+
+    if (typeof window.document.documentElement.requestFullscreen === 'function') {
+      void window.document.documentElement.requestFullscreen().catch(() => undefined)
+    }
+  }
+
+  function exitPresentMode() {
+    setMode('edit')
+    stopSlideTransition()
+    if (timedAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(timedAdvanceTimeoutRef.current)
+      timedAdvanceTimeoutRef.current = null
+    }
+
+    if (
+      window.document.fullscreenElement &&
+      typeof window.document.exitFullscreen === 'function'
+    ) {
+      void window.document.exitFullscreen().catch(() => undefined)
+    }
+  }
+
   function handleCreateSlide() {
     const slide: Slide = {
       id: createId(),
@@ -407,6 +529,90 @@ function App() {
     }
     return parsed
   }
+
+  useEffect(() => {
+    if (mode !== 'present') {
+      if (timedAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(timedAdvanceTimeoutRef.current)
+        timedAdvanceTimeoutRef.current = null
+      }
+      return
+    }
+    if (!activeSlide || activeSlide.triggerMode !== 'timed') {
+      return
+    }
+    if (activeSlideIndex < 0 || activeSlideIndex >= orderedSlides.length - 1) {
+      return
+    }
+
+    timedAdvanceTimeoutRef.current = window.setTimeout(() => {
+      goToNextSlide()
+    }, activeSlide.triggerDelayMs)
+
+    return () => {
+      if (timedAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(timedAdvanceTimeoutRef.current)
+        timedAdvanceTimeoutRef.current = null
+      }
+    }
+  }, [
+    activeSlide,
+    activeSlideIndex,
+    mode,
+    orderedSlides.length,
+    selectedSlideId,
+    activeSlide?.triggerDelayMs,
+    activeSlide?.triggerMode,
+  ])
+
+  useEffect(() => {
+    if (mode !== 'present') {
+      return
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === 'Right' ||
+        event.key === 'ArrowRight' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'PageDown' ||
+        event.key === ' '
+      ) {
+        event.preventDefault()
+        goToNextSlide()
+        return
+      }
+
+      if (
+        event.key === 'Left' ||
+        event.key === 'ArrowLeft' ||
+        event.key === 'ArrowUp' ||
+        event.key === 'PageUp'
+      ) {
+        event.preventDefault()
+        goToPreviousSlide()
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        exitPresentMode()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mode, selectedSlideId, activeSlideIndex, orderedSlides.length])
+
+  useEffect(() => {
+    return () => {
+      stopSlideTransition()
+      if (timedAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(timedAdvanceTimeoutRef.current)
+        timedAdvanceTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   function handleSaveDocument() {
     const serialized = JSON.stringify(
@@ -466,21 +672,21 @@ function App() {
     {
       label: 'Present',
       icon: faPlay,
-      onClick: () => undefined,
-      disabled: true,
-      disabledReason: 'Not implemented yet',
+      onClick: () => enterPresentMode(false),
+      disabled: orderedSlides.length === 0,
+      disabledReason: orderedSlides.length === 0 ? 'Create at least one slide first' : undefined,
     },
     {
       label: 'Present Current',
       icon: faForwardStep,
-      onClick: () => undefined,
-      disabled: true,
-      disabledReason: 'Not implemented yet',
+      onClick: () => enterPresentMode(true),
+      disabled: orderedSlides.length === 0,
+      disabledReason: orderedSlides.length === 0 ? 'Create at least one slide first' : undefined,
     },
   ]
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${mode === 'present' ? 'present-mode' : ''}`}>
       <aside className="sidebar">
         <section className="panel">
           <h2>Project + Session</h2>
@@ -871,6 +1077,20 @@ function App() {
             <FontAwesomeIcon icon={faCopy} />
           </button>
         </div>
+
+        {mode === 'present' && (
+          <div className="present-hud">
+            <button type="button" className="icon-btn" onClick={goToPreviousSlide} title="Previous slide">
+              <FontAwesomeIcon icon={faRotateLeft} />
+            </button>
+            <button type="button" className="icon-btn" onClick={goToNextSlide} title="Next slide">
+              <FontAwesomeIcon icon={faForwardStep} />
+            </button>
+            <button type="button" className="icon-btn" onClick={exitPresentMode} title="Exit present mode">
+              <FontAwesomeIcon icon={faPlay} />
+            </button>
+          </div>
+        )}
 
         <input
           ref={loadInputRef}
