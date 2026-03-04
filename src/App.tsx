@@ -172,6 +172,7 @@ function interpolateCamera(start: CameraState, end: CameraState, t: number): Cam
 
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
+  const didAttemptAutosaveRestoreRef = useRef(false)
   const latestDocumentSnapshotRef = useRef<string>('')
   const latestAutosavedSnapshotRef = useRef<string>('')
 
@@ -564,6 +565,34 @@ function App() {
     }
     return parsed
   }
+
+  useEffect(() => {
+    if (didAttemptAutosaveRestoreRef.current) {
+      return
+    }
+    didAttemptAutosaveRestoreRef.current = true
+
+    try {
+      const raw = window.localStorage.getItem(AUTOSAVE_LATEST_KEY)
+      if (!raw) {
+        return
+      }
+      const payload = JSON.parse(raw) as Partial<AutosavePayload>
+      if (!payload || typeof payload.snapshot !== 'string') {
+        return
+      }
+
+      const loaded = parseStoredFile(payload.snapshot)
+      replaceDocument(loaded.document)
+      if (loaded.camera) {
+        setCamera(loaded.camera)
+      }
+      latestDocumentSnapshotRef.current = payload.snapshot
+      latestAutosavedSnapshotRef.current = payload.snapshot
+    } catch {
+      // Ignore invalid autosave payloads.
+    }
+  }, [replaceDocument, setCamera])
 
   useEffect(() => {
     latestDocumentSnapshotRef.current = serializeDocument(document)
