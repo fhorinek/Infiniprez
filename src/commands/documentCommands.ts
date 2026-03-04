@@ -1,6 +1,13 @@
 import { produce } from 'immer'
 import type { Command } from './types'
-import type { CanvasObject, DocumentModel, LayerOrderAction, Slide, ZIndexSnapshot } from '../model'
+import type {
+  CanvasObject,
+  DocumentModel,
+  LayerOrderAction,
+  Slide,
+  TextboxData,
+  ZIndexSnapshot,
+} from '../model'
 
 type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
 type SlideOrderSnapshot = Record<string, number>
@@ -301,6 +308,36 @@ export function setShapeOpacityCommand(
             return
           }
           target.shapeData.opacityPercent = beforeOpacityPercent
+        })
+      ),
+  }
+}
+
+export function setTextboxDataCommand(
+  objectId: string,
+  beforeTextboxData: TextboxData,
+  afterTextboxData: TextboxData
+): Command<DocumentModel> {
+  return {
+    label: 'Update textbox',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'textbox') {
+            return
+          }
+          target.textboxData = afterTextboxData
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'textbox') {
+            return
+          }
+          target.textboxData = beforeTextboxData
         })
       ),
   }

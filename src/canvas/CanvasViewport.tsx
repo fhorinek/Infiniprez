@@ -540,6 +540,8 @@ export function CanvasViewport() {
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
+  const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null)
+  const [editingTextboxText, setEditingTextboxText] = useState('')
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -560,6 +562,7 @@ export function CanvasViewport() {
   const groupObjects = useEditorStore((state) => state.groupObjects)
   const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setTextboxData = useEditorStore((state) => state.setTextboxData)
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
@@ -597,6 +600,13 @@ export function CanvasViewport() {
       selectedObject.type === 'shape_arrow')
       ? selectedObject
       : null
+  const editingTextboxObject = useMemo(() => {
+    if (!editingTextboxId) {
+      return null
+    }
+    const candidate = objectById.get(editingTextboxId)
+    return candidate?.type === 'textbox' ? candidate : null
+  }, [editingTextboxId, objectById])
   const textToolbarAnchor = selectedTextboxObject
     ? getObjectTopAnchorScreen(selectedTextboxObject, camera, viewportSize, 22)
     : null
@@ -665,6 +675,13 @@ export function CanvasViewport() {
     selectedUnlockedIdsKey,
     selectedUnlockedObjects,
   ])
+
+  useEffect(() => {
+    if (editingTextboxId && !editingTextboxObject) {
+      setEditingTextboxId(null)
+      setEditingTextboxText('')
+    }
+  }, [editingTextboxId, editingTextboxObject])
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -823,6 +840,38 @@ export function CanvasViewport() {
       return
     }
     reorderObjectsLayer(contextSelectionIds, action)
+  }
+
+  function startTextboxEditing(target: Extract<CanvasObject, { type: 'textbox' }>) {
+    setEditingTextboxId(target.id)
+    setEditingTextboxText(target.textboxData.runs.map((run) => run.text).join(''))
+    selectObjects([target.id])
+  }
+
+  function finishTextboxEditing(commit: boolean) {
+    if (!editingTextboxObject) {
+      setEditingTextboxId(null)
+      setEditingTextboxText('')
+      return
+    }
+
+    if (commit) {
+      const firstRun = editingTextboxObject.textboxData.runs[0] ?? {
+        text: '',
+        bold: false,
+        italic: false,
+        underline: false,
+        color: '#f0f3fc',
+        fontSize: 28,
+      }
+      setTextboxData(editingTextboxObject.id, {
+        ...editingTextboxObject.textboxData,
+        runs: [{ ...firstRun, text: editingTextboxText }],
+      })
+    }
+
+    setEditingTextboxId(null)
+    setEditingTextboxText('')
   }
 
   function copySelection(ids: string[]) {
@@ -1623,6 +1672,9 @@ export function CanvasViewport() {
                 if (event.button !== 0) {
                   return
                 }
+                if (editingTextboxId === object.id) {
+                  return
+                }
                 event.preventDefault()
                 event.stopPropagation()
                 closeContextMenu()
@@ -1677,6 +1729,15 @@ export function CanvasViewport() {
                   event.stopPropagation()
                   return
                 }
+                if (
+                  object.type === 'textbox' &&
+                  !isObjectEffectivelyLocked(object, objectById)
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  startTextboxEditing(object)
+                  return
+                }
                 if (object.type !== 'group') {
                   return
                 }
@@ -1706,6 +1767,36 @@ export function CanvasViewport() {
                   />
                 ) : (
                   <span>Image</span>
+                )
+              ) : object.type === 'textbox' ? (
+                editingTextboxId === object.id ? (
+                  <textarea
+                    className="textbox-editor"
+                    value={editingTextboxText}
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                    }}
+                    onChange={(event) => {
+                      setEditingTextboxText(event.target.value)
+                    }}
+                    onBlur={() => {
+                      finishTextboxEditing(true)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        finishTextboxEditing(false)
+                        return
+                      }
+                      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                        event.preventDefault()
+                        finishTextboxEditing(true)
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span className="textbox-content">{getObjectLabel(object)}</span>
                 )
               ) : object.type === 'group' ? null : (
                 <span>{getObjectLabel(object)}</span>

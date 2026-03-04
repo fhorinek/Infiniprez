@@ -1,5 +1,5 @@
 import type { Command, HistoryState } from '../commands'
-import type { Asset, CanvasObject, DocumentModel, LayerOrderAction, Slide } from '../model'
+import type { Asset, CanvasObject, DocumentModel, LayerOrderAction, Slide, TextboxData } from '../model'
 
 export interface CameraState {
   x: number
@@ -53,6 +53,7 @@ export interface EditorActions {
   deleteObjects: (objectIds: string[]) => void
   reorderObjectsLayer: (objectIds: string[], action: LayerOrderAction) => void
   toggleObjectLock: (objectId: string) => void
+  setTextboxData: (objectId: string, textboxData: TextboxData) => void
   setShapeOpacity: (objectId: string, opacityPercent: number) => void
   groupObjects: (objectIds: string[]) => void
   ungroupObjects: (objectIds: string[]) => void

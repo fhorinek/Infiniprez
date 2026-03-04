@@ -151,7 +151,7 @@ Done criteria:
 - Exported file runs offline and presents correctly on a fresh browser profile.
 
 ## 13. Text Editing and Formatting
-- [ ] Implement in-place textbox editing.
+- [x] Implement in-place textbox editing.
 - [ ] Support basic rich text formatting controls.
 - [ ] Add bullets and numbered list support in text model.
 - [ ] Implement textbox auto-height as default behavior (grow with content, no internal scroll in MVP).

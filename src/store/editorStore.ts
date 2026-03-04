@@ -14,6 +14,7 @@ import {
   redoCommand,
   setSlideOrderCommand,
   setShapeOpacityCommand,
+  setTextboxDataCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
   updateSlideCommand,
@@ -472,6 +473,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     const command = setObjectLockCommand(objectId, target.locked, !target.locked)
+    get().executeDocumentCommand(command)
+  },
+
+  setTextboxData: (objectId, textboxData) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target || target.type !== 'textbox') {
+      return
+    }
+
+    const command = setTextboxDataCommand(objectId, target.textboxData, textboxData)
     get().executeDocumentCommand(command)
   },
 
