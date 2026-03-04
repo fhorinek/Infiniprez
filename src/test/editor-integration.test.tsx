@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { JSDOM } from 'jsdom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { CanvasViewport } from '../canvas'
@@ -8,7 +9,9 @@ import {
   type CanvasObject,
   type ShapeCircleObject,
   type ShapeRectObject,
+  type Slide,
 } from '../model'
+import { buildPresentationExportHtml } from '../persistence'
 import { useEditorStore } from '../store'
 
 const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
@@ -67,6 +70,22 @@ function resetStore() {
 
 function createObject(object: CanvasObject) {
   useEditorStore.getState().createObject(object)
+}
+
+function createSlide(index = 0): Slide {
+  return {
+    id: `slide-${index + 1}`,
+    name: `Slide ${index + 1}`,
+    x: 0,
+    y: 0,
+    zoom: 1,
+    rotation: 0,
+    triggerMode: 'manual',
+    triggerDelayMs: 0,
+    transitionType: 'ease',
+    transitionDurationMs: 2000,
+    orderIndex: index,
+  }
 }
 
 beforeEach(() => {
@@ -174,5 +193,23 @@ describe('integration: new document reset', () => {
     expect(useEditorStore.getState().history.past).toHaveLength(0)
     expect(window.localStorage.getItem(AUTOSAVE_LATEST_KEY)).toBeNull()
     expect(window.localStorage.getItem(AUTOSAVE_BACKUPS_KEY)).toBeNull()
+  })
+})
+
+describe('integration: export runtime boot', () => {
+  it('boots exported runtime markup', () => {
+    const html = buildPresentationExportHtml({
+      ...createEmptyDocument(),
+      slides: [createSlide(0)],
+      objects: [createShapeRect({ id: 'render-me', zIndex: 1 })],
+    })
+
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'file:///tmp/presentation.html' })
+    const stage = dom.window.document.getElementById('stage')
+    const count = dom.window.document.getElementById('slide-count')
+
+    expect(stage).not.toBeNull()
+    expect(count?.textContent).toContain('1 / 1')
+    expect(dom.window.document.querySelectorAll('.export-object')).toHaveLength(1)
   })
 })

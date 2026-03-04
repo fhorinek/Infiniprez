@@ -167,7 +167,7 @@ Done criteria:
 - [x] Add integration test for paste offset reset after copying a different source selection.
 - [x] Add integration test for autosave restore.
 - [x] Add integration test for `New Document` reset behavior.
-- [ ] Add integration test for export runtime boot.
+- [x] Add integration test for export runtime boot.
 - [ ] Add smoke E2E: create content -> create slides -> present -> export.
 
 Done criteria:
