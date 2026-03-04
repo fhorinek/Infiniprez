@@ -230,6 +230,10 @@ button:disabled {
   display: none;
 }
 
+.present-mode .floating-context-toolbar {
+  display: none;
+}
+
 .canvas-toolbar button {
   display: inline-flex;
   align-items: center;
@@ -368,6 +372,42 @@ button:disabled {
 
 .selection-overlay.locked {
   border-color: rgba(255, 190, 117, 0.92);
+}
+
+.floating-context-toolbar {
+  position: absolute;
+  z-index: 18;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(167, 196, 247, 0.32);
+  background: rgba(8, 14, 30, 0.95);
+  backdrop-filter: blur(5px);
+}
+
+.text-context-toolbar .icon-btn {
+  width: 1.95rem;
+  height: 1.95rem;
+}
+
+.shape-context-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: #95a6c5;
+}
+
+.shape-context-toolbar input[type='range'] {
+  width: 90px;
+}
+
+.shape-context-toolbar span {
+  font-size: 0.78rem;
+  color: #d9e9ff;
 }
 
 .resize-handle,

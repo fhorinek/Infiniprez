@@ -117,10 +117,10 @@ Done criteria:
 - Presentation follows slide order and per-slide trigger/transition settings.
 
 ## 10. Floating Contextual Toolbars
-- [ ] Add text toolbar shown only for selected/edited textboxes.
-- [ ] Add shape toolbar shown only for selected shape objects.
-- [ ] Anchor toolbars above object in screen space.
-- [ ] Keep toolbar position synced during pan/zoom/rotate.
+- [x] Add text toolbar shown only for selected/edited textboxes.
+- [x] Add shape toolbar shown only for selected shape objects.
+- [x] Anchor toolbars above object in screen space.
+- [x] Keep toolbar position synced during pan/zoom/rotate.
 
 Done criteria:
 - Toolbars appear only when relevant and track object position reliably.

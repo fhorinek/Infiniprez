@@ -425,6 +425,29 @@ function isPointInsideObjectRect(pointWorld: Point, object: Pick<CanvasObject, '
   return Math.abs(local.x) <= object.w / 2 && Math.abs(local.y) <= object.h / 2
 }
 
+function getObjectTopAnchorScreen(
+  object: Pick<CanvasObject, 'x' | 'y' | 'h' | 'rotation'>,
+  camera: CameraState,
+  viewport: ViewportSize,
+  offsetPx: number
+): Point {
+  const localOffset = rotatePoint(
+    {
+      x: 0,
+      y: -(object.h / 2) - offsetPx / camera.zoom,
+    },
+    object.rotation
+  )
+  return worldToScreen(
+    {
+      x: object.x + localOffset.x,
+      y: object.y + localOffset.y,
+    },
+    camera,
+    viewport
+  )
+}
+
 function collectGroupTransformTargets(
   rootGroup: Extract<CanvasObject, { type: 'group' }>,
   objectById: Map<string, CanvasObject>
@@ -537,6 +560,7 @@ export function CanvasViewport() {
   const groupObjects = useEditorStore((state) => state.groupObjects)
   const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
 
@@ -564,6 +588,21 @@ export function CanvasViewport() {
   const selectedObjectLockedByAncestor = selectedObject
     ? hasLockedAncestor(selectedObject, objectById)
     : false
+  const selectedTextboxObject =
+    selectedObject?.type === 'textbox' ? selectedObject : null
+  const selectedShapeObject =
+    selectedObject &&
+    (selectedObject.type === 'shape_rect' ||
+      selectedObject.type === 'shape_circle' ||
+      selectedObject.type === 'shape_arrow')
+      ? selectedObject
+      : null
+  const textToolbarAnchor = selectedTextboxObject
+    ? getObjectTopAnchorScreen(selectedTextboxObject, camera, viewportSize, 22)
+    : null
+  const shapeToolbarAnchor = selectedShapeObject
+    ? getObjectTopAnchorScreen(selectedShapeObject, camera, viewportSize, 22)
+    : null
   const canToggleGroupFromSelection = Boolean(
     selectedObject?.type === 'group' && activeGroupId === null
   )
@@ -1707,6 +1746,62 @@ export function CanvasViewport() {
           >
             <FontAwesomeIcon icon={faObjectUngroup} />
           </button>
+        </div>
+      )}
+
+      {selectedTextboxObject && textToolbarAnchor && (
+        <div
+          className="floating-context-toolbar text-context-toolbar"
+          style={{
+            left: textToolbarAnchor.x,
+            top: textToolbarAnchor.y,
+            transform: 'translate(-50%, -100%)',
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation()
+          }}
+        >
+          <button type="button" className="icon-btn" disabled title="Bold formatting (Task 13)">
+            B
+          </button>
+          <button type="button" className="icon-btn" disabled title="Italic formatting (Task 13)">
+            I
+          </button>
+          <button type="button" className="icon-btn" disabled title="Underline formatting (Task 13)">
+            U
+          </button>
+        </div>
+      )}
+
+      {selectedShapeObject && shapeToolbarAnchor && (
+        <div
+          className="floating-context-toolbar shape-context-toolbar"
+          style={{
+            left: shapeToolbarAnchor.x,
+            top: shapeToolbarAnchor.y,
+            transform: 'translate(-50%, -100%)',
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation()
+          }}
+        >
+          <label>
+            Opacity
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={selectedShapeObject.shapeData.opacityPercent}
+              onChange={(event) => {
+                const parsed = Number(event.target.value)
+                if (Number.isFinite(parsed)) {
+                  setShapeOpacity(selectedShapeObject.id, parsed)
+                }
+              }}
+            />
+          </label>
+          <span>{selectedShapeObject.shapeData.opacityPercent}%</span>
         </div>
       )}
 
