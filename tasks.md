@@ -131,7 +131,7 @@ Done criteria:
 - [x] Keep rolling backups capped to 200 snapshots.
 - [x] Auto-load latest snapshot on startup.
 - [x] Treat autosave as default startup source priority.
-- [ ] Implement `New Document` reset flow (blank document defaults + fresh timestamps/ids + clean undo/redo history).
+- [x] Implement `New Document` reset flow (blank document defaults + fresh timestamps/ids + clean undo/redo history).
 - [ ] Implement XML save with embedded Base64 assets.
 - [ ] Implement XML load restoring full document state.
 - [ ] Implement strict XML v1.0 layout with fixed section order (`meta`, `canvas`, `slides`, `objects`, `assets`) and stable element names.

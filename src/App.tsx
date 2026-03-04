@@ -423,6 +423,14 @@ function App() {
       return
     }
     resetDocument()
+    latestDocumentSnapshotRef.current = ''
+    latestAutosavedSnapshotRef.current = ''
+    try {
+      window.localStorage.removeItem(AUTOSAVE_LATEST_KEY)
+      window.localStorage.removeItem(AUTOSAVE_BACKUPS_KEY)
+    } catch {
+      // Ignore storage failures in restricted browser modes.
+    }
   }
 
   function handleShapeOpacityChange(objectId: string, value: string) {
