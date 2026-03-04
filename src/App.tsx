@@ -47,7 +47,11 @@ import {
   type ShapeData,
   type Slide,
 } from './model'
-import { deserializeDocumentFromXml, serializeDocumentToXml } from './persistence'
+import {
+  buildPresentationExportHtml,
+  deserializeDocumentFromXml,
+  serializeDocumentToXml,
+} from './persistence'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
 import './App.css'
@@ -765,6 +769,17 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  function handleExportHtml() {
+    const html = buildPresentationExportHtml(document)
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const downloadLink = window.document.createElement('a')
+    downloadLink.href = url
+    downloadLink.download = 'infiniprez-presentation.html'
+    downloadLink.click()
+    URL.revokeObjectURL(url)
+  }
+
   function handleLoadClick() {
     loadInputRef.current?.click()
   }
@@ -808,9 +823,8 @@ function App() {
     {
       label: 'Export HTML',
       icon: faDownload,
-      onClick: () => undefined,
-      disabled: true,
-      disabledReason: 'Not implemented yet',
+      onClick: handleExportHtml,
+      disabled: false,
     },
     { label: 'Undo', icon: faUndo, onClick: undo, disabled: !canUndo },
     {
@@ -841,7 +855,7 @@ function App() {
                 aria-label={action.label}
                 title={
                   action.disabled
-                    ? `${action.label}: ${action.disabledReason ?? 'Unavailable'}`
+                    ? `${action.label}: Unavailable`
                     : action.label
                 }
                 onClick={action.onClick}
