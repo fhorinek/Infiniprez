@@ -133,7 +133,7 @@ Done criteria:
 - [x] Treat autosave as default startup source priority.
 - [x] Implement `New Document` reset flow (blank document defaults + fresh timestamps/ids + clean undo/redo history).
 - [x] Implement XML save with embedded Base64 assets.
-- [ ] Implement XML load restoring full document state.
+- [x] Implement XML load restoring full document state.
 - [ ] Implement strict XML v1.0 layout with fixed section order (`meta`, `canvas`, `slides`, `objects`, `assets`) and stable element names.
 
 Done criteria:

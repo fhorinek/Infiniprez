@@ -47,7 +47,7 @@ import {
   type ShapeData,
   type Slide,
 } from './model'
-import { serializeDocumentToXml } from './persistence'
+import { deserializeDocumentFromXml, serializeDocumentToXml } from './persistence'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
 import './App.css'
@@ -777,13 +777,24 @@ function App() {
 
     try {
       const payload = await file.text()
-      const loaded = parseStoredFile(payload)
-      replaceDocument(loaded.document)
-      if (loaded.camera) {
-        setCamera(loaded.camera)
+      const isXmlFile =
+        file.name.toLowerCase().endsWith('.xml') ||
+        file.type === 'application/xml' ||
+        file.type === 'text/xml' ||
+        payload.trimStart().startsWith('<')
+
+      if (isXmlFile) {
+        const documentFromXml = deserializeDocumentFromXml(payload)
+        replaceDocument(documentFromXml)
+      } else {
+        const loaded = parseStoredFile(payload)
+        replaceDocument(loaded.document)
+        if (loaded.camera) {
+          setCamera(loaded.camera)
+        }
       }
     } catch {
-      window.alert('Failed to load file. Use a valid Infiniprez JSON document.')
+      window.alert('Failed to load file. Use a valid Infiniprez JSON/XML document.')
     } finally {
       event.target.value = ''
     }
@@ -1258,7 +1269,7 @@ function App() {
         <input
           ref={loadInputRef}
           type="file"
-          accept="application/json"
+          accept=".json,.xml,application/json,application/xml,text/xml"
           onChange={handleLoadFile}
           style={{ display: 'none' }}
         />
