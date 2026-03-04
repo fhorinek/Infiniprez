@@ -1,5 +1,8 @@
 import { deserializeDocument, type DocumentModel } from '../model'
 
+const XML_LAYOUT_VERSION = '1.0'
+const XML_SECTION_ORDER = ['meta', 'canvas', 'slides', 'objects', 'assets'] as const
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -16,7 +19,7 @@ function serializeSection(tagName: string, value: unknown): string {
 export function serializeDocumentToXml(document: DocumentModel): string {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<infiniprez version="${escapeXml(document.meta.version)}">`,
+    `<infiniprez version="${XML_LAYOUT_VERSION}">`,
     serializeSection('meta', document.meta),
     serializeSection('canvas', document.canvas),
     serializeSection('slides', document.slides),
@@ -27,7 +30,7 @@ export function serializeDocumentToXml(document: DocumentModel): string {
 }
 
 function parseXmlSection(root: Element, tagName: string): unknown {
-  const section = root.querySelector(tagName)
+  const section = root.querySelector(`:scope > ${tagName}`)
   if (!section || section.textContent === null) {
     throw new Error(`Missing XML section: ${tagName}`)
   }
@@ -44,6 +47,19 @@ export function deserializeDocumentFromXml(payload: string): DocumentModel {
   const root = xml.querySelector('infiniprez')
   if (!root) {
     throw new Error('Missing infiniprez root element')
+  }
+  if (root.getAttribute('version') !== XML_LAYOUT_VERSION) {
+    throw new Error(`Unsupported XML layout version: ${root.getAttribute('version') ?? 'none'}`)
+  }
+
+  const rootChildren = Array.from(root.children).map((entry) => entry.tagName)
+  if (
+    rootChildren.length !== XML_SECTION_ORDER.length ||
+    rootChildren.some((entry, index) => entry !== XML_SECTION_ORDER[index])
+  ) {
+    throw new Error(
+      `Invalid XML section order; expected ${XML_SECTION_ORDER.join(' -> ')}`
+    )
   }
 
   const rawDocument = {
