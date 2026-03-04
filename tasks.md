@@ -177,4 +177,4 @@ Done criteria:
 - [x] Milestone A: Tasks 0-4 (interactive editor foundation).
 - [x] Milestone B: Tasks 5-8 (editing power + slide authoring).
 - [x] Milestone C: Tasks 9-12 (presentation + persistence + export).
-- [ ] Milestone D: Tasks 13-14 (text depth + hardening).
+- [x] Milestone D: Tasks 13-14 (text depth + hardening).
