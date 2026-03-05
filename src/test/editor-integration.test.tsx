@@ -36,6 +36,7 @@ function createShapeRect(overrides: Partial<ShapeRectObject> = {}): ShapeRectObj
       fillMode: 'solid',
       fillColor: '#244a80',
       fillGradient: null,
+      radius: 0,
       opacityPercent: 100,
     },
   }
@@ -225,6 +226,7 @@ describe('integration: smoke flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Present' }))
 
     expect(useEditorStore.getState().ui.mode).toBe('present')
+    expect(document.querySelectorAll('.present-object')).toHaveLength(1)
 
     const exportedHtml = buildPresentationExportHtml(useEditorStore.getState().document)
     expect(exportedHtml).toContain('__INFINIPREZ_EXPORT__')

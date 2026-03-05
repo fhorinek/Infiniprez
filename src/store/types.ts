@@ -1,5 +1,14 @@
 import type { Command, HistoryState } from '../commands'
-import type { Asset, CanvasObject, DocumentModel, LayerOrderAction, Slide, TextboxData } from '../model'
+import type {
+  Asset,
+  CanvasObject,
+  DocumentModel,
+  ImageData,
+  LayerOrderAction,
+  ShapeData,
+  Slide,
+  TextboxData,
+} from '../model'
 
 export interface CameraState {
   x: number
@@ -30,6 +39,7 @@ export interface EditorState {
 
 export interface EditorActions {
   setCamera: (camera: CameraState) => void
+  setCanvasBackground: (background: string) => void
   setMode: (mode: UiState['mode']) => void
   replaceDocument: (document: DocumentModel) => void
   resetDocument: () => void
@@ -53,8 +63,10 @@ export interface EditorActions {
   deleteObjects: (objectIds: string[]) => void
   reorderObjectsLayer: (objectIds: string[], action: LayerOrderAction) => void
   toggleObjectLock: (objectId: string) => void
+  setImageData: (objectId: string, imageData: ImageData) => void
   setTextboxData: (objectId: string, textboxData: TextboxData) => void
   setShapeOpacity: (objectId: string, opacityPercent: number) => void
+  setShapeData: (objectId: string, shapeData: ShapeData) => void
   groupObjects: (objectIds: string[]) => void
   ungroupObjects: (objectIds: string[]) => void
   createSlide: (slide: Slide) => void

@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type DragEvent,
   type PointerEvent,
   type RefObject,
@@ -15,11 +16,14 @@ import {
   faArrowUp,
   faClone,
   faCompass,
+  faCropSimple,
+  faFileImport,
   faLayerGroup,
   faLock,
   faLockOpen,
   faMagnifyingGlass,
   faObjectUngroup,
+  faPenToSquare,
   faTrashCan,
 } from '@fortawesome/free-solid-svg-icons'
 import {
@@ -43,6 +47,15 @@ import {
   type ViewportSize,
   worldToScreen,
 } from './math'
+import { RichTextboxEditor } from './RichTextboxEditor'
+import { resolveTextboxRichHtml, richHtmlToPlainText } from '../textboxRichText'
+import {
+  SUPPORTED_IMAGE_ACCEPT,
+  getImageDimensions,
+  isSupportedImageFile,
+  readFileAsDataUrl,
+  toAssetBase64,
+} from '../imageFile'
 
 interface GridLine {
   id: string
@@ -61,6 +74,7 @@ interface ObjectInteraction {
   pointerId: number
   targets: Array<{
     id: string
+    objectType: CanvasObject['type']
     start: TransformSnapshot
   }>
   mode: 'move' | 'resize' | 'rotate'
@@ -71,6 +85,31 @@ interface ObjectInteraction {
   selectionFrameStart: SelectionFrameState | null
   centerScreenStart: Point
   startPointerAngle: number
+}
+
+type CropHandle =
+  | 'left'
+  | 'top'
+  | 'right'
+  | 'bottom'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-right'
+  | 'bottom-left'
+
+interface ImageCropInteraction {
+  pointerId: number
+  objectId: string
+  handle: CropHandle
+  originClient: Point
+  cameraStart: CameraState
+  startLeftPercent: number
+  startTopPercent: number
+  startRightPercent: number
+  startBottomPercent: number
+  objectWidth: number
+  objectHeight: number
+  objectRotation: number
 }
 
 interface MarqueeInteraction {
@@ -116,15 +155,78 @@ interface ContextMenuState {
   selectionIds: string[]
 }
 
-const SUPPORTED_IMAGE_TYPES = new Set([
-  'image/png',
-  'image/jpg',
-  'image/jpeg',
-  'image/gif',
-  'image/svg+xml',
-])
+interface TextboxPointerState {
+  objectId: string
+  timestampMs: number
+}
 
 const DOUBLE_CLICK_MS = 500
+const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180
+const TEXTBOX_CAMERA_ROTATION_TRANSITION_MS = 220
+const DEFAULT_TEXTBOX_BACKGROUND = '#1f3151'
+const DEFAULT_TEXTBOX_BORDER_COLOR = '#b2c6ee'
+const DEFAULT_TEXTBOX_BORDER_WIDTH = 1
+const TEXTBOX_LINE_HEIGHT = 1.35
+
+function easeInOutCubic(value: number): number {
+  if (value < 0.5) {
+    return 4 * value * value * value
+  }
+  const mirrored = -2 * value + 2
+  return 1 - (mirrored * mirrored * mirrored) / 2
+}
+
+function getShortestAngleDelta(from: number, to: number): number {
+  let delta = to - from
+  while (delta > Math.PI) {
+    delta -= Math.PI * 2
+  }
+  while (delta < -Math.PI) {
+    delta += Math.PI * 2
+  }
+  return delta
+}
+
+function createDefaultTextRun(text = ''): TextRun {
+  return {
+    text,
+    bold: false,
+    italic: false,
+    underline: false,
+    color: '#f0f3fc',
+    fontSize: 28,
+  }
+}
+
+function haveSameRunStyle(a: TextRun, b: TextRun): boolean {
+  return (
+    a.bold === b.bold &&
+    a.italic === b.italic &&
+    a.underline === b.underline &&
+    a.color === b.color &&
+    a.fontSize === b.fontSize
+  )
+}
+
+function normalizeTextboxRuns(runs: TextRun[]): TextRun[] {
+  const normalized = runs.length > 0 ? runs : [createDefaultTextRun('')]
+  const merged: TextRun[] = []
+
+  for (const run of normalized) {
+    const safeRun = { ...createDefaultTextRun(''), ...run }
+    const previous = merged[merged.length - 1]
+    if (previous && haveSameRunStyle(previous, safeRun)) {
+      previous.text += safeRun.text
+    } else {
+      merged.push({ ...safeRun })
+    }
+  }
+
+  if (merged.length === 0) {
+    return [createDefaultTextRun('')]
+  }
+  return merged
+}
 
 function useViewportSize(ref: RefObject<HTMLElement>) {
   const [size, setSize] = useState<ViewportSize>({ width: 1, height: 1 })
@@ -173,14 +275,84 @@ function createGridLines(min: number, max: number, step: number): GridLine[] {
 function getShapeBackground(shapeData: ShapeData): string {
   if (shapeData.fillMode === 'linearGradient' && shapeData.fillGradient) {
     const gradient = shapeData.fillGradient
-    return `linear-gradient(${gradient.angleDeg}deg, ${gradient.colorA}, ${gradient.colorB})`
+    const stops =
+      Array.isArray(gradient.stops) && gradient.stops.length >= 2
+        ? [...gradient.stops]
+            .slice(0, 5)
+            .sort((a, b) => a.positionPercent - b.positionPercent)
+            .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
+        : [`${gradient.colorA} 0%`, `${gradient.colorB} 100%`]
+    if (gradient.gradientType === 'circles') {
+      const layers =
+        Array.isArray(gradient.stops) && gradient.stops.length >= 2
+          ? gradient.stops
+              .slice(0, 5)
+              .map((stop, index) => {
+                const xPercent = Math.max(
+                  0,
+                  Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
+                )
+                const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
+                const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
+                return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
+              })
+              .join(', ')
+          : ''
+      if (layers.length > 0) {
+        return `${layers}, ${gradient.colorB}`
+      }
+    }
+    if (gradient.gradientType === 'radial') {
+      return `radial-gradient(circle, ${stops.join(', ')})`
+    }
+    return `linear-gradient(${gradient.angleDeg}deg, ${stops.join(', ')})`
   }
   return shapeData.fillColor
 }
 
+function getTextboxBackground(
+  textboxData: Extract<CanvasObject, { type: 'textbox' }>['textboxData']
+): string {
+  if (textboxData.fillMode === 'linearGradient' && textboxData.fillGradient) {
+    const gradient = textboxData.fillGradient
+    const stops =
+      Array.isArray(gradient.stops) && gradient.stops.length >= 2
+        ? [...gradient.stops]
+            .slice(0, 5)
+            .sort((a, b) => a.positionPercent - b.positionPercent)
+            .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
+        : [`${gradient.colorA} 0%`, `${gradient.colorB} 100%`]
+    if (gradient.gradientType === 'circles') {
+      const layers =
+        Array.isArray(gradient.stops) && gradient.stops.length >= 2
+          ? gradient.stops
+              .slice(0, 5)
+              .map((stop, index) => {
+                const xPercent = Math.max(
+                  0,
+                  Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
+                )
+                const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
+                const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
+                return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
+              })
+              .join(', ')
+          : ''
+      if (layers.length > 0) {
+        return `${layers}, ${gradient.colorB}`
+      }
+    }
+    if (gradient.gradientType === 'radial') {
+      return `radial-gradient(circle, ${stops.join(', ')})`
+    }
+    return `linear-gradient(${gradient.angleDeg}deg, ${stops.join(', ')})`
+  }
+  return textboxData.backgroundColor ?? DEFAULT_TEXTBOX_BACKGROUND
+}
+
 function getObjectLabel(object: CanvasObject): string {
   if (object.type === 'textbox') {
-    const content = object.textboxData.runs.map((run) => run.text).join('')
+    const content = richHtmlToPlainText(resolveTextboxRichHtml(object.textboxData))
     return content.length > 0 ? content : 'Textbox'
   }
 
@@ -426,29 +598,6 @@ function isPointInsideObjectRect(pointWorld: Point, object: Pick<CanvasObject, '
   return Math.abs(local.x) <= object.w / 2 && Math.abs(local.y) <= object.h / 2
 }
 
-function getObjectTopAnchorScreen(
-  object: Pick<CanvasObject, 'x' | 'y' | 'h' | 'rotation'>,
-  camera: CameraState,
-  viewport: ViewportSize,
-  offsetPx: number
-): Point {
-  const localOffset = rotatePoint(
-    {
-      x: 0,
-      y: -(object.h / 2) - offsetPx / camera.zoom,
-    },
-    object.rotation
-  )
-  return worldToScreen(
-    {
-      x: object.x + localOffset.x,
-      y: object.y + localOffset.y,
-    },
-    camera,
-    viewport
-  )
-}
-
 function collectGroupTransformTargets(
   rootGroup: Extract<CanvasObject, { type: 'group' }>,
   objectById: Map<string, CanvasObject>
@@ -502,54 +651,39 @@ function createId() {
   return `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-      } else {
-        reject(new Error('Failed to read file'))
-      }
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
-    reader.readAsDataURL(file)
-  })
+interface CanvasViewportProps {
+  hoveredSlideId?: string | null
 }
 
-function getImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
-    image.onerror = () => reject(new Error('Failed to load image dimensions'))
-    image.src = dataUrl
-  })
-}
-
-function toAssetBase64(dataUrl: string): string {
-  const [, base64] = dataUrl.split(',', 2)
-  return base64 ?? ''
-}
-
-export function CanvasViewport() {
+export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
+  const imageReloadInputRef = useRef<HTMLInputElement>(null)
+  const pendingImageReloadObjectIdRef = useRef<string | null>(null)
   const panRef = useRef<PanInteraction | null>(null)
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
+  const imageCropInteractionRef = useRef<ImageCropInteraction | null>(null)
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
   const clipboardRef = useRef<ClipboardState | null>(null)
+  const cameraRef = useRef<CameraState | null>(null)
+  const cameraRotationAnimationFrameRef = useRef<number | null>(null)
+  const textboxEditingCameraRotationRef = useRef<number | null>(null)
   const lastPointerDownRef = useRef<{ enterGroupId: string | null; timestampMs: number } | null>(null)
+  const lastTextboxPointerRef = useRef<TextboxPointerState | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [multiSelectionFrame, setMultiSelectionFrame] = useState<SelectionFrameState | null>(null)
   const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null)
-  const [editingTextboxText, setEditingTextboxText] = useState('')
+  const [editingTextboxHtml, setEditingTextboxHtml] = useState('')
+  const [editingTextboxPlainText, setEditingTextboxPlainText] = useState('')
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
   const canvasSettings = useEditorStore((state) => state.document.canvas)
   const objects = useEditorStore((state) => state.document.objects)
   const assets = useEditorStore((state) => state.document.assets)
+  const slides = useEditorStore((state) => state.document.slides)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
+  const selectedSlideId = useEditorStore((state) => state.ui.selectedSlideId)
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
@@ -563,12 +697,29 @@ export function CanvasViewport() {
   const groupObjects = useEditorStore((state) => state.groupObjects)
   const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setImageData = useEditorStore((state) => state.setImageData)
   const setTextboxData = useEditorStore((state) => state.setTextboxData)
-  const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
 
+  useEffect(() => {
+    cameraRef.current = camera
+  }, [camera])
+
+  useEffect(() => {
+    return () => {
+      if (cameraRotationAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(cameraRotationAnimationFrameRef.current)
+        cameraRotationAnimationFrameRef.current = null
+      }
+    }
+  }, [])
+
   const viewportSize = useViewportSize(viewportRef)
+  const orderedSlides = useMemo(
+    () => [...slides].sort((a, b) => a.orderIndex - b.orderIndex),
+    [slides]
+  )
   const orderedObjects = useMemo(() => [...objects].sort((a, b) => a.zIndex - b.zIndex), [objects])
   const objectById = useMemo(() => new Map(objects.map((object) => [object.id, object])), [objects])
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
@@ -592,16 +743,6 @@ export function CanvasViewport() {
   const selectedObjectLockedByAncestor = selectedObject
     ? hasLockedAncestor(selectedObject, objectById)
     : false
-  const selectedTextboxObject =
-    selectedObject?.type === 'textbox' ? selectedObject : null
-  const selectedTextboxFirstRun = selectedTextboxObject?.textboxData.runs[0] ?? null
-  const selectedShapeObject =
-    selectedObject &&
-    (selectedObject.type === 'shape_rect' ||
-      selectedObject.type === 'shape_circle' ||
-      selectedObject.type === 'shape_arrow')
-      ? selectedObject
-      : null
   const editingTextboxObject = useMemo(() => {
     if (!editingTextboxId) {
       return null
@@ -609,12 +750,6 @@ export function CanvasViewport() {
     const candidate = objectById.get(editingTextboxId)
     return candidate?.type === 'textbox' ? candidate : null
   }, [editingTextboxId, objectById])
-  const textToolbarAnchor = selectedTextboxObject
-    ? getObjectTopAnchorScreen(selectedTextboxObject, camera, viewportSize, 22)
-    : null
-  const shapeToolbarAnchor = selectedShapeObject
-    ? getObjectTopAnchorScreen(selectedShapeObject, camera, viewportSize, 22)
-    : null
   const canToggleGroupFromSelection = Boolean(
     selectedObject?.type === 'group' && activeGroupId === null
   )
@@ -640,6 +775,8 @@ export function CanvasViewport() {
     () => getSelectionKey(selectedUnlockedIds),
     [selectedUnlockedIds]
   )
+  const activeCropObjectId =
+    selectedObject?.type === 'image' && selectedObject.imageData.cropEnabled ? selectedObject.id : null
 
   useEffect(() => {
     if (selectedObject || selectedUnlockedObjects.length < 2) {
@@ -680,10 +817,15 @@ export function CanvasViewport() {
 
   useEffect(() => {
     if (editingTextboxId && !editingTextboxObject) {
+      if (textboxEditingCameraRotationRef.current !== null) {
+        animateCameraRotationTo(textboxEditingCameraRotationRef.current)
+        textboxEditingCameraRotationRef.current = null
+      }
       setEditingTextboxId(null)
-      setEditingTextboxText('')
+      setEditingTextboxHtml('')
+      setEditingTextboxPlainText('')
     }
-  }, [editingTextboxId, editingTextboxObject])
+  }, [animateCameraRotationTo, editingTextboxId, editingTextboxObject])
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -729,6 +871,42 @@ export function CanvasViewport() {
     worldBounds.minY,
   ])
 
+  const slideGuides = useMemo(() => {
+    return orderedSlides.map((slide) => {
+      const safeSlideZoom = Math.max(0.0001, slide.zoom)
+      const frameWorldWidth = viewportSize.width / safeSlideZoom
+      const frameWorldHeight = viewportSize.height / safeSlideZoom
+      const centerScreen = worldToScreen({ x: slide.x, y: slide.y }, camera, viewportSize)
+      const frameWidthPx = frameWorldWidth * camera.zoom
+      const frameHeightPx = frameWorldHeight * camera.zoom
+      const frameWorldRotation = -slide.rotation
+      const frameRotation = frameWorldRotation + camera.rotation
+      const topLeftLocal = rotatePoint(
+        { x: -frameWorldWidth / 2, y: -frameWorldHeight / 2 },
+        frameWorldRotation
+      )
+      const topLeftWorld = {
+        x: slide.x + topLeftLocal.x,
+        y: slide.y + topLeftLocal.y,
+      }
+      const topLeftScreen = worldToScreen(topLeftWorld, camera, viewportSize)
+
+      return {
+        id: slide.id,
+        name: slide.name || `Slide ${slide.orderIndex + 1}`,
+        left: centerScreen.x - frameWidthPx / 2,
+        top: centerScreen.y - frameHeightPx / 2,
+        width: frameWidthPx,
+        height: frameHeightPx,
+        rotation: frameRotation,
+        labelX: topLeftScreen.x,
+        labelY: topLeftScreen.y,
+        isActive: slide.id === selectedSlideId,
+        isHovered: slide.id === hoveredSlideId,
+      }
+    })
+  }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, viewportSize])
+
   function getViewportRelativePoint(clientX: number, clientY: number): Point {
     const element = viewportRef.current
     if (!element) {
@@ -769,7 +947,11 @@ export function CanvasViewport() {
       }
 
       if (event.altKey) {
-        const rotationDelta = event.deltaY * 0.002
+        const rotationDirection = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0
+        if (rotationDirection === 0) {
+          return
+        }
+        const rotationDelta = rotationDirection * CAMERA_ROTATION_STEP_RAD
         const nextRotation = camera.rotation + rotationDelta
         const rotatedCamera = { ...camera, rotation: nextRotation }
         const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewportSize)
@@ -783,7 +965,7 @@ export function CanvasViewport() {
       }
 
       const zoomFactor = Math.exp(-event.deltaY * 0.0015)
-      const nextZoom = clamp(camera.zoom * zoomFactor, 0.1, 10)
+      const nextZoom = clamp(camera.zoom * zoomFactor, 0.01, 100)
       const zoomedCamera = { ...camera, zoom: nextZoom }
       const worldAfter = screenToWorld(pointerScreen, zoomedCamera, viewportSize)
 
@@ -844,67 +1026,84 @@ export function CanvasViewport() {
     reorderObjectsLayer(contextSelectionIds, action)
   }
 
-  function updateSelectedTextboxRun(patch: Partial<TextRun>) {
-    if (!selectedTextboxObject) {
+  function animateCameraRotationTo(targetRotation: number) {
+    const startCamera = cameraRef.current ?? camera
+    if (cameraRotationAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(cameraRotationAnimationFrameRef.current)
+      cameraRotationAnimationFrameRef.current = null
+    }
+
+    const startRotation = startCamera.rotation
+    const rotationDelta = getShortestAngleDelta(startRotation, targetRotation)
+    if (Math.abs(rotationDelta) < 0.0001) {
+      setCamera({
+        ...startCamera,
+        rotation: targetRotation,
+      })
       return
     }
 
-    const firstRun = selectedTextboxObject.textboxData.runs[0] ?? {
-      text: '',
-      bold: false,
-      italic: false,
-      underline: false,
-      color: '#f0f3fc',
-      fontSize: 28,
+    const startedAtMs = performance.now()
+    const tick = (nowMs: number) => {
+      const elapsed = nowMs - startedAtMs
+      const progress = Math.min(1, Math.max(0, elapsed / TEXTBOX_CAMERA_ROTATION_TRANSITION_MS))
+      const eased = easeInOutCubic(progress)
+      const liveCamera = cameraRef.current ?? startCamera
+      setCamera({
+        ...liveCamera,
+        rotation: startRotation + rotationDelta * eased,
+      })
+      if (progress < 1) {
+        cameraRotationAnimationFrameRef.current = requestAnimationFrame(tick)
+        return
+      }
+      cameraRotationAnimationFrameRef.current = null
+      const completedCamera = cameraRef.current ?? liveCamera
+      setCamera({
+        ...completedCamera,
+        rotation: targetRotation,
+      })
     }
 
-    setTextboxData(selectedTextboxObject.id, {
-      ...selectedTextboxObject.textboxData,
-      runs: [{ ...firstRun, ...patch }],
-    })
-  }
-
-  function updateSelectedTextboxListType(
-    nextListType: Extract<CanvasObject, { type: 'textbox' }>['textboxData']['listType']
-  ) {
-    if (!selectedTextboxObject || selectedTextboxObject.textboxData.listType === nextListType) {
-      return
-    }
-
-    setTextboxData(selectedTextboxObject.id, {
-      ...selectedTextboxObject.textboxData,
-      listType: nextListType,
-    })
+    cameraRotationAnimationFrameRef.current = requestAnimationFrame(tick)
   }
 
   function startTextboxEditing(target: Extract<CanvasObject, { type: 'textbox' }>) {
+    if (textboxEditingCameraRotationRef.current === null) {
+      textboxEditingCameraRotationRef.current = camera.rotation
+    }
+
+    animateCameraRotationTo(-target.rotation)
+
     setEditingTextboxId(target.id)
-    setEditingTextboxText(target.textboxData.runs.map((run) => run.text).join(''))
+    const initialHtml = resolveTextboxRichHtml(target.textboxData)
+    setEditingTextboxHtml(initialHtml)
+    setEditingTextboxPlainText(richHtmlToPlainText(initialHtml))
     selectObjects([target.id])
   }
 
-  function applyTextboxAutoHeight(target: Extract<CanvasObject, { type: 'textbox' }>, nextText: string) {
+  function applyTextboxAutoHeight(
+    target: Extract<CanvasObject, { type: 'textbox' }>,
+    nextText: string,
+    measuredHeightPx?: number
+  ) {
     if (!target.textboxData.autoHeight) {
       return
     }
 
-    const firstRun = target.textboxData.runs[0] ?? {
-      text: '',
-      bold: false,
-      italic: false,
-      underline: false,
-      color: '#f0f3fc',
-      fontSize: 28,
+    let desiredHeightWorld: number
+    if (Number.isFinite(measuredHeightPx) && measuredHeightPx && measuredHeightPx > 0) {
+      desiredHeightWorld = Math.max(24, measuredHeightPx)
+    } else {
+      const firstRun = target.textboxData.runs[0] ?? createDefaultTextRun('')
+      const lines = Math.max(1, nextText.split('\n').length)
+      const lineHeightPx = Math.max(12, firstRun.fontSize * TEXTBOX_LINE_HEIGHT)
+      const verticalPaddingPx = 14
+      desiredHeightWorld = Math.max(24, lines * lineHeightPx + verticalPaddingPx)
     }
-    const lines = Math.max(1, nextText.split('\n').length)
-    const lineHeightPx = Math.max(12, firstRun.fontSize * 1.35)
-    const verticalPaddingPx = 14
-    const desiredHeightWorld = Math.max(
-      24,
-      (lines * lineHeightPx + verticalPaddingPx) / Math.max(0.001, camera.zoom)
-    )
 
-    if (Math.abs(target.h - desiredHeightWorld) < 0.5) {
+    // Auto-height should only expand the textbox while editing, never shrink it.
+    if (desiredHeightWorld <= target.h + 0.5) {
       return
     }
 
@@ -919,29 +1118,35 @@ export function CanvasViewport() {
 
   function finishTextboxEditing(commit: boolean) {
     if (!editingTextboxObject) {
+      if (textboxEditingCameraRotationRef.current !== null) {
+        animateCameraRotationTo(textboxEditingCameraRotationRef.current)
+        textboxEditingCameraRotationRef.current = null
+      }
       setEditingTextboxId(null)
-      setEditingTextboxText('')
+      setEditingTextboxHtml('')
+      setEditingTextboxPlainText('')
       return
     }
 
     if (commit) {
-      applyTextboxAutoHeight(editingTextboxObject, editingTextboxText)
-      const firstRun = editingTextboxObject.textboxData.runs[0] ?? {
-        text: '',
-        bold: false,
-        italic: false,
-        underline: false,
-        color: '#f0f3fc',
-        fontSize: 28,
-      }
-      setTextboxData(editingTextboxObject.id, {
+      const baseRun = normalizeTextboxRuns(editingTextboxObject.textboxData.runs)[0] ?? createDefaultTextRun('')
+      const nextTextboxData = {
         ...editingTextboxObject.textboxData,
-        runs: [{ ...firstRun, text: editingTextboxText }],
-      })
+        richTextHtml: editingTextboxHtml,
+        runs: [{ ...baseRun, text: editingTextboxPlainText }],
+      }
+      applyTextboxAutoHeight(editingTextboxObject, editingTextboxPlainText)
+      setTextboxData(editingTextboxObject.id, nextTextboxData)
+    }
+
+    if (textboxEditingCameraRotationRef.current !== null) {
+      animateCameraRotationTo(textboxEditingCameraRotationRef.current)
+      textboxEditingCameraRotationRef.current = null
     }
 
     setEditingTextboxId(null)
-    setEditingTextboxText('')
+    setEditingTextboxHtml('')
+    setEditingTextboxPlainText('')
   }
 
   function copySelection(ids: string[]) {
@@ -1032,9 +1237,7 @@ export function CanvasViewport() {
     event.preventDefault()
     closeContextMenu()
 
-    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
-      SUPPORTED_IMAGE_TYPES.has(file.type)
-    )
+    const files = Array.from(event.dataTransfer.files ?? []).filter(isSupportedImageFile)
     if (files.length === 0) {
       return
     }
@@ -1080,6 +1283,16 @@ export function CanvasViewport() {
             intrinsicWidth: dimensions.width,
             intrinsicHeight: dimensions.height,
             keepAspectRatio: false,
+            borderColor: '#b2c6ee',
+            borderType: 'solid',
+            borderWidth: 0,
+            radius: 0,
+            opacityPercent: 100,
+            cropEnabled: false,
+            cropLeftPercent: 0,
+            cropTopPercent: 0,
+            cropRightPercent: 0,
+            cropBottomPercent: 0,
           },
         })
         createdIds.push(objectId)
@@ -1089,6 +1302,57 @@ export function CanvasViewport() {
         selectObjects(createdIds)
       }
     } catch {
+      commitCommandBatch()
+    }
+  }
+
+  function openImageReloadDialog(objectId: string) {
+    pendingImageReloadObjectIdRef.current = objectId
+    imageReloadInputRef.current?.click()
+  }
+
+  async function handleImageReloadFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    const targetObjectId = pendingImageReloadObjectIdRef.current
+    pendingImageReloadObjectIdRef.current = null
+    event.target.value = ''
+
+    if (!file || !targetObjectId || !isSupportedImageFile(file)) {
+      return
+    }
+
+    const targetObject = objects.find(
+      (entry): entry is Extract<CanvasObject, { type: 'image' }> =>
+        entry.id === targetObjectId && entry.type === 'image'
+    )
+    if (!targetObject) {
+      return
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file)
+      const dimensions = await getImageDimensions(dataUrl).catch(() => ({
+        width: targetObject.imageData.intrinsicWidth,
+        height: targetObject.imageData.intrinsicHeight,
+      }))
+      const asset: Asset = {
+        id: createId(),
+        name: file.name || 'image',
+        mimeType: file.type,
+        dataBase64: toAssetBase64(dataUrl),
+      }
+
+      beginCommandBatch('Reload image')
+      createAsset(asset)
+      setImageData(targetObject.id, {
+        ...targetObject.imageData,
+        assetId: asset.id,
+        intrinsicWidth: dimensions.width,
+        intrinsicHeight: dimensions.height,
+      })
+    } catch {
+      window.alert('Failed to load image file.')
+    } finally {
       commitCommandBatch()
     }
   }
@@ -1210,6 +1474,7 @@ export function CanvasViewport() {
       pointerId: event.pointerId,
       targets: interactionTargets.map((target) => ({
         id: target.id,
+        objectType: target.type,
         start: {
           x: target.x,
           y: target.y,
@@ -1231,6 +1496,83 @@ export function CanvasViewport() {
     viewportRef.current?.setPointerCapture(event.pointerId)
   }
 
+  function beginImageCropInteraction(
+    event: PointerEvent<HTMLElement>,
+    target: Extract<CanvasObject, { type: 'image' }>,
+    handle: CropHandle
+  ) {
+    beginCommandBatch('Crop image')
+    imageCropInteractionRef.current = {
+      pointerId: event.pointerId,
+      objectId: target.id,
+      handle,
+      originClient: { x: event.clientX, y: event.clientY },
+      cameraStart: camera,
+      startLeftPercent: clamp(target.imageData.cropLeftPercent, 0, 100),
+      startTopPercent: clamp(target.imageData.cropTopPercent, 0, 100),
+      startRightPercent: clamp(target.imageData.cropRightPercent, 0, 100),
+      startBottomPercent: clamp(target.imageData.cropBottomPercent, 0, 100),
+      objectWidth: Math.max(1, target.w),
+      objectHeight: Math.max(1, target.h),
+      objectRotation: target.rotation,
+    }
+    viewportRef.current?.setPointerCapture(event.pointerId)
+  }
+
+  function applyImageCropInteraction(
+    event: PointerEvent<HTMLDivElement>,
+    interaction: ImageCropInteraction
+  ) {
+    const target = objectById.get(interaction.objectId)
+    if (!target || target.type !== 'image') {
+      return
+    }
+
+    const deltaClient = {
+      x: event.clientX - interaction.originClient.x,
+      y: event.clientY - interaction.originClient.y,
+    }
+    const deltaWorld = cameraDragDeltaToWorld(deltaClient, interaction.cameraStart)
+    const localDelta = rotatePoint(deltaWorld, -interaction.objectRotation)
+    const deltaXPercent = (localDelta.x / interaction.objectWidth) * 100
+    const deltaYPercent = (localDelta.y / interaction.objectHeight) * 100
+    let left = interaction.startLeftPercent
+    let top = interaction.startTopPercent
+    let right = interaction.startRightPercent
+    let bottom = interaction.startBottomPercent
+
+    if (interaction.handle === 'left' || interaction.handle === 'top-left' || interaction.handle === 'bottom-left') {
+      left = interaction.startLeftPercent + deltaXPercent
+    }
+    if (interaction.handle === 'right' || interaction.handle === 'top-right' || interaction.handle === 'bottom-right') {
+      right = interaction.startRightPercent - deltaXPercent
+    }
+    if (interaction.handle === 'top' || interaction.handle === 'top-left' || interaction.handle === 'top-right') {
+      top = interaction.startTopPercent + deltaYPercent
+    }
+    if (
+      interaction.handle === 'bottom' ||
+      interaction.handle === 'bottom-left' ||
+      interaction.handle === 'bottom-right'
+    ) {
+      bottom = interaction.startBottomPercent - deltaYPercent
+    }
+
+    const minVisiblePercent = 1
+    left = clamp(left, 0, 100 - minVisiblePercent - right)
+    right = clamp(right, 0, 100 - minVisiblePercent - left)
+    top = clamp(top, 0, 100 - minVisiblePercent - bottom)
+    bottom = clamp(bottom, 0, 100 - minVisiblePercent - top)
+
+    setImageData(target.id, {
+      ...target.imageData,
+      cropLeftPercent: left,
+      cropTopPercent: top,
+      cropRightPercent: right,
+      cropBottomPercent: bottom,
+    })
+  }
+
   function applyObjectInteraction(
     event: PointerEvent<HTMLDivElement>,
     interaction: ObjectInteraction
@@ -1245,7 +1587,7 @@ export function CanvasViewport() {
     }
     const deltaWorld = cameraDragDeltaToWorld(deltaClient, interaction.cameraStart)
     const shouldSnapToGrid = canvasSettings.snapToGrid && !event.altKey
-    const snapGridSize = canvasSettings.baseGridSize
+    const snapGridSize = minorGridStep
     const canSnapToObjectEdges = canvasSettings.snapToObjectEdges && !event.altKey
     const snapToleranceWorld = canvasSettings.snapTolerancePx / Math.max(0.00001, camera.zoom)
     const interactionIds = new Set(interaction.targets.map((target) => target.id))
@@ -1312,14 +1654,54 @@ export function CanvasViewport() {
     }
 
     if (interaction.mode === 'resize') {
+      const hasImageTarget = interaction.targets.some((target) => target.objectType === 'image')
+      const keepAspectRatio = (event.ctrlKey || event.metaKey) && !hasImageTarget
       if (interaction.targets.length === 1) {
         const target = interaction.targets[0]
         const localDelta = rotatePoint(deltaWorld, -target.start.rotation)
-        let nextWidth = Math.max(20, target.start.w + localDelta.x)
-        let nextHeight = Math.max(20, target.start.h + localDelta.y)
-        if (shouldSnapToGrid) {
-          nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
-          nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+        let nextWidth: number
+        let nextHeight: number
+
+        if (keepAspectRatio) {
+          const widthFromDelta = Math.max(20, target.start.w + localDelta.x)
+          const heightFromDelta = Math.max(20, target.start.h + localDelta.y)
+          const widthScale = widthFromDelta / Math.max(1, target.start.w)
+          const heightScale = heightFromDelta / Math.max(1, target.start.h)
+          const widthDominant =
+            Math.abs(localDelta.x / Math.max(1, target.start.w)) >=
+            Math.abs(localDelta.y / Math.max(1, target.start.h))
+
+          let uniformScale = widthDominant ? widthScale : heightScale
+          uniformScale = Math.max(
+            uniformScale,
+            20 / Math.max(1, target.start.w),
+            20 / Math.max(1, target.start.h)
+          )
+
+          if (shouldSnapToGrid) {
+            if (widthDominant) {
+              const snappedWidth = Math.max(20, snapToGrid(target.start.w * uniformScale, snapGridSize))
+              uniformScale = snappedWidth / Math.max(1, target.start.w)
+            } else {
+              const snappedHeight = Math.max(20, snapToGrid(target.start.h * uniformScale, snapGridSize))
+              uniformScale = snappedHeight / Math.max(1, target.start.h)
+            }
+          }
+
+          uniformScale = Math.max(
+            uniformScale,
+            20 / Math.max(1, target.start.w),
+            20 / Math.max(1, target.start.h)
+          )
+          nextWidth = Math.max(20, target.start.w * uniformScale)
+          nextHeight = Math.max(20, target.start.h * uniformScale)
+        } else {
+          nextWidth = Math.max(20, target.start.w + localDelta.x)
+          nextHeight = Math.max(20, target.start.h + localDelta.y)
+          if (shouldSnapToGrid) {
+            nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
+            nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+          }
         }
         const appliedWidthDelta = nextWidth - target.start.w
         const appliedHeightDelta = nextHeight - target.start.h
@@ -1371,8 +1753,38 @@ export function CanvasViewport() {
         nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
         nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
       }
-      const scaleX = nextWidth / selectionWidth
-      const scaleY = nextHeight / selectionHeight
+      let scaleX = nextWidth / selectionWidth
+      let scaleY = nextHeight / selectionHeight
+      if (keepAspectRatio) {
+        const widthDominant =
+          Math.abs(deltaWorld.x / selectionWidth) >= Math.abs(deltaWorld.y / selectionHeight)
+        let uniformScale = widthDominant ? scaleX : scaleY
+        uniformScale = Math.max(
+          uniformScale,
+          20 / selectionWidth,
+          20 / selectionHeight
+        )
+
+        if (shouldSnapToGrid) {
+          if (widthDominant) {
+            const snappedWidth = Math.max(20, snapToGrid(selectionWidth * uniformScale, snapGridSize))
+            uniformScale = snappedWidth / selectionWidth
+          } else {
+            const snappedHeight = Math.max(20, snapToGrid(selectionHeight * uniformScale, snapGridSize))
+            uniformScale = snappedHeight / selectionHeight
+          }
+        }
+
+        uniformScale = Math.max(
+          uniformScale,
+          20 / selectionWidth,
+          20 / selectionHeight
+        )
+        scaleX = uniformScale
+        scaleY = uniformScale
+        nextWidth = selectionWidth * uniformScale
+        nextHeight = selectionHeight * uniformScale
+      }
       const anchorX = interaction.selectionBoundsStart.minX
       const anchorY = interaction.selectionBoundsStart.minY
       let selectionOffset = { x: 0, y: 0 }
@@ -1415,7 +1827,11 @@ export function CanvasViewport() {
       pointerScreen.y - interaction.centerScreenStart.y,
       pointerScreen.x - interaction.centerScreenStart.x
     )
-    const rotationDelta = currentAngle - interaction.startPointerAngle
+    const rawRotationDelta = currentAngle - interaction.startPointerAngle
+    const snapStep = (10 * Math.PI) / 180
+    const rotationDelta = event.altKey
+      ? rawRotationDelta
+      : Math.round(rawRotationDelta / snapStep) * snapStep
     if (interaction.selectionFrameStart) {
       setMultiSelectionFrame({
         ...interaction.selectionFrameStart,
@@ -1464,6 +1880,13 @@ export function CanvasViewport() {
   function handleViewportPointerDown(event: PointerEvent<HTMLDivElement>) {
     closeContextMenu()
 
+    if (editingTextboxId) {
+      if (event.button === 0) {
+        event.preventDefault()
+      }
+      return
+    }
+
     if (
       event.button === 1 &&
       event.shiftKey &&
@@ -1482,6 +1905,10 @@ export function CanvasViewport() {
     }
 
     if (event.button === 0 && event.shiftKey) {
+      if (activeCropObjectId) {
+        event.preventDefault()
+        return
+      }
       event.preventDefault()
       const start = getViewportRelativePoint(event.clientX, event.clientY)
       marqueeRef.current = {
@@ -1501,6 +1928,9 @@ export function CanvasViewport() {
 
     event.preventDefault()
     if (event.button === 0) {
+      if (activeCropObjectId) {
+        return
+      }
       clearSelection()
     }
     panRef.current = {
@@ -1512,6 +1942,12 @@ export function CanvasViewport() {
   }
 
   function handleViewportPointerMove(event: PointerEvent<HTMLDivElement>) {
+    const imageCropInteraction = imageCropInteractionRef.current
+    if (imageCropInteraction && imageCropInteraction.pointerId === event.pointerId) {
+      applyImageCropInteraction(event, imageCropInteraction)
+      return
+    }
+
     const interaction = objectInteractionRef.current
     if (interaction && interaction.pointerId === event.pointerId) {
       applyObjectInteraction(event, interaction)
@@ -1545,6 +1981,12 @@ export function CanvasViewport() {
   }
 
   function handleViewportPointerUp(event: PointerEvent<HTMLDivElement>) {
+    const imageCropInteraction = imageCropInteractionRef.current
+    if (imageCropInteraction && imageCropInteraction.pointerId === event.pointerId) {
+      imageCropInteractionRef.current = null
+      commitCommandBatch()
+    }
+
     const interaction = objectInteractionRef.current
     if (interaction && interaction.pointerId === event.pointerId) {
       objectInteractionRef.current = null
@@ -1577,6 +2019,7 @@ export function CanvasViewport() {
     <div
       ref={viewportRef}
       className="canvas-stage"
+      style={{ background: canvasSettings.background }}
       onDragOver={(event) => {
         if (Array.from(event.dataTransfer.types).includes('Files')) {
           event.preventDefault()
@@ -1662,6 +2105,7 @@ export function CanvasViewport() {
           const heightPx = object.h * camera.zoom
           const isSelected = selectedObjectIds.includes(object.id)
           const isEditable = editableObjectIds.has(object.id)
+          const isEffectivelyLocked = isObjectEffectivelyLocked(object, objectById)
           const isActiveGroupShell = activeGroupId !== null && object.id === activeGroupId
           const canEnterViaChildDoubleClick =
             activeGroupId === null && !isEditable && object.parentGroupId !== null
@@ -1696,26 +2140,74 @@ export function CanvasViewport() {
                   borderWidth: object.shapeData.borderWidth * camera.zoom,
                   background: getShapeBackground(object.shapeData),
                   opacity: object.shapeData.opacityPercent / 100,
-                  borderRadius: object.type === 'shape_circle' ? '9999px' : undefined,
+                  borderRadius:
+                    object.type === 'shape_circle'
+                      ? '9999px'
+                      : `${Math.max(0, object.shapeData.radius) * camera.zoom}px`,
+                }
+              : {}
+          const textboxStyle =
+            object.type === 'textbox'
+              ? {
+                  borderColor: object.textboxData.borderColor ?? DEFAULT_TEXTBOX_BORDER_COLOR,
+                  borderStyle: object.textboxData.borderType ?? 'solid',
+                  borderWidth:
+                    (object.textboxData.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH) * camera.zoom,
+                  background: getTextboxBackground(object.textboxData),
+                  opacity: (object.textboxData.opacityPercent ?? 100) / 100,
+                }
+              : {}
+          const imageStyle =
+            object.type === 'image'
+              ? {
+                  borderColor: object.imageData.borderColor,
+                  borderStyle: object.imageData.borderType,
+                  borderWidth: object.imageData.borderWidth * camera.zoom,
+                  borderRadius: `${Math.max(0, object.imageData.radius) * camera.zoom}px`,
+                  opacity: object.imageData.opacityPercent / 100,
+                  background: 'transparent',
                 }
               : {}
           const imageAsset = object.type === 'image' ? assetById.get(object.imageData.assetId) : null
           const imageSrc = imageAsset
             ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
             : null
-          const textboxFirstRun = object.type === 'textbox' ? object.textboxData.runs[0] ?? null : null
-          const textboxLines =
-            object.type === 'textbox'
-              ? (textboxFirstRun?.text.split('\n').filter((line) => line.length > 0) ?? [])
-              : []
+          const imageCropIsApplied =
+            object.type === 'image' &&
+            (object.imageData.cropLeftPercent > 0.01 ||
+              object.imageData.cropTopPercent > 0.01 ||
+              object.imageData.cropRightPercent > 0.01 ||
+              object.imageData.cropBottomPercent > 0.01)
+          const textboxHtml = object.type === 'textbox' ? resolveTextboxRichHtml(object.textboxData) : ''
 
           return (
             <div
               key={object.id}
               className={objectClasses}
-              style={{ ...baseStyle, ...shapeStyle }}
+              style={{ ...baseStyle, ...shapeStyle, ...textboxStyle, ...imageStyle }}
               onPointerDown={(event) => {
+                if (editingTextboxId && editingTextboxId !== object.id) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
+                if (activeCropObjectId && object.id !== activeCropObjectId) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 const nowMs = performance.now()
+                const isTextbox = object.type === 'textbox'
+                const isRapidTextboxRepeat =
+                  isTextbox &&
+                  lastTextboxPointerRef.current?.objectId === object.id &&
+                  nowMs - lastTextboxPointerRef.current.timestampMs <= DOUBLE_CLICK_MS
+                if (isTextbox) {
+                  lastTextboxPointerRef.current = {
+                    objectId: object.id,
+                    timestampMs: nowMs,
+                  }
+                }
                 const enterGroupId =
                   activeGroupId === null
                     ? object.type === 'group'
@@ -1739,6 +2231,18 @@ export function CanvasViewport() {
                   return
                 }
 
+                if (
+                  isRapidTextboxRepeat &&
+                  object.type === 'textbox' &&
+                  isEditable &&
+                  !isEffectivelyLocked
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  startTextboxEditing(object)
+                  return
+                }
+
                 if (!isEditable) {
                   event.preventDefault()
                   event.stopPropagation()
@@ -1748,6 +2252,35 @@ export function CanvasViewport() {
                   return
                 }
                 if (editingTextboxId === object.id) {
+                  return
+                }
+                if (
+                  object.type === 'image' &&
+                  object.imageData.cropEnabled &&
+                  !event.shiftKey &&
+                  !isEffectivelyLocked
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  if (!selectedObjectIds.includes(object.id)) {
+                    selectObjects([object.id])
+                  }
+                  return
+                }
+                if (isEffectivelyLocked) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  if (!selectedObjectIds.includes(object.id) && !event.shiftKey) {
+                    selectObjects([object.id])
+                  }
+                  panRef.current = {
+                    pointerId: event.pointerId,
+                    originClient: { x: event.clientX, y: event.clientY },
+                    cameraStart: camera,
+                  }
+                  viewportRef.current?.setPointerCapture(event.pointerId)
                   return
                 }
                 event.preventDefault()
@@ -1778,6 +2311,16 @@ export function CanvasViewport() {
                 beginObjectInteraction(event, [object], 'move')
               }}
               onContextMenu={(event) => {
+                if (editingTextboxId && editingTextboxId !== object.id) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
+                if (activeCropObjectId && object.id !== activeCropObjectId) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 if (!isEditable) {
                   event.preventDefault()
                   event.stopPropagation()
@@ -1799,8 +2342,22 @@ export function CanvasViewport() {
                 })
               }}
               onDoubleClick={(event) => {
+                if (editingTextboxId && editingTextboxId !== object.id) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
+                if (activeCropObjectId && object.id !== activeCropObjectId) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
                 if (!isEditable) {
                   event.preventDefault()
+                  event.stopPropagation()
+                  return
+                }
+                if (editingTextboxId === object.id) {
                   event.stopPropagation()
                   return
                 }
@@ -1811,6 +2368,15 @@ export function CanvasViewport() {
                   event.preventDefault()
                   event.stopPropagation()
                   startTextboxEditing(object)
+                  return
+                }
+                if (
+                  object.type === 'image' &&
+                  !isObjectEffectivelyLocked(object, objectById)
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  openImageReloadDialog(object.id)
                   return
                 }
                 if (object.type !== 'group') {
@@ -1838,64 +2404,55 @@ export function CanvasViewport() {
                     src={imageSrc}
                     alt=""
                     draggable={false}
-                    style={{ objectFit: 'fill' }}
+                    style={{
+                      width: `${Math.max(1, widthPx)}px`,
+                      height: `${Math.max(1, heightPx)}px`,
+                      objectFit: 'fill',
+                      clipPath: imageCropIsApplied
+                        ? `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}%)`
+                        : 'none',
+                    }}
                   />
                 ) : (
                   <span>Image</span>
                 )
               ) : object.type === 'textbox' ? (
                 editingTextboxId === object.id ? (
-                  <textarea
-                    className="textbox-editor"
-                    value={editingTextboxText}
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
+                  <RichTextboxEditor
+                    editorKey={object.id}
+                    html={editingTextboxHtml}
+                    fontFamily={object.textboxData.fontFamily}
+                    contentScale={Math.max(0.01, camera.zoom)}
+                    onContentChange={({ html, plainText, contentHeight }) => {
+                      setEditingTextboxHtml(html)
+                      setEditingTextboxPlainText(plainText)
+                      applyTextboxAutoHeight(object, plainText, contentHeight)
                     }}
-                    onChange={(event) => {
-                      const nextText = event.target.value
-                      setEditingTextboxText(nextText)
-                      if (object.type === 'textbox') {
-                        applyTextboxAutoHeight(object, nextText)
-                      }
-                    }}
-                    onBlur={() => {
+                    onEditorBlur={() => {
                       finishTextboxEditing(true)
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Escape') {
-                        event.preventDefault()
-                        finishTextboxEditing(false)
-                        return
-                      }
-                      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                        event.preventDefault()
-                        finishTextboxEditing(true)
-                      }
+                    onEscape={() => {
+                      finishTextboxEditing(false)
                     }}
-                    autoFocus
+                    onCommit={() => {
+                      finishTextboxEditing(true)
+                    }}
                   />
                 ) : (
-                  <div
-                    className="textbox-content"
-                    style={{
-                      fontWeight: textboxFirstRun?.bold ? 700 : 400,
-                      fontStyle: textboxFirstRun?.italic ? 'italic' : 'normal',
-                      textDecoration: textboxFirstRun?.underline ? 'underline' : 'none',
-                    }}
-                  >
-                    {object.textboxData.listType === 'none' ? (
-                      getObjectLabel(object)
-                    ) : (
-                      <div className="textbox-list">
-                        {(textboxLines.length > 0 ? textboxLines : ['']).map((line, index) => (
-                          <div key={`${object.id}-line-${index}`} className="textbox-list-item">
-                            {object.textboxData.listType === 'bullet'
-                              ? `• ${line}`
-                              : `${index + 1}. ${line}`}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  <div className="textbox-content">
+                    <div
+                      className="textbox-rich-content textbox-content-inner"
+                      style={{
+                        fontFamily: object.textboxData.fontFamily,
+                        transform: `scale(${Math.max(0.01, camera.zoom)})`,
+                        transformOrigin: 'top left',
+                        width: `${100 / Math.max(0.01, camera.zoom)}%`,
+                        height: `${100 / Math.max(0.01, camera.zoom)}%`,
+                      }}
+                      dangerouslySetInnerHTML={{
+                        __html: textboxHtml,
+                      }}
+                    />
                   </div>
                 )
               ) : object.type === 'group' ? null : (
@@ -1904,6 +2461,34 @@ export function CanvasViewport() {
             </div>
           )
         })}
+      </div>
+
+      <div className="slide-guides-layer" aria-hidden="true">
+        {slideGuides.map((guide) => (
+          <div key={guide.id}>
+            <div
+              className={`slide-guide-frame ${guide.isActive ? 'active' : ''} ${guide.isHovered ? 'hovered' : ''}`}
+              style={{
+                left: guide.left,
+                top: guide.top,
+                width: guide.width,
+                height: guide.height,
+                transform: `rotate(${guide.rotation}rad)`,
+              }}
+            />
+            <div
+              className={`slide-guide-name ${guide.isActive ? 'active' : ''}`}
+              style={{
+                left: guide.labelX,
+                top: guide.labelY,
+                transform: `translate(4px, -100%) rotate(${guide.rotation}rad)`,
+                transformOrigin: '0% 100%',
+              }}
+            >
+              {guide.name}
+            </div>
+          </div>
+        ))}
       </div>
 
       {activeGroupObject && (
@@ -1940,113 +2525,6 @@ export function CanvasViewport() {
         </div>
       )}
 
-      {selectedTextboxObject && textToolbarAnchor && (
-        <div
-          className="floating-context-toolbar text-context-toolbar"
-          style={{
-            left: textToolbarAnchor.x,
-            top: textToolbarAnchor.y,
-            transform: 'translate(-50%, -100%)',
-          }}
-          onPointerDown={(event) => {
-            event.stopPropagation()
-          }}
-        >
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxFirstRun?.bold ? 'active' : ''}`}
-            title="Bold"
-            onClick={() => {
-              updateSelectedTextboxRun({ bold: !selectedTextboxFirstRun?.bold })
-            }}
-          >
-            B
-          </button>
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxFirstRun?.italic ? 'active' : ''}`}
-            title="Italic"
-            onClick={() => {
-              updateSelectedTextboxRun({ italic: !selectedTextboxFirstRun?.italic })
-            }}
-          >
-            I
-          </button>
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxFirstRun?.underline ? 'active' : ''}`}
-            title="Underline"
-            onClick={() => {
-              updateSelectedTextboxRun({ underline: !selectedTextboxFirstRun?.underline })
-            }}
-          >
-            U
-          </button>
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'none' ? 'active' : ''}`}
-            title="No list"
-            onClick={() => {
-              updateSelectedTextboxListType('none')
-            }}
-          >
-            N
-          </button>
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'bullet' ? 'active' : ''}`}
-            title="Bulleted list"
-            onClick={() => {
-              updateSelectedTextboxListType('bullet')
-            }}
-          >
-            •
-          </button>
-          <button
-            type="button"
-            className={`icon-btn ${selectedTextboxObject.textboxData.listType === 'numbered' ? 'active' : ''}`}
-            title="Numbered list"
-            onClick={() => {
-              updateSelectedTextboxListType('numbered')
-            }}
-          >
-            1.
-          </button>
-        </div>
-      )}
-
-      {selectedShapeObject && shapeToolbarAnchor && (
-        <div
-          className="floating-context-toolbar shape-context-toolbar"
-          style={{
-            left: shapeToolbarAnchor.x,
-            top: shapeToolbarAnchor.y,
-            transform: 'translate(-50%, -100%)',
-          }}
-          onPointerDown={(event) => {
-            event.stopPropagation()
-          }}
-        >
-          <label>
-            Opacity
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={selectedShapeObject.shapeData.opacityPercent}
-              onChange={(event) => {
-                const parsed = Number(event.target.value)
-                if (Number.isFinite(parsed)) {
-                  setShapeOpacity(selectedShapeObject.id, parsed)
-                }
-              }}
-            />
-          </label>
-          <span>{selectedShapeObject.shapeData.opacityPercent}%</span>
-        </div>
-      )}
-
       {marqueeRect && (
         <div
           className={`marquee-select ${marqueeMode}`}
@@ -2074,83 +2552,293 @@ export function CanvasViewport() {
             transform: `rotate(${selectedObject.rotation + camera.rotation}rad)`,
           }}
         >
-          {!selectedObject.locked && (
-            <>
-              <button
-                type="button"
-                className="resize-handle"
-                aria-label="Resize"
-                onPointerDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  beginObjectInteraction(event, [selectedObject], 'resize')
-                }}
-              />
-              <button
-                type="button"
-                className="rotate-handle"
-                aria-label="Rotate"
-                onPointerDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  beginObjectInteraction(event, [selectedObject], 'rotate')
-                }}
-              />
-            </>
-          )}
+          {!selectedObject.locked &&
+            !(selectedObject.type === 'image' && selectedObject.imageData.cropEnabled) && (
+              <>
+                <button
+                  type="button"
+                  className="resize-handle"
+                  aria-label="Scale"
+                  title="Scale"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginObjectInteraction(event, [selectedObject], 'resize')
+                  }}
+                />
+                <button
+                  type="button"
+                  className="rotate-handle"
+                  aria-label="Rotate"
+                  title="Rotate"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginObjectInteraction(event, [selectedObject], 'rotate')
+                  }}
+                />
+              </>
+            )}
 
-          <button
-            type="button"
-            className={`lock-handle ${canToggleGroupFromSelection ? 'with-group' : ''}`}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onClick={(event) => {
-              event.stopPropagation()
-              if (selectedObjectLockedByAncestor) {
-                return
-              }
-              toggleObjectLock(selectedObject.id)
-            }}
-            aria-label={
-              selectedObjectLockedByAncestor
-                ? 'Object inherits lock from parent group'
-                : selectedObject.locked
-                  ? 'Unlock object'
-                  : 'Lock object'
-            }
-            title={
-              selectedObjectLockedByAncestor
-                ? 'Unlock parent group to modify this object'
-                : selectedObject.locked
-                  ? 'Unlock object'
-                  : 'Lock object'
-            }
-            disabled={selectedObjectLockedByAncestor}
-          >
-            <FontAwesomeIcon icon={selectedObject.locked ? faLockOpen : faLock} />
-          </button>
-          {canToggleGroupFromSelection && (
+          {selectedObject.type === 'image' &&
+            selectedObject.imageData.cropEnabled &&
+            !selectedObject.locked && (
+              <div
+                className="image-crop-frame"
+                style={{
+                  left: `${selectedObject.imageData.cropLeftPercent}%`,
+                  top: `${selectedObject.imageData.cropTopPercent}%`,
+                  width: `${Math.max(1, 100 - selectedObject.imageData.cropLeftPercent - selectedObject.imageData.cropRightPercent)}%`,
+                  height: `${Math.max(1, 100 - selectedObject.imageData.cropTopPercent - selectedObject.imageData.cropBottomPercent)}%`,
+                }}
+              >
+                <button
+                  type="button"
+                  className="image-crop-frame-handle top-left"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'top-left')
+                  }}
+                  aria-label="Crop top left"
+                  title="Crop top left"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle top"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'top')
+                  }}
+                  aria-label="Crop top"
+                  title="Crop top"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle top-right"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'top-right')
+                  }}
+                  aria-label="Crop top right"
+                  title="Crop top right"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle right"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'right')
+                  }}
+                  aria-label="Crop right"
+                  title="Crop right"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle bottom-right"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'bottom-right')
+                  }}
+                  aria-label="Crop bottom right"
+                  title="Crop bottom right"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle bottom"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'bottom')
+                  }}
+                  aria-label="Crop bottom"
+                  title="Crop bottom"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle bottom-left"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'bottom-left')
+                  }}
+                  aria-label="Crop bottom left"
+                  title="Crop bottom left"
+                />
+                <button
+                  type="button"
+                  className="image-crop-frame-handle left"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'left')
+                  }}
+                  aria-label="Crop left"
+                  title="Crop left"
+                />
+              </div>
+            )}
+
+          <div className="selection-bottom-controls">
             <button
               type="button"
-              className="group-handle"
+              className="lock-handle"
               onPointerDown={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
               }}
               onClick={(event) => {
                 event.stopPropagation()
-                if (selectedObject.type === 'group') {
-                  enterGroup(selectedObject.id)
+                if (selectedObjectLockedByAncestor) {
+                  return
                 }
+                toggleObjectLock(selectedObject.id)
               }}
-              aria-label="Enter group"
-              title="Enter group"
+              aria-label={
+                selectedObjectLockedByAncestor
+                  ? 'Object inherits lock from parent group'
+                  : selectedObject.locked
+                    ? 'Unlock object'
+                    : 'Lock object'
+              }
+              title={
+                selectedObjectLockedByAncestor
+                  ? 'Unlock parent group to modify this object'
+                  : selectedObject.locked
+                    ? 'Unlock object'
+                    : 'Lock object'
+              }
+              disabled={selectedObjectLockedByAncestor}
             >
-              <FontAwesomeIcon icon={faLayerGroup} />
+              <FontAwesomeIcon icon={selectedObject.locked ? faLock : faLockOpen} />
             </button>
-          )}
+            {canToggleGroupFromSelection && (
+              <button
+                type="button"
+                className="group-handle"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (selectedObject.type === 'group') {
+                    enterGroup(selectedObject.id)
+                  }
+                }}
+                aria-label="Enter group"
+                title="Enter group"
+              >
+                <FontAwesomeIcon icon={faLayerGroup} />
+              </button>
+            )}
+            {selectedObject.type === 'image' && (
+              <>
+                <button
+                  type="button"
+                  className="image-reload-handle"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (selectedObject.locked || selectedObjectLockedByAncestor) {
+                      return
+                    }
+                    openImageReloadDialog(selectedObject.id)
+                  }}
+                  aria-label="Reload image from disk"
+                  title={
+                    selectedObjectLockedByAncestor
+                      ? 'Unlock parent group to reload image'
+                      : selectedObject.locked
+                        ? 'Unlock object to reload image'
+                        : 'Reload image from disk'
+                  }
+                  disabled={selectedObject.locked || selectedObjectLockedByAncestor}
+                >
+                  <FontAwesomeIcon icon={faFileImport} />
+                </button>
+                <button
+                  type="button"
+                  className={`image-crop-handle ${selectedObject.imageData.cropEnabled ? 'active' : ''}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (selectedObject.locked || selectedObjectLockedByAncestor) {
+                      return
+                    }
+                    setImageData(selectedObject.id, {
+                      ...selectedObject.imageData,
+                      cropEnabled: !selectedObject.imageData.cropEnabled,
+                    })
+                  }}
+                  aria-label={selectedObject.imageData.cropEnabled ? 'Disable crop mode' : 'Enable crop mode'}
+                  title={
+                    selectedObjectLockedByAncestor
+                      ? 'Unlock parent group to crop image'
+                      : selectedObject.locked
+                        ? 'Unlock object to crop image'
+                        : selectedObject.imageData.cropEnabled
+                          ? 'Disable crop mode'
+                          : 'Enable crop mode'
+                  }
+                  disabled={selectedObject.locked || selectedObjectLockedByAncestor}
+                >
+                  <FontAwesomeIcon icon={faCropSimple} />
+                </button>
+              </>
+            )}
+            {selectedObject.type === 'textbox' && (
+              <button
+                type="button"
+                className="textbox-handle"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (editingTextboxId === selectedObject.id) {
+                    finishTextboxEditing(true)
+                    return
+                  }
+                  if (selectedObject.locked || selectedObjectLockedByAncestor) {
+                    return
+                  }
+                  startTextboxEditing(selectedObject)
+                }}
+                aria-label={
+                  editingTextboxId === selectedObject.id
+                    ? 'Leave textbox editing'
+                    : 'Enter textbox editing'
+                }
+                title={
+                  editingTextboxId === selectedObject.id
+                    ? 'Leave textbox editing'
+                    : selectedObjectLockedByAncestor
+                      ? 'Unlock parent group to edit text'
+                      : selectedObject.locked
+                        ? 'Unlock object to edit text'
+                        : 'Enter textbox editing'
+                }
+                disabled={
+                  editingTextboxId !== selectedObject.id &&
+                  (selectedObject.locked || selectedObjectLockedByAncestor)
+                }
+              >
+                <FontAwesomeIcon icon={faPenToSquare} />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -2186,7 +2874,8 @@ export function CanvasViewport() {
           <button
             type="button"
             className="resize-handle"
-            aria-label="Resize selection"
+            aria-label="Scale selection"
+            title="Scale selection"
             onPointerDown={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -2197,6 +2886,7 @@ export function CanvasViewport() {
             type="button"
             className="rotate-handle"
             aria-label="Rotate selection"
+            title="Rotate selection"
             onPointerDown={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -2335,6 +3025,14 @@ export function CanvasViewport() {
           </button>
         </div>
       )}
+
+      <input
+        ref={imageReloadInputRef}
+        type="file"
+        accept={SUPPORTED_IMAGE_ACCEPT}
+        onChange={handleImageReloadFile}
+        style={{ display: 'none' }}
+      />
 
       <div className="camera-card" aria-label="Camera position">
         <span className="camera-pos-item">X {camera.x.toFixed(1)}</span>

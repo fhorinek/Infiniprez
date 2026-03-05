@@ -13,10 +13,13 @@ import {
   recordExecutedCommand,
   redoCommand,
   setSlideOrderCommand,
+  setShapeDataCommand,
   setShapeOpacityCommand,
+  setCanvasBackgroundCommand,
   setTextboxDataCommand,
   setObjectZIndexCommand,
   setObjectLockCommand,
+  setImageDataCommand,
   updateSlideCommand,
   ungroupObjectCommand,
   undoCommand,
@@ -28,6 +31,8 @@ import {
   type Asset,
   type CanvasObject,
   type DocumentModel,
+  type ImageData,
+  type ShapeData,
   type Slide,
 } from '../model'
 import type { CameraState, EditorState, EditorStore, UiState } from './types'
@@ -44,6 +49,22 @@ const DEFAULT_UI: UiState = {
   selectedObjectIds: [],
   selectedSlideId: null,
   activeGroupId: null,
+}
+
+function normalizeCameraRotation(rotation: number): number {
+  const twoPi = Math.PI * 2
+  let normalized = rotation
+  while (normalized > Math.PI) {
+    normalized -= twoPi
+  }
+  while (normalized < -Math.PI) {
+    normalized += twoPi
+  }
+  return normalized
+}
+
+function normalizeCameraZoom(zoom: number): number {
+  return Math.min(100, Math.max(0.01, zoom))
 }
 
 function createInitialState(): EditorState {
@@ -114,7 +135,7 @@ function getObjectWorldAabb(object: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | '
 
 function clampSlideTriggerDelay(value: number) {
   const rounded = Math.round(value)
-  return Math.min(3_600_000, Math.max(0, rounded))
+  return Math.min(60_000, Math.max(0, rounded))
 }
 
 function clampSlideTransitionDuration(value: number, transitionType: Slide['transitionType']) {
@@ -217,8 +238,27 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setCamera: (camera) =>
     set((state) => ({
       ...state,
-      camera,
+      camera: {
+        ...camera,
+        zoom: normalizeCameraZoom(camera.zoom),
+        rotation: normalizeCameraRotation(camera.rotation),
+      },
     })),
+
+  setCanvasBackground: (background) => {
+    const nextBackground = background.trim()
+    if (nextBackground.length === 0) {
+      return
+    }
+
+    const beforeBackground = get().document.canvas.background
+    if (beforeBackground === nextBackground) {
+      return
+    }
+
+    const command = setCanvasBackgroundCommand(beforeBackground, nextBackground)
+    get().executeDocumentCommand(command)
+  },
 
   setMode: (mode) =>
     set((state) => ({
@@ -476,6 +516,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     get().executeDocumentCommand(command)
   },
 
+  setImageData: (objectId, imageData: ImageData) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target || target.type !== 'image') {
+      return
+    }
+
+    const command = setImageDataCommand(objectId, target.imageData, imageData)
+    get().executeDocumentCommand(command)
+  },
+
   setTextboxData: (objectId, textboxData) => {
     const target = get().document.objects.find((entry) => entry.id === objectId)
     if (!target || target.type !== 'textbox') {
@@ -501,6 +551,19 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     const command = setShapeOpacityCommand(objectId, target.shapeData.opacityPercent, nextOpacity)
+    get().executeDocumentCommand(command)
+  },
+
+  setShapeData: (objectId, shapeData: ShapeData) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (
+      !target ||
+      (target.type !== 'shape_rect' && target.type !== 'shape_circle' && target.type !== 'shape_arrow')
+    ) {
+      return
+    }
+
+    const command = setShapeDataCommand(objectId, target.shapeData, shapeData)
     get().executeDocumentCommand(command)
   },
 

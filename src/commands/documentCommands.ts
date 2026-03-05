@@ -3,7 +3,9 @@ import type { Command } from './types'
 import type {
   CanvasObject,
   DocumentModel,
+  ImageData,
   LayerOrderAction,
+  ShapeData,
   Slide,
   TextboxData,
   ZIndexSnapshot,
@@ -273,6 +275,27 @@ export function setObjectLockCommand(
   }
 }
 
+export function setCanvasBackgroundCommand(
+  beforeBackground: string,
+  afterBackground: string
+): Command<DocumentModel> {
+  return {
+    label: 'Set canvas background',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.canvas.background = afterBackground
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.canvas.background = beforeBackground
+        })
+      ),
+  }
+}
+
 export function setShapeOpacityCommand(
   objectId: string,
   beforeOpacityPercent: number,
@@ -313,6 +336,46 @@ export function setShapeOpacityCommand(
   }
 }
 
+export function setShapeDataCommand(
+  objectId: string,
+  beforeShapeData: ShapeData,
+  afterShapeData: ShapeData
+): Command<DocumentModel> {
+  return {
+    label: 'Update shape style',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (
+            !target ||
+            (target.type !== 'shape_rect' &&
+              target.type !== 'shape_circle' &&
+              target.type !== 'shape_arrow')
+          ) {
+            return
+          }
+          target.shapeData = afterShapeData
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (
+            !target ||
+            (target.type !== 'shape_rect' &&
+              target.type !== 'shape_circle' &&
+              target.type !== 'shape_arrow')
+          ) {
+            return
+          }
+          target.shapeData = beforeShapeData
+        })
+      ),
+  }
+}
+
 export function setTextboxDataCommand(
   objectId: string,
   beforeTextboxData: TextboxData,
@@ -338,6 +401,36 @@ export function setTextboxDataCommand(
             return
           }
           target.textboxData = beforeTextboxData
+        })
+      ),
+  }
+}
+
+export function setImageDataCommand(
+  objectId: string,
+  beforeImageData: ImageData,
+  afterImageData: ImageData
+): Command<DocumentModel> {
+  return {
+    label: 'Update image',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'image') {
+            return
+          }
+          target.imageData = afterImageData
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'image') {
+            return
+          }
+          target.imageData = beforeImageData
         })
       ),
   }

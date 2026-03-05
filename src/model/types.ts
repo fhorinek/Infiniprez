@@ -1,4 +1,6 @@
 export const CURRENT_SCHEMA_VERSION = '1.0' as const
+export const DEFAULT_CANVAS_BACKGROUND =
+  'radial-gradient(circle at 20% 20%, #1f365a 0%, #0f1523 55%)'
 
 export type SchemaVersion = typeof CURRENT_SCHEMA_VERSION
 
@@ -6,6 +8,7 @@ export type TriggerMode = 'manual' | 'timed'
 export type TransitionType = 'ease' | 'linear' | 'instant'
 export type BorderType = 'solid' | 'dashed' | 'dotted'
 export type FillMode = 'solid' | 'linearGradient'
+export type GradientType = 'linear' | 'radial' | 'circles'
 export type TextAlignment = 'left' | 'center' | 'right'
 export type TextListType = 'none' | 'bullet' | 'numbered'
 
@@ -22,6 +25,7 @@ export interface CanvasSettings {
   snapToGrid: boolean
   snapToObjectEdges: boolean
   snapTolerancePx: number
+  background: string
 }
 
 export interface Slide {
@@ -49,10 +53,18 @@ export interface TextRun {
 
 export interface TextboxData {
   runs: TextRun[]
+  richTextHtml: string
   fontFamily: string
   alignment: TextAlignment
   listType: TextListType
   autoHeight: boolean
+  fillMode: FillMode
+  backgroundColor: string
+  fillGradient: FillGradient | null
+  borderColor: string
+  borderType: BorderType
+  borderWidth: number
+  opacityPercent: number
 }
 
 export interface ImageData {
@@ -60,12 +72,31 @@ export interface ImageData {
   intrinsicWidth: number
   intrinsicHeight: number
   keepAspectRatio: boolean
+  borderColor: string
+  borderType: BorderType
+  borderWidth: number
+  radius: number
+  opacityPercent: number
+  cropEnabled: boolean
+  cropLeftPercent: number
+  cropTopPercent: number
+  cropRightPercent: number
+  cropBottomPercent: number
+}
+
+export interface FillGradientStop {
+  color: string
+  positionPercent: number
+  xPercent?: number
+  yPercent?: number
 }
 
 export interface FillGradient {
   colorA: string
   colorB: string
   angleDeg: number
+  gradientType: GradientType
+  stops: FillGradientStop[]
 }
 
 export interface ShapeData {
@@ -75,6 +106,7 @@ export interface ShapeData {
   fillMode: FillMode
   fillColor: string
   fillGradient: FillGradient | null
+  radius: number
   opacityPercent: number
 }
 

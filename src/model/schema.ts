@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { CURRENT_SCHEMA_VERSION, type DocumentModel } from './types'
+import { CURRENT_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, type DocumentModel } from './types'
 
 const nonEmptyStringSchema = z.string().trim().min(1)
 const idSchema = nonEmptyStringSchema
@@ -7,6 +7,12 @@ const isoTimestampSchema = z.string().refine((value) => !Number.isNaN(Date.parse
   message: 'Expected ISO timestamp',
 })
 const colorSchema = nonEmptyStringSchema
+const gradientStopSchema = z.object({
+  color: colorSchema,
+  positionPercent: z.number().min(0).max(100),
+  xPercent: z.number().min(0).max(100).optional(),
+  yPercent: z.number().min(0).max(100).optional(),
+})
 
 const textRunSchema = z.object({
   text: z.string(),
@@ -17,25 +23,96 @@ const textRunSchema = z.object({
   fontSize: z.number().positive(),
 })
 
-const textboxDataSchema = z.object({
-  runs: z.array(textRunSchema),
-  fontFamily: nonEmptyStringSchema,
-  alignment: z.enum(['left', 'center', 'right']),
-  listType: z.enum(['none', 'bullet', 'numbered']),
-  autoHeight: z.boolean(),
-})
+const fillGradientSchema = z
+  .object({
+  colorA: colorSchema,
+  colorB: colorSchema,
+  angleDeg: z.number().min(-360).max(360),
+    gradientType: z.enum(['linear', 'radial', 'circles']).default('linear'),
+    stops: z.array(gradientStopSchema).max(5).default([]),
+  })
+  .transform((value) => {
+    const normalizedStops =
+      value.stops.length >= 2
+        ? [...value.stops]
+            .map((stop) => ({
+              color: stop.color,
+              positionPercent: Math.max(0, Math.min(100, stop.positionPercent)),
+              xPercent:
+                stop.xPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.xPercent)),
+              yPercent:
+                stop.yPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.yPercent)),
+            }))
+            .sort((a, b) => a.positionPercent - b.positionPercent)
+        : [
+            { color: value.colorA, positionPercent: 0 },
+            { color: value.colorB, positionPercent: 100 },
+          ]
+
+    const trimmedStops = normalizedStops.slice(0, 5)
+    const firstStop = trimmedStops[0] ?? { color: value.colorA, positionPercent: 0 }
+    const lastStop = trimmedStops[trimmedStops.length - 1] ?? {
+      color: value.colorB,
+      positionPercent: 100,
+    }
+
+    return {
+      ...value,
+      colorA: firstStop.color,
+      colorB: lastStop.color,
+      stops: trimmedStops,
+    }
+  })
+
+const textboxDataSchema = z
+  .object({
+    runs: z.array(textRunSchema),
+    richTextHtml: z.string(),
+    fontFamily: nonEmptyStringSchema,
+    alignment: z.enum(['left', 'center', 'right']),
+    listType: z.enum(['none', 'bullet', 'numbered']),
+    autoHeight: z.boolean(),
+    fillMode: z.enum(['solid', 'linearGradient']).default('solid'),
+    backgroundColor: colorSchema.default('#1f3151'),
+    fillGradient: fillGradientSchema.nullable().default(null),
+    borderColor: colorSchema.default('#b2c6ee'),
+    borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+    borderWidth: z.number().min(0).max(20).default(1),
+    opacityPercent: z.number().min(0).max(100).default(100),
+  })
+  .superRefine((value, ctx) => {
+    if (value.fillMode === 'solid' && value.fillGradient !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fillGradient must be null when fillMode is solid',
+        path: ['fillGradient'],
+      })
+    }
+
+    if (value.fillMode === 'linearGradient' && value.fillGradient === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fillGradient is required when fillMode is linearGradient',
+        path: ['fillGradient'],
+      })
+    }
+  })
 
 const imageDataSchema = z.object({
   assetId: idSchema,
   intrinsicWidth: z.number().positive(),
   intrinsicHeight: z.number().positive(),
   keepAspectRatio: z.boolean(),
-})
-
-const fillGradientSchema = z.object({
-  colorA: colorSchema,
-  colorB: colorSchema,
-  angleDeg: z.number().min(-360).max(360),
+  borderColor: colorSchema.default('#b2c6ee'),
+  borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderWidth: z.number().min(0).max(20).default(0),
+  radius: z.number().min(0).max(1000).default(0),
+  opacityPercent: z.number().min(0).max(100).default(100),
+  cropEnabled: z.boolean().default(false),
+  cropLeftPercent: z.number().min(0).max(100).default(0),
+  cropTopPercent: z.number().min(0).max(100).default(0),
+  cropRightPercent: z.number().min(0).max(100).default(0),
+  cropBottomPercent: z.number().min(0).max(100).default(0),
 })
 
 const shapeDataSchema = z
@@ -46,6 +123,7 @@ const shapeDataSchema = z
     fillMode: z.enum(['solid', 'linearGradient']),
     fillColor: colorSchema,
     fillGradient: fillGradientSchema.nullable(),
+    radius: z.number().min(0).max(1000).default(0),
     opacityPercent: z.number().min(0).max(100),
   })
   .superRefine((value, ctx) => {
@@ -128,7 +206,7 @@ const slideSchema = z
     zoom: z.number().positive(),
     rotation: z.number(),
     triggerMode: z.enum(['manual', 'timed']),
-    triggerDelayMs: z.number().int().min(0).max(3_600_000),
+    triggerDelayMs: z.number().int().min(0).max(60_000),
     transitionType: z.enum(['ease', 'linear', 'instant']),
     transitionDurationMs: z.number().int().min(0).max(10_000),
     orderIndex: z.number().int().nonnegative(),
@@ -166,6 +244,7 @@ export const documentSchema = z.object({
     snapToGrid: z.boolean(),
     snapToObjectEdges: z.boolean(),
     snapTolerancePx: z.number().positive(),
+    background: z.string().trim().min(1).default(DEFAULT_CANVAS_BACKGROUND),
   }),
   slides: z.array(slideSchema),
   objects: z.array(

@@ -35,6 +35,7 @@ function createRectObject(): CanvasObject {
       fillMode: 'solid',
       fillColor: '#244a80',
       fillGradient: null,
+      radius: 0,
       opacityPercent: 100,
     },
   }

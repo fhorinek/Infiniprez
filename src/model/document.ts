@@ -1,6 +1,7 @@
 import { validateDocument } from './schema'
 import {
   CURRENT_SCHEMA_VERSION,
+  DEFAULT_CANVAS_BACKGROUND,
   type CanvasSettings,
   type DocumentModel,
   type SchemaVersion,
@@ -14,6 +15,7 @@ export const DEFAULT_CANVAS_SETTINGS: CanvasSettings = {
   snapToGrid: true,
   snapToObjectEdges: true,
   snapTolerancePx: 8,
+  background: DEFAULT_CANVAS_BACKGROUND,
 }
 
 export function getCurrentSchemaVersion(): SchemaVersion {
