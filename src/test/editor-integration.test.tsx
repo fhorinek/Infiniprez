@@ -38,6 +38,10 @@ function createShapeRect(overrides: Partial<ShapeRectObject> = {}): ShapeRectObj
       fillGradient: null,
       radius: 0,
       opacityPercent: 100,
+      shadowColor: '#000000',
+      shadowBlurPx: 0,
+      shadowAngleDeg: 45,
+      ...(overrides.shapeData ?? {}),
     },
   }
 }
@@ -53,6 +57,7 @@ function createShapeCircle(overrides: Partial<ShapeCircleObject> = {}): ShapeCir
     locked: overrides.locked,
     zIndex: overrides.zIndex,
     parentGroupId: overrides.parentGroupId,
+    shapeData: overrides.shapeData,
   })
   return {
     ...rectDefaults,

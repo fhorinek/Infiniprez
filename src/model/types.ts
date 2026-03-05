@@ -11,6 +11,7 @@ export type FillMode = 'solid' | 'linearGradient'
 export type GradientType = 'linear' | 'radial' | 'circles'
 export type TextAlignment = 'left' | 'center' | 'right'
 export type TextListType = 'none' | 'bullet' | 'numbered'
+export type ImageFilterPreset = 'none' | 'bw' | 'sepia' | 'vibrant' | 'warm' | 'cool' | 'dramatic'
 
 export interface DocumentMeta {
   version: SchemaVersion
@@ -65,6 +66,9 @@ export interface TextboxData {
   borderType: BorderType
   borderWidth: number
   opacityPercent: number
+  shadowColor: string
+  shadowBlurPx: number
+  shadowAngleDeg: number
 }
 
 export interface ImageData {
@@ -82,6 +86,11 @@ export interface ImageData {
   cropTopPercent: number
   cropRightPercent: number
   cropBottomPercent: number
+  effectsEnabled: boolean
+  filterPreset: ImageFilterPreset
+  shadowColor: string
+  shadowBlurPx: number
+  shadowAngleDeg: number
 }
 
 export interface FillGradientStop {
@@ -108,6 +117,9 @@ export interface ShapeData {
   fillGradient: FillGradient | null
   radius: number
   opacityPercent: number
+  shadowColor: string
+  shadowBlurPx: number
+  shadowAngleDeg: number
 }
 
 export interface GroupData {

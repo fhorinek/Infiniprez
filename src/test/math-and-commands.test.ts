@@ -37,6 +37,9 @@ function createRectObject(): CanvasObject {
       fillGradient: null,
       radius: 0,
       opacityPercent: 100,
+      shadowColor: '#000000',
+      shadowBlurPx: 0,
+      shadowAngleDeg: 45,
     },
   }
 }

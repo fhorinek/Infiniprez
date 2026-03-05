@@ -24,12 +24,14 @@ import {
   faMagnifyingGlass,
   faObjectUngroup,
   faPenToSquare,
+  faSliders,
   faTrashCan,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   canReorderLayer,
   type Asset,
   type CanvasObject,
+  type FillGradient,
   type LayerOrderAction,
   type ShapeData,
   type TextRun,
@@ -56,6 +58,8 @@ import {
   readFileAsDataUrl,
   toAssetBase64,
 } from '../imageFile'
+import { IMAGE_FILTER_OPTIONS, resolveImageFilterCss } from '../imageEffects'
+import { resolveObjectDropShadowFilter, resolveObjectShadowCss } from '../objectShadow'
 
 interface GridLine {
   id: string
@@ -88,6 +92,7 @@ interface ObjectInteraction {
 }
 
 type CropHandle =
+  | 'move'
   | 'left'
   | 'top'
   | 'right'
@@ -117,6 +122,7 @@ interface MarqueeInteraction {
   startScreen: Point
   currentScreen: Point
   baseSelection: string[]
+  toggleObjectId: string | null
 }
 
 interface Rect {
@@ -185,6 +191,18 @@ function getShortestAngleDelta(from: number, to: number): number {
     delta += Math.PI * 2
   }
   return delta
+}
+
+function normalizeRotationRadians(angle: number): number {
+  let normalized = angle
+  const fullTurn = Math.PI * 2
+  while (normalized > Math.PI) {
+    normalized -= fullTurn
+  }
+  while (normalized <= -Math.PI) {
+    normalized += fullTurn
+  }
+  return normalized
 }
 
 function createDefaultTextRun(text = ''): TextRun {
@@ -278,25 +296,25 @@ function getShapeBackground(shapeData: ShapeData): string {
     const stops =
       Array.isArray(gradient.stops) && gradient.stops.length >= 2
         ? [...gradient.stops]
-            .slice(0, 5)
-            .sort((a, b) => a.positionPercent - b.positionPercent)
-            .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
+          .slice(0, 5)
+          .sort((a, b) => a.positionPercent - b.positionPercent)
+          .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
         : [`${gradient.colorA} 0%`, `${gradient.colorB} 100%`]
     if (gradient.gradientType === 'circles') {
       const layers =
         Array.isArray(gradient.stops) && gradient.stops.length >= 2
           ? gradient.stops
-              .slice(0, 5)
-              .map((stop, index) => {
-                const xPercent = Math.max(
-                  0,
-                  Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
-                )
-                const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
-                const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
-                return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
-              })
-              .join(', ')
+            .slice(0, 5)
+            .map((stop, index) => {
+              const xPercent = Math.max(
+                0,
+                Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
+              )
+              const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
+              const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
+              return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
+            })
+            .join(', ')
           : ''
       if (layers.length > 0) {
         return `${layers}, ${gradient.colorB}`
@@ -318,25 +336,25 @@ function getTextboxBackground(
     const stops =
       Array.isArray(gradient.stops) && gradient.stops.length >= 2
         ? [...gradient.stops]
-            .slice(0, 5)
-            .sort((a, b) => a.positionPercent - b.positionPercent)
-            .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
+          .slice(0, 5)
+          .sort((a, b) => a.positionPercent - b.positionPercent)
+          .map((stop) => `${stop.color} ${Math.max(0, Math.min(100, stop.positionPercent))}%`)
         : [`${gradient.colorA} 0%`, `${gradient.colorB} 100%`]
     if (gradient.gradientType === 'circles') {
       const layers =
         Array.isArray(gradient.stops) && gradient.stops.length >= 2
           ? gradient.stops
-              .slice(0, 5)
-              .map((stop, index) => {
-                const xPercent = Math.max(
-                  0,
-                  Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
-                )
-                const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
-                const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
-                return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
-              })
-              .join(', ')
+            .slice(0, 5)
+            .map((stop, index) => {
+              const xPercent = Math.max(
+                0,
+                Math.min(100, Math.round(Number(stop.xPercent ?? (index === 0 ? 35 : 65))))
+              )
+              const yPercent = Math.max(0, Math.min(100, Math.round(Number(stop.yPercent ?? 50))))
+              const radiusPercent = Math.max(8, Math.min(100, Math.round(Number(stop.positionPercent ?? 42))))
+              return `radial-gradient(circle at ${xPercent}% ${yPercent}%, ${stop.color} 0%, transparent ${radiusPercent}%)`
+            })
+            .join(', ')
           : ''
       if (layers.length > 0) {
         return `${layers}, ${gradient.colorB}`
@@ -655,7 +673,9 @@ interface CanvasViewportProps {
   hoveredSlideId?: string | null
 }
 
-export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
+export function CanvasViewport({
+  hoveredSlideId = null,
+}: CanvasViewportProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const imageReloadInputRef = useRef<HTMLInputElement>(null)
   const pendingImageReloadObjectIdRef = useRef<string | null>(null)
@@ -675,6 +695,8 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
   const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null)
   const [editingTextboxHtml, setEditingTextboxHtml] = useState('')
   const [editingTextboxPlainText, setEditingTextboxPlainText] = useState('')
+  const [activeImageEffectsObjectId, setActiveImageEffectsObjectId] = useState<string | null>(null)
+  const [styleCopySourceObjectId, setStyleCopySourceObjectId] = useState<string | null>(null)
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -697,6 +719,7 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
   const groupObjects = useEditorStore((state) => state.groupObjects)
   const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setShapeData = useEditorStore((state) => state.setShapeData)
   const setImageData = useEditorStore((state) => state.setImageData)
   const setTextboxData = useEditorStore((state) => state.setTextboxData)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
@@ -753,10 +776,184 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
   const canToggleGroupFromSelection = Boolean(
     selectedObject?.type === 'group' && activeGroupId === null
   )
+  const isSelectedImageEffectsToolbarOpen = Boolean(
+    selectedObject?.type === 'image' && activeImageEffectsObjectId === selectedObject.id
+  )
   const selectedObjects = useMemo(() => {
     const selectedSet = new Set(selectedObjectIds)
     return editableObjects.filter((object) => selectedSet.has(object.id))
   }, [editableObjects, selectedObjectIds])
+  const styleCopySourceObject =
+    styleCopySourceObjectId !== null ? (objectById.get(styleCopySourceObjectId) ?? null) : null
+
+  function closeActiveImageEffects(disableEffects: boolean) {
+    if (!activeImageEffectsObjectId) {
+      return
+    }
+
+    if (disableEffects) {
+      const activeEffectObject = objectById.get(activeImageEffectsObjectId)
+      if (activeEffectObject?.type === 'image' && activeEffectObject.imageData.effectsEnabled) {
+        setImageData(activeEffectObject.id, {
+          ...activeEffectObject.imageData,
+          effectsEnabled: false,
+        })
+      }
+    }
+
+    setActiveImageEffectsObjectId(null)
+  }
+
+  useEffect(() => {
+    if (
+      !selectedObject ||
+      selectedObject.type !== 'image' ||
+      activeImageEffectsObjectId !== selectedObject.id
+    ) {
+      closeActiveImageEffects(true)
+    }
+  }, [activeImageEffectsObjectId, selectedObject])
+
+  useEffect(() => {
+    if (styleCopySourceObjectId && !styleCopySourceObject) {
+      setStyleCopySourceObjectId(null)
+    }
+  }, [styleCopySourceObject, styleCopySourceObjectId])
+
+  function cloneGradient(gradient: FillGradient | null): FillGradient | null {
+    if (!gradient) {
+      return null
+    }
+    return {
+      ...gradient,
+      stops: gradient.stops.map((stop) => ({ ...stop })),
+    }
+  }
+
+  function applyCopiedStyle(source: CanvasObject, target: CanvasObject) {
+    if (target.type === 'group') {
+      return
+    }
+    if (isObjectEffectivelyLocked(target, objectById)) {
+      return
+    }
+
+    const sourceShape =
+      source.type === 'shape_rect' || source.type === 'shape_circle' || source.type === 'shape_arrow'
+        ? source.shapeData
+        : null
+    const sourceTextbox = source.type === 'textbox' ? source.textboxData : null
+    const sourceImage = source.type === 'image' ? source.imageData : null
+
+    const common = sourceShape
+      ? {
+        borderColor: sourceShape.borderColor,
+        borderType: sourceShape.borderType,
+        borderWidth: sourceShape.borderWidth,
+        opacityPercent: sourceShape.opacityPercent,
+        radius: sourceShape.radius,
+        shadowColor: sourceShape.shadowColor,
+        shadowBlurPx: sourceShape.shadowBlurPx,
+        shadowAngleDeg: sourceShape.shadowAngleDeg,
+      }
+      : sourceTextbox
+        ? {
+          borderColor: sourceTextbox.borderColor,
+          borderType: sourceTextbox.borderType,
+          borderWidth: sourceTextbox.borderWidth,
+          opacityPercent: sourceTextbox.opacityPercent,
+          radius: 0,
+          shadowColor: sourceTextbox.shadowColor,
+          shadowBlurPx: sourceTextbox.shadowBlurPx,
+          shadowAngleDeg: sourceTextbox.shadowAngleDeg,
+        }
+        : sourceImage
+          ? {
+            borderColor: sourceImage.borderColor,
+            borderType: sourceImage.borderType,
+            borderWidth: sourceImage.borderWidth,
+            opacityPercent: sourceImage.opacityPercent,
+            radius: sourceImage.radius,
+            shadowColor: sourceImage.shadowColor,
+            shadowBlurPx: sourceImage.shadowBlurPx,
+            shadowAngleDeg: sourceImage.shadowAngleDeg,
+          }
+          : null
+
+    if (!common) {
+      return
+    }
+
+    if (target.type === 'shape_rect' || target.type === 'shape_circle' || target.type === 'shape_arrow') {
+      const nextShapeData: ShapeData = {
+        ...target.shapeData,
+        borderColor: common.borderColor,
+        borderType: common.borderType,
+        borderWidth: common.borderWidth,
+        opacityPercent: common.opacityPercent,
+        radius: common.radius,
+        shadowColor: common.shadowColor,
+        shadowBlurPx: common.shadowBlurPx,
+        shadowAngleDeg: common.shadowAngleDeg,
+      }
+      if (sourceShape) {
+        nextShapeData.fillMode = sourceShape.fillMode
+        nextShapeData.fillColor = sourceShape.fillColor
+        nextShapeData.fillGradient = cloneGradient(sourceShape.fillGradient)
+      } else if (sourceTextbox) {
+        nextShapeData.fillMode = sourceTextbox.fillMode
+        nextShapeData.fillColor = sourceTextbox.backgroundColor
+        nextShapeData.fillGradient = cloneGradient(sourceTextbox.fillGradient)
+      }
+      setShapeData(target.id, nextShapeData)
+      return
+    }
+
+    if (target.type === 'textbox') {
+      const nextTextboxData = {
+        ...target.textboxData,
+        borderColor: common.borderColor,
+        borderType: common.borderType,
+        borderWidth: common.borderWidth,
+        opacityPercent: common.opacityPercent,
+        shadowColor: common.shadowColor,
+        shadowBlurPx: common.shadowBlurPx,
+        shadowAngleDeg: common.shadowAngleDeg,
+      }
+      if (sourceShape) {
+        nextTextboxData.fillMode = sourceShape.fillMode
+        nextTextboxData.backgroundColor = sourceShape.fillColor
+        nextTextboxData.fillGradient = cloneGradient(sourceShape.fillGradient)
+      } else if (sourceTextbox) {
+        nextTextboxData.fillMode = sourceTextbox.fillMode
+        nextTextboxData.backgroundColor = sourceTextbox.backgroundColor
+        nextTextboxData.fillGradient = cloneGradient(sourceTextbox.fillGradient)
+      }
+      setTextboxData(target.id, nextTextboxData)
+      return
+    }
+
+    if (target.type === 'image') {
+      setImageData(target.id, {
+        ...target.imageData,
+        borderColor: common.borderColor,
+        borderType: common.borderType,
+        borderWidth: common.borderWidth,
+        opacityPercent: common.opacityPercent,
+        radius: common.radius,
+        shadowColor: common.shadowColor,
+        shadowBlurPx: common.shadowBlurPx,
+        shadowAngleDeg: common.shadowAngleDeg,
+        ...(sourceImage
+          ? {
+            effectsEnabled: sourceImage.effectsEnabled,
+            filterPreset: sourceImage.filterPreset,
+          }
+          : {}),
+      })
+    }
+  }
+
   const editableObjectIds = useMemo(
     () => new Set(editableObjects.map((object) => object.id)),
     [editableObjects]
@@ -941,7 +1138,7 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
           y: selectedObject.y,
           w: selectedObject.w,
           h: selectedObject.h,
-          rotation: selectedObject.rotation + rotationDelta,
+          rotation: normalizeRotationRadians(selectedObject.rotation + rotationDelta),
         })
         return
       }
@@ -1293,6 +1490,11 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
             cropTopPercent: 0,
             cropRightPercent: 0,
             cropBottomPercent: 0,
+            effectsEnabled: false,
+            filterPreset: 'none',
+            shadowColor: '#000000',
+            shadowBlurPx: 0,
+            shadowAngleDeg: 45,
           },
         })
         createdIds.push(objectId)
@@ -1448,11 +1650,11 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
 
     const selectionBoundsStart = frameStart
       ? {
-          minX: frameStart.center.x - frameStart.width / 2,
-          minY: frameStart.center.y - frameStart.height / 2,
-          maxX: frameStart.center.x + frameStart.width / 2,
-          maxY: frameStart.center.y + frameStart.height / 2,
-        }
+        minX: frameStart.center.x - frameStart.width / 2,
+        minY: frameStart.center.y - frameStart.height / 2,
+        maxX: frameStart.center.x + frameStart.width / 2,
+        maxY: frameStart.center.y + frameStart.height / 2,
+      }
       : getObjectsWorldAabb(interactionTargets)
     if (!selectionBoundsStart) {
       return
@@ -1540,29 +1742,52 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
     let top = interaction.startTopPercent
     let right = interaction.startRightPercent
     let bottom = interaction.startBottomPercent
-
-    if (interaction.handle === 'left' || interaction.handle === 'top-left' || interaction.handle === 'bottom-left') {
-      left = interaction.startLeftPercent + deltaXPercent
-    }
-    if (interaction.handle === 'right' || interaction.handle === 'top-right' || interaction.handle === 'bottom-right') {
-      right = interaction.startRightPercent - deltaXPercent
-    }
-    if (interaction.handle === 'top' || interaction.handle === 'top-left' || interaction.handle === 'top-right') {
-      top = interaction.startTopPercent + deltaYPercent
-    }
-    if (
-      interaction.handle === 'bottom' ||
-      interaction.handle === 'bottom-left' ||
-      interaction.handle === 'bottom-right'
-    ) {
-      bottom = interaction.startBottomPercent - deltaYPercent
-    }
-
     const minVisiblePercent = 1
-    left = clamp(left, 0, 100 - minVisiblePercent - right)
-    right = clamp(right, 0, 100 - minVisiblePercent - left)
-    top = clamp(top, 0, 100 - minVisiblePercent - bottom)
-    bottom = clamp(bottom, 0, 100 - minVisiblePercent - top)
+
+    if (interaction.handle === 'move') {
+      const selectionWidthPercent = Math.max(
+        minVisiblePercent,
+        100 - interaction.startLeftPercent - interaction.startRightPercent
+      )
+      const selectionHeightPercent = Math.max(
+        minVisiblePercent,
+        100 - interaction.startTopPercent - interaction.startBottomPercent
+      )
+      left = clamp(interaction.startLeftPercent + deltaXPercent, 0, 100 - selectionWidthPercent)
+      top = clamp(interaction.startTopPercent + deltaYPercent, 0, 100 - selectionHeightPercent)
+      right = Math.max(0, 100 - selectionWidthPercent - left)
+      bottom = Math.max(0, 100 - selectionHeightPercent - top)
+    } else {
+      if (
+        interaction.handle === 'left' ||
+        interaction.handle === 'top-left' ||
+        interaction.handle === 'bottom-left'
+      ) {
+        left = interaction.startLeftPercent + deltaXPercent
+      }
+      if (
+        interaction.handle === 'right' ||
+        interaction.handle === 'top-right' ||
+        interaction.handle === 'bottom-right'
+      ) {
+        right = interaction.startRightPercent - deltaXPercent
+      }
+      if (interaction.handle === 'top' || interaction.handle === 'top-left' || interaction.handle === 'top-right') {
+        top = interaction.startTopPercent + deltaYPercent
+      }
+      if (
+        interaction.handle === 'bottom' ||
+        interaction.handle === 'bottom-left' ||
+        interaction.handle === 'bottom-right'
+      ) {
+        bottom = interaction.startBottomPercent - deltaYPercent
+      }
+
+      left = clamp(left, 0, 100 - minVisiblePercent - right)
+      right = clamp(right, 0, 100 - minVisiblePercent - left)
+      top = clamp(top, 0, 100 - minVisiblePercent - bottom)
+      bottom = clamp(bottom, 0, 100 - minVisiblePercent - top)
+    }
 
     setImageData(target.id, {
       ...target.imageData,
@@ -1703,6 +1928,16 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
             nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
           }
         }
+        if (target.objectType === 'shape_circle') {
+          const widthDominant = Math.abs(localDelta.x) >= Math.abs(localDelta.y)
+          let nextCircleSize = widthDominant ? nextWidth : nextHeight
+          nextCircleSize = Math.max(20, nextCircleSize)
+          if (shouldSnapToGrid) {
+            nextCircleSize = Math.max(20, snapToGrid(nextCircleSize, snapGridSize))
+          }
+          nextWidth = nextCircleSize
+          nextHeight = nextCircleSize
+        }
         const appliedWidthDelta = nextWidth - target.start.w
         const appliedHeightDelta = nextHeight - target.start.h
         const centerShiftLocal = {
@@ -1799,11 +2034,25 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
       }
 
       interaction.targets.forEach((target) => {
+        let targetWidth = Math.max(20, target.start.w * scaleX)
+        let targetHeight = Math.max(20, target.start.h * scaleY)
+        if (target.objectType === 'shape_circle') {
+          const widthDominant =
+            Math.abs(deltaWorld.x / selectionWidth) >= Math.abs(deltaWorld.y / selectionHeight)
+          const dominantScale = widthDominant ? scaleX : scaleY
+          const circleStartSize = Math.min(target.start.w, target.start.h)
+          let circleSize = Math.max(20, circleStartSize * dominantScale)
+          if (shouldSnapToGrid) {
+            circleSize = Math.max(20, snapToGrid(circleSize, snapGridSize))
+          }
+          targetWidth = circleSize
+          targetHeight = circleSize
+        }
         moveObject(target.id, {
           x: anchorX + (target.start.x - anchorX) * scaleX + selectionOffset.x,
           y: anchorY + (target.start.y - anchorY) * scaleY + selectionOffset.y,
-          w: Math.max(20, target.start.w * scaleX),
-          h: Math.max(20, target.start.h * scaleY),
+          w: targetWidth,
+          h: targetHeight,
           rotation: target.start.rotation,
         })
       })
@@ -1835,7 +2084,7 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
     if (interaction.selectionFrameStart) {
       setMultiSelectionFrame({
         ...interaction.selectionFrameStart,
-        rotation: interaction.selectionFrameStart.rotation + rotationDelta,
+        rotation: normalizeRotationRadians(interaction.selectionFrameStart.rotation + rotationDelta),
       })
     }
 
@@ -1851,9 +2100,25 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
         y: interaction.centerStart.y + rotatedOffset.y,
         w: target.start.w,
         h: target.start.h,
-        rotation: target.start.rotation + rotationDelta,
+        rotation: normalizeRotationRadians(target.start.rotation + rotationDelta),
       })
     })
+  }
+
+  function beginMarqueeSelection(
+    pointerId: number,
+    start: Point,
+    baseSelection: string[],
+    toggleObjectId: string | null = null
+  ) {
+    marqueeRef.current = {
+      pointerId,
+      startScreen: start,
+      currentScreen: start,
+      baseSelection,
+      toggleObjectId,
+    }
+    setMarqueeRect(toRect(start, start))
   }
 
   function finalizeMarqueeSelection(interaction: MarqueeInteraction) {
@@ -1861,6 +2126,15 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
     const width = rect.maxX - rect.minX
     const height = rect.maxY - rect.minY
     if (width < 2 && height < 2) {
+      if (interaction.toggleObjectId) {
+        const nextSelection = new Set(interaction.baseSelection)
+        if (nextSelection.has(interaction.toggleObjectId)) {
+          nextSelection.delete(interaction.toggleObjectId)
+        } else {
+          nextSelection.add(interaction.toggleObjectId)
+        }
+        selectObjects([...nextSelection])
+      }
       return
     }
 
@@ -1879,6 +2153,14 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
 
   function handleViewportPointerDown(event: PointerEvent<HTMLDivElement>) {
     closeContextMenu()
+    if (styleCopySourceObjectId && event.button === 0) {
+      event.preventDefault()
+      setStyleCopySourceObjectId(null)
+      return
+    }
+    if (activeImageEffectsObjectId) {
+      closeActiveImageEffects(true)
+    }
 
     if (editingTextboxId) {
       if (event.button === 0) {
@@ -1911,13 +2193,7 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
       }
       event.preventDefault()
       const start = getViewportRelativePoint(event.clientX, event.clientY)
-      marqueeRef.current = {
-        pointerId: event.pointerId,
-        startScreen: start,
-        currentScreen: start,
-        baseSelection: selectedObjectIds,
-      }
-      setMarqueeRect(toRect(start, start))
+      beginMarqueeSelection(event.pointerId, start, selectedObjectIds)
       event.currentTarget.setPointerCapture(event.pointerId)
       return
     }
@@ -2132,52 +2408,45 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
 
           const shapeStyle =
             object.type === 'shape_rect' ||
-            object.type === 'shape_circle' ||
-            object.type === 'shape_arrow'
+              object.type === 'shape_circle' ||
+              object.type === 'shape_arrow'
               ? {
-                  borderColor: object.shapeData.borderColor,
-                  borderStyle: object.shapeData.borderType,
-                  borderWidth: object.shapeData.borderWidth * camera.zoom,
-                  background: getShapeBackground(object.shapeData),
-                  opacity: object.shapeData.opacityPercent / 100,
-                  borderRadius:
-                    object.type === 'shape_circle'
-                      ? '9999px'
-                      : `${Math.max(0, object.shapeData.radius) * camera.zoom}px`,
-                }
+                borderColor: object.shapeData.borderColor,
+                borderStyle: object.shapeData.borderType,
+                borderWidth: object.shapeData.borderWidth * camera.zoom,
+                background: getShapeBackground(object.shapeData),
+                opacity: object.shapeData.opacityPercent / 100,
+                boxShadow: resolveObjectShadowCss(object.shapeData, camera.zoom),
+                borderRadius:
+                  object.type === 'shape_circle'
+                    ? '9999px'
+                    : `${Math.max(0, object.shapeData.radius) * camera.zoom}px`,
+              }
               : {}
           const textboxStyle =
             object.type === 'textbox'
               ? {
-                  borderColor: object.textboxData.borderColor ?? DEFAULT_TEXTBOX_BORDER_COLOR,
-                  borderStyle: object.textboxData.borderType ?? 'solid',
-                  borderWidth:
-                    (object.textboxData.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH) * camera.zoom,
-                  background: getTextboxBackground(object.textboxData),
-                  opacity: (object.textboxData.opacityPercent ?? 100) / 100,
-                }
+                borderColor: object.textboxData.borderColor ?? DEFAULT_TEXTBOX_BORDER_COLOR,
+                borderStyle: object.textboxData.borderType ?? 'solid',
+                borderWidth:
+                  (object.textboxData.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH) * camera.zoom,
+                background: getTextboxBackground(object.textboxData),
+                opacity: (object.textboxData.opacityPercent ?? 100) / 100,
+                boxShadow: resolveObjectShadowCss(object.textboxData, camera.zoom),
+              }
               : {}
           const imageStyle =
             object.type === 'image'
               ? {
-                  borderColor: object.imageData.borderColor,
-                  borderStyle: object.imageData.borderType,
-                  borderWidth: object.imageData.borderWidth * camera.zoom,
-                  borderRadius: `${Math.max(0, object.imageData.radius) * camera.zoom}px`,
-                  opacity: object.imageData.opacityPercent / 100,
-                  background: 'transparent',
-                }
+                opacity: object.imageData.opacityPercent / 100,
+                filter: resolveObjectDropShadowFilter(object.imageData, camera.zoom),
+                background: 'transparent',
+              }
               : {}
           const imageAsset = object.type === 'image' ? assetById.get(object.imageData.assetId) : null
           const imageSrc = imageAsset
             ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
             : null
-          const imageCropIsApplied =
-            object.type === 'image' &&
-            (object.imageData.cropLeftPercent > 0.01 ||
-              object.imageData.cropTopPercent > 0.01 ||
-              object.imageData.cropRightPercent > 0.01 ||
-              object.imageData.cropBottomPercent > 0.01)
           const textboxHtml = object.type === 'textbox' ? resolveTextboxRichHtml(object.textboxData) : ''
 
           return (
@@ -2186,6 +2455,25 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
               className={objectClasses}
               style={{ ...baseStyle, ...shapeStyle, ...textboxStyle, ...imageStyle }}
               onPointerDown={(event) => {
+                if (styleCopySourceObject && event.button === 0) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  if (
+                    object.id !== styleCopySourceObject.id &&
+                    isEditable &&
+                    !isObjectEffectivelyLocked(object, objectById) &&
+                    object.type !== 'group'
+                  ) {
+                    applyCopiedStyle(styleCopySourceObject, object)
+                    selectObjects([object.id])
+                  }
+                  setStyleCopySourceObjectId(null)
+                  return
+                }
+                if (activeImageEffectsObjectId && activeImageEffectsObjectId !== object.id) {
+                  closeActiveImageEffects(true)
+                }
                 if (editingTextboxId && editingTextboxId !== object.id) {
                   event.preventDefault()
                   event.stopPropagation()
@@ -2254,6 +2542,20 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
                 if (editingTextboxId === object.id) {
                   return
                 }
+                if (event.shiftKey) {
+                  if (activeCropObjectId) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    return
+                  }
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  const start = getViewportRelativePoint(event.clientX, event.clientY)
+                  beginMarqueeSelection(event.pointerId, start, selectedObjectIds, object.id)
+                  viewportRef.current?.setPointerCapture(event.pointerId)
+                  return
+                }
                 if (
                   object.type === 'image' &&
                   object.imageData.cropEnabled &&
@@ -2286,17 +2588,6 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
                 event.preventDefault()
                 event.stopPropagation()
                 closeContextMenu()
-
-                if (event.shiftKey) {
-                  const nextSelection = new Set(selectedObjectIds)
-                  if (nextSelection.has(object.id)) {
-                    nextSelection.delete(object.id)
-                  } else {
-                    nextSelection.add(object.id)
-                  }
-                  selectObjects([...nextSelection])
-                  return
-                }
 
                 const isSelected = selectedObjectIds.includes(object.id)
                 if (isSelected && selectedUnlockedObjects.length > 1) {
@@ -2399,23 +2690,31 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
                   <polygon points="88,3 100,10 88,17" />
                 </svg>
               ) : object.type === 'image' ? (
-                imageSrc ? (
-                  <img
-                    src={imageSrc}
-                    alt=""
-                    draggable={false}
-                    style={{
-                      width: `${Math.max(1, widthPx)}px`,
-                      height: `${Math.max(1, heightPx)}px`,
-                      objectFit: 'fill',
-                      clipPath: imageCropIsApplied
-                        ? `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}%)`
-                        : 'none',
-                    }}
-                  />
-                ) : (
-                  <span>Image</span>
-                )
+                <div
+                  className="canvas-image-clip"
+                  style={{
+                    borderColor: object.imageData.borderColor,
+                    borderStyle: object.imageData.borderType,
+                    borderWidth: `${Math.max(0, object.imageData.borderWidth * camera.zoom)}px`,
+                    clipPath: `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}% round ${Math.max(0, object.imageData.radius) * camera.zoom}px)`,
+                  }}
+                >
+                  {imageSrc ? (
+                    <img
+                      src={imageSrc}
+                      alt=""
+                      draggable={false}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'fill',
+                        filter: resolveImageFilterCss(object.imageData),
+                      }}
+                    />
+                  ) : (
+                    <span>Image</span>
+                  )}
+                </div>
               ) : object.type === 'textbox' ? (
                 editingTextboxId === object.id ? (
                   <RichTextboxEditor
@@ -2552,6 +2851,61 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
             transform: `rotate(${selectedObject.rotation + camera.rotation}rad)`,
           }}
         >
+          {selectedObject.type === 'image' && isSelectedImageEffectsToolbarOpen && (
+            <div className="image-effects-toolbar" role="toolbar" aria-label="Image effects">
+              {(() => {
+                const selectedImageAsset = assetById.get(selectedObject.imageData.assetId)
+                const selectedImageSrc = selectedImageAsset
+                  ? `data:${selectedImageAsset.mimeType};base64,${selectedImageAsset.dataBase64}`
+                  : null
+
+                return IMAGE_FILTER_OPTIONS.map((option) => (
+                  <button
+                    key={option.preset}
+                    type="button"
+                    className={`image-effects-option ${selectedObject.imageData.filterPreset === option.preset ? 'active' : ''
+                      }`}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (selectedObject.locked || selectedObjectLockedByAncestor) {
+                        return
+                      }
+                      setImageData(selectedObject.id, {
+                        ...selectedObject.imageData,
+                        effectsEnabled: true,
+                        filterPreset: option.preset,
+                      })
+                    }}
+                    aria-label={`Apply ${option.label} filter`}
+                    title={`${option.label} filter`}
+                    disabled={selectedObject.locked || selectedObjectLockedByAncestor}
+                  >
+                    {selectedImageSrc ? (
+                      <img
+                        src={selectedImageSrc}
+                        alt=""
+                        draggable={false}
+                        className="image-effects-option-preview"
+                        style={{
+                          filter: resolveImageFilterCss({
+                            effectsEnabled: true,
+                            filterPreset: option.preset,
+                          }),
+                        }}
+                      />
+                    ) : (
+                      <span className="image-effects-option-fallback">{option.label}</span>
+                    )}
+                  </button>
+                ))
+              })()}
+            </div>
+          )}
+
           {!selectedObject.locked &&
             !(selectedObject.type === 'image' && selectedObject.imageData.cropEnabled) && (
               <>
@@ -2592,6 +2946,17 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
                   height: `${Math.max(1, 100 - selectedObject.imageData.cropTopPercent - selectedObject.imageData.cropBottomPercent)}%`,
                 }}
               >
+                <button
+                  type="button"
+                  className="image-crop-frame-move"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    beginImageCropInteraction(event, selectedObject, 'move')
+                  }}
+                  aria-label="Move crop selection"
+                  title="Move crop selection"
+                />
                 <button
                   type="button"
                   className="image-crop-frame-handle top-left"
@@ -2716,6 +3081,30 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
             >
               <FontAwesomeIcon icon={selectedObject.locked ? faLock : faLockOpen} />
             </button>
+            {selectedObject.type !== 'group' && (
+              <button
+                type="button"
+                className={`style-copy-handle ${styleCopySourceObjectId === selectedObject.id ? 'active' : ''}`}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (styleCopySourceObjectId === selectedObject.id) {
+                    setStyleCopySourceObjectId(null)
+                    return
+                  }
+                  setStyleCopySourceObjectId(selectedObject.id)
+                }}
+                aria-label={
+                  styleCopySourceObjectId === selectedObject.id ? 'Cancel style copy mode' : 'Copy style'
+                }
+                title={styleCopySourceObjectId === selectedObject.id ? 'Cancel style copy mode' : 'Copy style'}
+              >
+                <FontAwesomeIcon icon={faClone} />
+              </button>
+            )}
             {canToggleGroupFromSelection && (
               <button
                 type="button"
@@ -2763,6 +3152,58 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
                   disabled={selectedObject.locked || selectedObjectLockedByAncestor}
                 >
                   <FontAwesomeIcon icon={faFileImport} />
+                </button>
+                <button
+                  type="button"
+                  className={`image-effects-handle ${selectedObject.imageData.effectsEnabled ? 'active' : ''}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (selectedObject.locked || selectedObjectLockedByAncestor) {
+                      return
+                    }
+                    if (!selectedObject.imageData.effectsEnabled) {
+                      setImageData(selectedObject.id, {
+                        ...selectedObject.imageData,
+                        effectsEnabled: true,
+                      })
+                      setActiveImageEffectsObjectId(selectedObject.id)
+                      return
+                    }
+                    if (isSelectedImageEffectsToolbarOpen) {
+                      setImageData(selectedObject.id, {
+                        ...selectedObject.imageData,
+                        effectsEnabled: false,
+                      })
+                      setActiveImageEffectsObjectId(null)
+                      return
+                    }
+                    setActiveImageEffectsObjectId(selectedObject.id)
+                  }}
+                  aria-label={
+                    !selectedObject.imageData.effectsEnabled
+                      ? 'Enable image effects'
+                      : isSelectedImageEffectsToolbarOpen
+                        ? 'Disable image effects'
+                        : 'Edit image effects'
+                  }
+                  title={
+                    selectedObjectLockedByAncestor
+                      ? 'Unlock parent group to edit image effects'
+                      : selectedObject.locked
+                        ? 'Unlock object to edit image effects'
+                        : !selectedObject.imageData.effectsEnabled
+                          ? 'Enable image effects'
+                          : isSelectedImageEffectsToolbarOpen
+                            ? 'Disable image effects'
+                            : 'Edit image effects'
+                  }
+                  disabled={selectedObject.locked || selectedObjectLockedByAncestor}
+                >
+                  <FontAwesomeIcon icon={faSliders} />
                 </button>
                 <button
                   type="button"
@@ -2954,6 +3395,7 @@ export function CanvasViewport({ hoveredSlideId = null }: CanvasViewportProps) {
             <FontAwesomeIcon icon={faTrashCan} />
             Remove
           </button>
+          <hr />
           <button
             type="button"
             disabled={!canGroup}

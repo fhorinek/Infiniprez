@@ -34,6 +34,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   const stage = document.getElementById('stage');
   const prevBtn = document.getElementById('prev-slide');
   const nextBtn = document.getElementById('next-slide');
+  const freeBtn = document.getElementById('free-move');
   const title = document.getElementById('slide-title');
   const count = document.getElementById('slide-count');
   const slides = Array.isArray(model.slides)
@@ -43,6 +44,11 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   let currentSlideIndex = 0;
   let currentCamera = { x: 0, y: 0, zoom: 1, rotation: 0 };
   let transitionFrame = null;
+  let freeMoveEnabled = false;
+  let panInteraction = null;
+  let wheelNavigateThrottleUntil = 0;
+  let fullscreenAttempted = false;
+  const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180;
 
   const toNumber = (value, fallback) => (Number.isFinite(value) ? value : fallback);
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -89,6 +95,24 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     return {
       x: rotated.x + viewport.width / 2,
       y: rotated.y + viewport.height / 2,
+    };
+  };
+  const screenToWorld = (screen, camera, viewport) => {
+    const centered = {
+      x: screen.x - viewport.width / 2,
+      y: screen.y - viewport.height / 2,
+    };
+    const unrotated = rotatePoint(centered, -camera.rotation);
+    return {
+      x: unrotated.x / camera.zoom + camera.x,
+      y: unrotated.y / camera.zoom + camera.y,
+    };
+  };
+  const cameraDragDeltaToWorld = (deltaScreen, camera) => {
+    const unrotated = rotatePoint(deltaScreen, -camera.rotation);
+    return {
+      x: unrotated.x / camera.zoom,
+      y: unrotated.y / camera.zoom,
     };
   };
 
@@ -151,6 +175,9 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     borderWidth: clamp(toNumber(object?.shapeData?.borderWidth, 1), 0, 20),
     radius: clamp(toNumber(object?.shapeData?.radius, 0), 0, 1000),
     opacityPercent: clamp(toNumber(object?.shapeData?.opacityPercent, 100), 0, 100),
+    shadowColor: String(object?.shapeData?.shadowColor || '#000000'),
+    shadowBlurPx: clamp(toNumber(object?.shapeData?.shadowBlurPx, 0), 0, 200),
+    shadowAngleDeg: clamp(toNumber(object?.shapeData?.shadowAngleDeg, 45), -180, 180),
   });
   const getShapeBackground = (shapeStyle) => {
     if (shapeStyle.fillMode === 'linearGradient' && shapeStyle.fillGradient) {
@@ -166,7 +193,61 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     borderType: object?.textboxData?.borderType || 'solid',
     borderWidth: clamp(toNumber(object?.textboxData?.borderWidth, 1), 0, 20),
     opacityPercent: clamp(toNumber(object?.textboxData?.opacityPercent, 100), 0, 100),
+    shadowColor: String(object?.textboxData?.shadowColor || '#000000'),
+    shadowBlurPx: clamp(toNumber(object?.textboxData?.shadowBlurPx, 0), 0, 200),
+    shadowAngleDeg: clamp(toNumber(object?.textboxData?.shadowAngleDeg, 45), -180, 180),
   });
+  const resolveImageFilterCss = (effectsEnabled, filterPreset) => {
+    if (!effectsEnabled) {
+      return 'none';
+    }
+    switch (filterPreset) {
+      case 'bw':
+        return 'grayscale(100%)';
+      case 'sepia':
+        return 'sepia(100%)';
+      case 'vibrant':
+        return 'saturate(180%) contrast(112%)';
+      case 'warm':
+        return 'sepia(22%) saturate(128%) hue-rotate(-12deg) brightness(103%)';
+      case 'cool':
+        return 'saturate(112%) hue-rotate(14deg) brightness(102%)';
+      case 'dramatic':
+        return 'contrast(140%) saturate(122%) brightness(94%)';
+      case 'none':
+      default:
+        return 'none';
+    }
+  };
+  const resolveShadowCss = (color, blurPx, angleDeg, zoom) => {
+    const safeBlur = clamp(toNumber(blurPx, 0), 0, 200);
+    if (safeBlur <= 0) {
+      return 'none';
+    }
+    let normalizedAngle = toNumber(angleDeg, 45);
+    while (normalizedAngle > 180) {
+      normalizedAngle -= 360;
+    }
+    while (normalizedAngle < -180) {
+      normalizedAngle += 360;
+    }
+    const angleRad = (normalizedAngle * Math.PI) / 180;
+    const safeZoom = Math.max(0.01, toNumber(zoom, 1));
+    const distance = 12 * safeZoom;
+    const offsetX = Math.cos(angleRad) * distance;
+    const offsetY = Math.sin(angleRad) * distance;
+    return String(offsetX.toFixed(2)) + 'px ' +
+      String(offsetY.toFixed(2)) + 'px ' +
+      String((safeBlur * safeZoom).toFixed(2)) + 'px ' +
+      String(color || '#000000');
+  };
+  const resolveShadowFilter = (color, blurPx, angleDeg, zoom) => {
+    const shadow = resolveShadowCss(color, blurPx, angleDeg, zoom);
+    if (shadow === 'none') {
+      return 'none';
+    }
+    return 'drop-shadow(' + shadow + ')';
+  };
   const getImageStyle = (object) => ({
     borderColor: object?.imageData?.borderColor || '#b2c6ee',
     borderType: object?.imageData?.borderType || 'solid',
@@ -177,6 +258,13 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     cropTopPercent: clamp(toNumber(object?.imageData?.cropTopPercent, 0), 0, 100),
     cropRightPercent: clamp(toNumber(object?.imageData?.cropRightPercent, 0), 0, 100),
     cropBottomPercent: clamp(toNumber(object?.imageData?.cropBottomPercent, 0), 0, 100),
+    effectsEnabled: Boolean(object?.imageData?.effectsEnabled),
+    filterPreset: ['none', 'bw', 'sepia', 'vibrant', 'warm', 'cool', 'dramatic'].includes(String(object?.imageData?.filterPreset))
+      ? String(object?.imageData?.filterPreset)
+      : 'none',
+    shadowColor: String(object?.imageData?.shadowColor || '#000000'),
+    shadowBlurPx: clamp(toNumber(object?.imageData?.shadowBlurPx, 0), 0, 200),
+    shadowAngleDeg: clamp(toNumber(object?.imageData?.shadowAngleDeg, 45), -180, 180),
   });
   const getTextboxBackground = (textboxStyle) => {
     if (textboxStyle.fillMode === 'linearGradient' && textboxStyle.fillGradient) {
@@ -212,6 +300,49 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       cancelAnimationFrame(transitionFrame);
       transitionFrame = null;
     }
+  };
+  const tryEnterFullscreen = () => {
+    if (fullscreenAttempted) {
+      return;
+    }
+    fullscreenAttempted = true;
+    const doc = document;
+    const root = doc.documentElement;
+    const request =
+      root.requestFullscreen ||
+      root.webkitRequestFullscreen ||
+      root.mozRequestFullScreen ||
+      root.msRequestFullscreen;
+    if (typeof request !== 'function') {
+      return;
+    }
+    try {
+      const result = request.call(root);
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => undefined);
+      }
+    } catch {
+      // Ignore fullscreen request errors in restricted environments.
+    }
+  };
+  const setupFullscreenFallback = () => {
+    if (document.fullscreenElement) {
+      return;
+    }
+    const onFirstInteraction = () => {
+      window.removeEventListener('pointerdown', onFirstInteraction, true);
+      window.removeEventListener('keydown', onFirstInteraction, true);
+      tryEnterFullscreen();
+    };
+    window.addEventListener('pointerdown', onFirstInteraction, true);
+    window.addEventListener('keydown', onFirstInteraction, true);
+  };
+  const getStageRelativePoint = (clientX, clientY) => {
+    const bounds = stage.getBoundingClientRect();
+    return {
+      x: clientX - bounds.left,
+      y: clientY - bounds.top,
+    };
   };
 
   const renderCamera = (camera) => {
@@ -249,6 +380,12 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
         element.style.borderColor = shapeStyle.borderColor;
         element.style.background = getShapeBackground(shapeStyle);
         element.style.opacity = String(shapeStyle.opacityPercent / 100);
+        element.style.boxShadow = resolveShadowCss(
+          shapeStyle.shadowColor,
+          shapeStyle.shadowBlurPx,
+          shapeStyle.shadowAngleDeg,
+          camera.zoom
+        );
         element.style.borderRadius =
           object.type === 'shape_circle'
             ? '999px'
@@ -261,12 +398,26 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
         }
       } else if (object.type === 'image') {
         const imageStyle = getImageStyle(object);
-        element.style.borderWidth = String(imageStyle.borderWidth * camera.zoom) + 'px';
-        element.style.borderStyle = imageStyle.borderType;
-        element.style.borderColor = imageStyle.borderColor;
-        element.style.borderRadius = String(imageStyle.radius * camera.zoom) + 'px';
         element.style.opacity = String(imageStyle.opacityPercent / 100);
         element.style.background = 'transparent';
+        element.style.filter = resolveShadowFilter(
+          imageStyle.shadowColor,
+          imageStyle.shadowBlurPx,
+          imageStyle.shadowAngleDeg,
+          camera.zoom
+        );
+        const clipLayer = document.createElement('div');
+        clipLayer.className = 'export-image-clip';
+        clipLayer.style.borderWidth = String(imageStyle.borderWidth * camera.zoom) + 'px';
+        clipLayer.style.borderStyle = imageStyle.borderType;
+        clipLayer.style.borderColor = imageStyle.borderColor;
+        clipLayer.style.clipPath =
+          'inset(' +
+          String(imageStyle.cropTopPercent) + '% ' +
+          String(imageStyle.cropRightPercent) + '% ' +
+          String(imageStyle.cropBottomPercent) + '% ' +
+          String(imageStyle.cropLeftPercent) + '% round ' +
+          String(imageStyle.radius * camera.zoom) + 'px)';
         const src = getImageSrc(object.imageData?.assetId);
         if (src) {
           const image = document.createElement('img');
@@ -275,21 +426,11 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
           image.style.width = String(Math.max(1, object.w * camera.zoom)) + 'px';
           image.style.height = String(Math.max(1, object.h * camera.zoom)) + 'px';
           image.style.objectFit = 'fill';
-          const cropIsApplied =
-            imageStyle.cropLeftPercent > 0.01 ||
-            imageStyle.cropTopPercent > 0.01 ||
-            imageStyle.cropRightPercent > 0.01 ||
-            imageStyle.cropBottomPercent > 0.01;
-          image.style.clipPath = cropIsApplied
-            ? 'inset(' +
-              String(imageStyle.cropTopPercent) + '% ' +
-              String(imageStyle.cropRightPercent) + '% ' +
-              String(imageStyle.cropBottomPercent) + '% ' +
-              String(imageStyle.cropLeftPercent) + '%)'
-            : 'none';
+          image.style.filter = resolveImageFilterCss(imageStyle.effectsEnabled, imageStyle.filterPreset);
           image.draggable = false;
-          element.appendChild(image);
+          clipLayer.appendChild(image);
         }
+        element.appendChild(clipLayer);
       } else if (object.type === 'textbox') {
         const textboxStyle = getTextboxStyle(object);
         element.style.borderWidth = String(textboxStyle.borderWidth * camera.zoom) + 'px';
@@ -297,6 +438,12 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
         element.style.borderColor = textboxStyle.borderColor;
         element.style.background = getTextboxBackground(textboxStyle);
         element.style.opacity = String(textboxStyle.opacityPercent / 100);
+        element.style.boxShadow = resolveShadowCss(
+          textboxStyle.shadowColor,
+          textboxStyle.shadowBlurPx,
+          textboxStyle.shadowAngleDeg,
+          camera.zoom
+        );
         element.style.padding = '0';
         const richContent = document.createElement('div');
         richContent.className = 'export-textbox-content textbox-rich-content';
@@ -343,14 +490,22 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     };
     transitionFrame = requestAnimationFrame(tick);
   };
+  const updateNavigationState = () => {
+    if (slides.length === 0) {
+      prevBtn.disabled = true;
+      nextBtn.disabled = true;
+      return;
+    }
+    prevBtn.disabled = freeMoveEnabled || currentSlideIndex <= 0;
+    nextBtn.disabled = freeMoveEnabled || currentSlideIndex >= slides.length - 1;
+  };
 
   const setSlideIndex = (nextIndex, forceInstant = false) => {
     if (slides.length === 0) {
       transitionToSlide(null, true);
       title.textContent = model.meta?.title || 'Export';
       count.textContent = '0 / 0';
-      prevBtn.disabled = true;
-      nextBtn.disabled = true;
+      updateNavigationState();
       return;
     }
 
@@ -360,13 +515,158 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     transitionToSlide(slide, forceInstant);
     title.textContent = slide?.name || model.meta?.title || 'Export';
     count.textContent = String(bounded + 1) + ' / ' + String(slides.length);
-    prevBtn.disabled = bounded <= 0;
-    nextBtn.disabled = bounded >= slides.length - 1;
+    updateNavigationState();
+  };
+  const setFreeMoveEnabled = (nextValue) => {
+    const nextEnabled = Boolean(nextValue);
+    if (freeMoveEnabled === nextEnabled) {
+      return;
+    }
+    freeMoveEnabled = nextEnabled;
+    stage.classList.toggle('free-move-enabled', freeMoveEnabled);
+    stage.classList.remove('dragging');
+    if (freeBtn) {
+      freeBtn.classList.toggle('active', freeMoveEnabled);
+      freeBtn.setAttribute('aria-pressed', freeMoveEnabled ? 'true' : 'false');
+      freeBtn.title = freeMoveEnabled ? 'Disable free move' : 'Enable free move';
+    }
+    if (!freeMoveEnabled && slides.length > 0) {
+      transitionToSlide(slides[currentSlideIndex], true);
+    }
+    updateNavigationState();
   };
 
   prevBtn.addEventListener('click', () => setSlideIndex(currentSlideIndex - 1));
   nextBtn.addEventListener('click', () => setSlideIndex(currentSlideIndex + 1));
+  if (freeBtn) {
+    freeBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setFreeMoveEnabled(!freeMoveEnabled);
+    });
+  }
+  stage.addEventListener('pointerdown', (event) => {
+    if (freeMoveEnabled) {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      panInteraction = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startCamera: { ...currentCamera },
+      };
+      stage.classList.add('dragging');
+      stage.setPointerCapture(event.pointerId);
+      return;
+    }
+
+    if (event.button === 0) {
+      event.preventDefault();
+      setSlideIndex(currentSlideIndex + 1);
+      return;
+    }
+    if (event.button === 2) {
+      event.preventDefault();
+      setSlideIndex(currentSlideIndex - 1);
+    }
+  });
+  stage.addEventListener('pointermove', (event) => {
+    if (!freeMoveEnabled || !panInteraction || panInteraction.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const deltaWorld = cameraDragDeltaToWorld(
+      {
+        x: event.clientX - panInteraction.startClientX,
+        y: event.clientY - panInteraction.startClientY,
+      },
+      panInteraction.startCamera
+    );
+    currentCamera = {
+      ...panInteraction.startCamera,
+      x: panInteraction.startCamera.x - deltaWorld.x,
+      y: panInteraction.startCamera.y - deltaWorld.y,
+    };
+    renderCamera(currentCamera);
+  });
+  const releasePan = (event) => {
+    if (!panInteraction || panInteraction.pointerId !== event.pointerId) {
+      return;
+    }
+    panInteraction = null;
+    stage.classList.remove('dragging');
+    if (stage.hasPointerCapture(event.pointerId)) {
+      stage.releasePointerCapture(event.pointerId);
+    }
+  };
+  stage.addEventListener('pointerup', releasePan);
+  stage.addEventListener('pointercancel', releasePan);
+  stage.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      if (freeMoveEnabled) {
+        const pointerScreen = getStageRelativePoint(event.clientX, event.clientY);
+        const viewport = getViewport();
+        const worldBefore = screenToWorld(pointerScreen, currentCamera, viewport);
+        if (event.altKey) {
+          const rotationDelta = clamp(
+            (event.deltaY / 120) * CAMERA_ROTATION_STEP_RAD,
+            -CAMERA_ROTATION_STEP_RAD * 6,
+            CAMERA_ROTATION_STEP_RAD * 6
+          );
+          if (Math.abs(rotationDelta) < 0.0001) {
+            return;
+          }
+          const rotatedCamera = {
+            ...currentCamera,
+            rotation: currentCamera.rotation + rotationDelta,
+          };
+          const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewport);
+          currentCamera = {
+            ...rotatedCamera,
+            x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
+            y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
+          };
+          renderCamera(currentCamera);
+          return;
+        }
+        const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08;
+        const nextZoom = clamp(currentCamera.zoom * zoomFactor, 0.05, 100);
+        const nextCamera = { ...currentCamera, zoom: nextZoom };
+        const worldAfter = screenToWorld(pointerScreen, nextCamera, viewport);
+        currentCamera = {
+          ...nextCamera,
+          x: nextCamera.x + (worldBefore.x - worldAfter.x),
+          y: nextCamera.y + (worldBefore.y - worldAfter.y),
+        };
+        renderCamera(currentCamera);
+        return;
+      }
+
+      const now = performance.now();
+      if (now < wheelNavigateThrottleUntil || Math.abs(event.deltaY) < 6) {
+        return;
+      }
+      wheelNavigateThrottleUntil = now + 220;
+      if (event.deltaY > 0) {
+        setSlideIndex(currentSlideIndex + 1);
+      } else {
+        setSlideIndex(currentSlideIndex - 1);
+      }
+    },
+    { passive: false }
+  );
+  stage.addEventListener('contextmenu', (event) => {
+    if (!freeMoveEnabled) {
+      event.preventDefault();
+    }
+  });
   window.addEventListener('resize', () => renderCamera(currentCamera));
+  tryEnterFullscreen();
+  setupFullscreenFallback();
+  setFreeMoveEnabled(false);
   setSlideIndex(START_SLIDE_INDEX, true);
 })();
 `.trim()
@@ -401,41 +701,60 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       inset: 0;
       overflow: hidden;
       background: ${stageBackground};
+      touch-action: none;
     }
-    #hud {
-      position: absolute;
-      left: 50%;
-      bottom: 1rem;
-      transform: translateX(-50%);
+    #stage.free-move-enabled {
+      cursor: grab;
+    }
+    #stage.free-move-enabled.dragging {
+      cursor: grabbing;
+    }
+    .present-hud {
+      position: fixed;
+      right: 0.65rem;
+      bottom: 0.65rem;
+      z-index: 1200;
       display: flex;
       align-items: center;
-      gap: 0.6rem;
-      padding: 0.45rem 0.6rem;
+      gap: 0.3rem;
+      padding: 0.28rem 0.38rem;
       border-radius: 999px;
-      border: 1px solid rgba(173, 202, 255, 0.24);
-      background: rgba(7, 13, 28, 0.82);
+      border: 1px solid rgba(173, 202, 255, 0.22);
+      background: rgba(7, 13, 28, 0.58);
+      backdrop-filter: blur(4px);
     }
-    #slide-title {
-      font-size: 0.85rem;
+    .present-hud-title {
+      font-size: 0.7rem;
       color: #d8e8ff;
-      margin-right: 0.25rem;
+      padding: 0 0.1rem;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    #slide-count {
-      font-size: 0.78rem;
-      color: #9bb2d9;
-      margin-right: 0.25rem;
+    .present-hud-status {
+      align-self: center;
+      font-size: 0.66rem;
+      color: #95a6c5;
+      padding: 0 0.1rem;
     }
-    #hud button {
+    .present-hud-btn {
       font: inherit;
-      border: 1px solid rgba(173, 202, 255, 0.28);
+      font-size: 0.66rem;
+      border: 1px solid rgba(173, 202, 255, 0.22);
       border-radius: 999px;
-      background: rgba(46, 66, 100, 0.85);
+      background: rgba(46, 66, 100, 0.56);
       color: #e9f2ff;
-      padding: 0.28rem 0.62rem;
+      min-width: 34px;
+      padding: 0.18rem 0.46rem;
       cursor: pointer;
     }
-    #hud button:disabled {
-      opacity: 0.5;
+    .present-hud-btn.active {
+      background: rgba(86, 140, 236, 0.58);
+      border-color: rgba(180, 212, 255, 0.54);
+    }
+    .present-hud-btn:disabled {
+      opacity: 0.42;
       cursor: default;
     }
     .export-object {
@@ -445,9 +764,24 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       border: 1px solid rgba(175, 199, 240, 0.35);
       user-select: none;
       overflow: hidden;
+      pointer-events: none;
       display: grid;
       place-items: center;
       background: rgba(28, 45, 74, 0.45);
+    }
+    .export-object.image {
+      border: 0;
+      background: transparent;
+      overflow: visible;
+      padding: 0;
+    }
+    .export-image-clip {
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      pointer-events: none;
+      display: grid;
+      place-items: center;
     }
     .export-object.textbox {
       display: block;
@@ -494,11 +828,12 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
 <body>
   <main>
     <div id="stage"></div>
-    <div id="hud">
-      <span id="slide-title"></span>
-      <span id="slide-count"></span>
-      <button id="prev-slide" type="button">Prev</button>
-      <button id="next-slide" type="button">Next</button>
+    <div id="hud" class="present-hud">
+      <span id="slide-title" class="present-hud-title"></span>
+      <span id="slide-count" class="present-hud-status"></span>
+      <button id="prev-slide" class="present-hud-btn" type="button" aria-label="Previous slide" title="Previous slide">&#9664;</button>
+      <button id="next-slide" class="present-hud-btn" type="button" aria-label="Next slide" title="Next slide">&#9654;</button>
+      <button id="free-move" class="present-hud-btn" type="button" aria-label="Enable free move" title="Enable free move">&#9974;</button>
     </div>
   </main>
   <script>

@@ -79,6 +79,9 @@ const textboxDataSchema = z
     borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
     borderWidth: z.number().min(0).max(20).default(1),
     opacityPercent: z.number().min(0).max(100).default(100),
+    shadowColor: colorSchema.default('#000000'),
+    shadowBlurPx: z.number().min(0).max(200).default(0),
+    shadowAngleDeg: z.number().min(-180).max(180).default(45),
   })
   .superRefine((value, ctx) => {
     if (value.fillMode === 'solid' && value.fillGradient !== null) {
@@ -113,6 +116,13 @@ const imageDataSchema = z.object({
   cropTopPercent: z.number().min(0).max(100).default(0),
   cropRightPercent: z.number().min(0).max(100).default(0),
   cropBottomPercent: z.number().min(0).max(100).default(0),
+  effectsEnabled: z.boolean().default(false),
+  filterPreset: z
+    .enum(['none', 'bw', 'sepia', 'vibrant', 'warm', 'cool', 'dramatic'])
+    .default('none'),
+  shadowColor: colorSchema.default('#000000'),
+  shadowBlurPx: z.number().min(0).max(200).default(0),
+  shadowAngleDeg: z.number().min(-180).max(180).default(45),
 })
 
 const shapeDataSchema = z
@@ -125,6 +135,9 @@ const shapeDataSchema = z
     fillGradient: fillGradientSchema.nullable(),
     radius: z.number().min(0).max(1000).default(0),
     opacityPercent: z.number().min(0).max(100),
+    shadowColor: colorSchema.default('#000000'),
+    shadowBlurPx: z.number().min(0).max(200).default(0),
+    shadowAngleDeg: z.number().min(-180).max(180).default(45),
   })
   .superRefine((value, ctx) => {
     if (value.fillMode === 'solid' && value.fillGradient !== null) {

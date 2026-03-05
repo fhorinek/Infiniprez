@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from 'react'
@@ -25,6 +26,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
+  faBackwardStep,
   faArrowsUpDownLeftRight,
   faCircle,
   faDice,
@@ -46,6 +48,7 @@ import {
   faSquare,
   faTrashCan,
   faUndo,
+  faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
 import {
@@ -75,6 +78,9 @@ import {
   readFileAsDataUrl,
   toAssetBase64,
 } from './imageFile'
+import { cameraDragDeltaToWorld } from './canvas/math'
+import { resolveImageFilterCss } from './imageEffects'
+import { resolveObjectDropShadowFilter, resolveObjectShadowCss } from './objectShadow'
 import './App.css'
 
 function SortableSlideItem({
@@ -169,6 +175,22 @@ function worldToScreenPresent(
   return {
     x: rotated.x + viewport.width / 2,
     y: rotated.y + viewport.height / 2,
+  }
+}
+
+function screenToWorldPresent(
+  screen: { x: number; y: number },
+  camera: CameraState,
+  viewport: { width: number; height: number }
+) {
+  const centered = {
+    x: screen.x - viewport.width / 2,
+    y: screen.y - viewport.height / 2,
+  }
+  const unrotated = rotatePoint(centered, -camera.rotation)
+  return {
+    x: unrotated.x / camera.zoom + camera.x,
+    y: unrotated.y / camera.zoom + camera.y,
   }
 }
 
@@ -331,9 +353,9 @@ function normalizeGradientStops(
     Array.isArray(stops) && stops.length >= 2
       ? stops
       : [
-          { color: fallbackStartColor, positionPercent: 0 },
-          { color: fallbackEndColor, positionPercent: 100 },
-        ]
+        { color: fallbackStartColor, positionPercent: 0 },
+        { color: fallbackEndColor, positionPercent: 100 },
+      ]
   const normalized = source
     .map((stop, index) => ({
       color: asHexColor(stop.color, index === 0 ? fallbackStartColor : fallbackEndColor),
@@ -571,8 +593,10 @@ const DEFAULT_TEXTBOX_BORDER_COLOR = '#b2c6ee'
 const DEFAULT_TEXTBOX_BORDER_WIDTH = 1
 const MAX_SHAPE_RADIUS = 1000
 const MAX_RADIUS_PERCENT = 100
+const MAX_SHADOW_BLUR_PX = 200
 const MAX_GRADIENT_STOPS = 5
 const MIN_GRADIENT_HUE_SEPARATION_DEG = 108
+const PRESENT_FREE_MOVE_ROTATION_STEP_RAD = (10 * Math.PI) / 180
 const GRADIENT_ANGLE_PRESETS = [
   { label: '↑', angleDeg: 0 },
   { label: '↗', angleDeg: 45 },
@@ -584,10 +608,29 @@ const GRADIENT_ANGLE_PRESETS = [
   { label: '↖', angleDeg: -45 },
 ]
 
-function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | null }) {
+function PresentStage({
+  model,
+  slide,
+  freeMoveEnabled,
+  onNavigateNext,
+  onNavigatePrevious,
+}: {
+  model: DocumentModel
+  slide: Slide | null
+  freeMoveEnabled: boolean
+  onNavigateNext: () => void
+  onNavigatePrevious: () => void
+}) {
   const stageRef = useRef<HTMLDivElement>(null)
   const objectsLayerRef = useRef<HTMLDivElement>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const panRef = useRef<{
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startCamera: CameraState
+  } | null>(null)
+  const wheelNavigateThrottleUntilRef = useRef(0)
   const [viewport, setViewport] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
@@ -618,25 +661,35 @@ function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | n
 
   const targetCamera = slide
     ? {
-        x: toFiniteNumber(slide.x, 0),
-        y: toFiniteNumber(slide.y, 0),
-        zoom: Math.min(100, Math.max(0.01, toFiniteNumber(slide.zoom, 1))),
-        rotation: toFiniteNumber(slide.rotation, 0),
-      }
+      x: toFiniteNumber(slide.x, 0),
+      y: toFiniteNumber(slide.y, 0),
+      zoom: Math.min(100, Math.max(0.01, toFiniteNumber(slide.zoom, 1))),
+      rotation: toFiniteNumber(slide.rotation, 0),
+    }
     : { x: 0, y: 0, zoom: 1, rotation: 0 }
   const currentCameraRef = useRef<CameraState>(targetCamera)
+  const previousFreeMoveEnabledRef = useRef(freeMoveEnabled)
   const [renderCamera, setRenderCamera] = useState<CameraState>(targetCamera)
   const safeViewport =
     viewport.width > 0 && viewport.height > 0
       ? viewport
       : {
-          width: typeof window === 'undefined' ? 1 : window.innerWidth,
-          height: typeof window === 'undefined' ? 1 : window.innerHeight,
-        }
+        width: typeof window === 'undefined' ? 1 : window.innerWidth,
+        height: typeof window === 'undefined' ? 1 : window.innerHeight,
+      }
 
   useEffect(() => {
     currentCameraRef.current = renderCamera
   }, [renderCamera])
+
+  useEffect(() => {
+    const wasFreeMoveEnabled = previousFreeMoveEnabledRef.current
+    previousFreeMoveEnabledRef.current = freeMoveEnabled
+    if (!freeMoveEnabled && wasFreeMoveEnabled) {
+      currentCameraRef.current = targetCamera
+      setRenderCamera(targetCamera)
+    }
+  }, [freeMoveEnabled, targetCamera])
 
   useEffect(() => {
     return () => {
@@ -753,6 +806,7 @@ function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | n
         element.style.background = getShapeBackground(object.shapeData)
         element.style.opacity = `${Math.max(0, Math.min(100, object.shapeData.opacityPercent)) / 100}`
         element.style.borderRadius = object.type === 'shape_circle' ? '999px' : `${radiusPx}px`
+        element.style.boxShadow = resolveObjectShadowCss(object.shapeData, renderCamera.zoom)
         if (object.type === 'shape_arrow') {
           element.textContent = '→'
           element.style.fontSize = `${Math.max(14, 24 * renderCamera.zoom)}px`
@@ -764,31 +818,28 @@ function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | n
         const imageOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.imageData.opacityPercent, 100))) / 100
         const imageRadiusPx =
           Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.imageData.radius, 0))) * renderCamera.zoom
-        element.style.borderWidth = `${imageBorderWidth * renderCamera.zoom}px`
-        element.style.borderStyle = object.imageData.borderType
-        element.style.borderColor = object.imageData.borderColor
-        element.style.borderRadius = `${imageRadiusPx}px`
         element.style.opacity = `${imageOpacity}`
         element.style.background = 'transparent'
+        element.style.filter = resolveObjectDropShadowFilter(object.imageData, renderCamera.zoom)
+        const clipLayer = dom.createElement('div')
+        clipLayer.className = 'present-image-clip'
+        clipLayer.style.borderWidth = `${imageBorderWidth * renderCamera.zoom}px`
+        clipLayer.style.borderStyle = object.imageData.borderType
+        clipLayer.style.borderColor = object.imageData.borderColor
+        clipLayer.style.clipPath = `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}% round ${imageRadiusPx}px)`
         const asset = assetById.get(object.imageData.assetId)
         if (asset) {
           const image = dom.createElement('img')
           image.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
           image.alt = ''
-          image.style.width = `${Math.max(1, width)}px`
-          image.style.height = `${Math.max(1, height)}px`
+          image.style.width = '100%'
+          image.style.height = '100%'
           image.style.objectFit = 'fill'
-          const cropIsApplied =
-            object.imageData.cropLeftPercent > 0.01 ||
-            object.imageData.cropTopPercent > 0.01 ||
-            object.imageData.cropRightPercent > 0.01 ||
-            object.imageData.cropBottomPercent > 0.01
-          image.style.clipPath = cropIsApplied
-            ? `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}%)`
-            : 'none'
+          image.style.filter = resolveImageFilterCss(object.imageData)
           image.draggable = false
-          element.appendChild(image)
+          clipLayer.appendChild(image)
         }
+        element.appendChild(clipLayer)
       } else if (object.type === 'textbox') {
         const borderWidth = Math.max(
           0,
@@ -798,9 +849,9 @@ function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | n
         element.style.borderStyle = object.textboxData.borderType
         element.style.borderColor = object.textboxData.borderColor
         element.style.background = getTextboxBackground(object.textboxData)
-        element.style.opacity = `${
-          Math.max(0, Math.min(100, toFiniteNumber(object.textboxData.opacityPercent, 100))) / 100
-        }`
+        element.style.opacity = `${Math.max(0, Math.min(100, toFiniteNumber(object.textboxData.opacityPercent, 100))) / 100
+          }`
+        element.style.boxShadow = resolveObjectShadowCss(object.textboxData, renderCamera.zoom)
         const richContent = dom.createElement('div')
         richContent.className = 'present-textbox-content textbox-rich-content'
         richContent.style.transform = `scale(${Math.max(0.01, renderCamera.zoom)})`
@@ -826,8 +877,171 @@ function PresentStage({ model, slide }: { model: DocumentModel; slide: Slide | n
     transform: `translate(-50%, -50%) rotate(${renderCamera.rotation}rad)`,
   }
 
+  function handlePresentStagePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.defaultPrevented) {
+      return
+    }
+    if (freeMoveEnabled) {
+      if (event.button !== 0) {
+        return
+      }
+      event.preventDefault()
+      panRef.current = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startCamera: currentCameraRef.current,
+      }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
+
+    if (event.button === 0) {
+      event.preventDefault()
+      onNavigateNext()
+      return
+    }
+
+    if (event.button === 2) {
+      event.preventDefault()
+      onNavigatePrevious()
+    }
+  }
+
+  function handlePresentStagePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!freeMoveEnabled) {
+      return
+    }
+    const pan = panRef.current
+    if (!pan || pan.pointerId !== event.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    const deltaWorld = cameraDragDeltaToWorld(
+      {
+        x: event.clientX - pan.startClientX,
+        y: event.clientY - pan.startClientY,
+      },
+      pan.startCamera
+    )
+    const nextCamera: CameraState = {
+      ...pan.startCamera,
+      x: pan.startCamera.x - deltaWorld.x,
+      y: pan.startCamera.y - deltaWorld.y,
+    }
+    currentCameraRef.current = nextCamera
+    setRenderCamera(nextCamera)
+  }
+
+  function handlePresentStagePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!freeMoveEnabled) {
+      return
+    }
+    const pan = panRef.current
+    if (!pan || pan.pointerId !== event.pointerId) {
+      return
+    }
+    panRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function handlePresentStageWheel(event: WheelEvent<HTMLDivElement>) {
+    if (event.defaultPrevented) {
+      return
+    }
+    event.preventDefault()
+
+    if (freeMoveEnabled) {
+      const stageBounds = stageRef.current?.getBoundingClientRect()
+      const pointerScreen = stageBounds
+        ? {
+          x: event.clientX - stageBounds.left,
+          y: event.clientY - stageBounds.top,
+        }
+        : {
+          x: safeViewport.width / 2,
+          y: safeViewport.height / 2,
+        }
+      const startCamera = currentCameraRef.current
+      const worldBefore = screenToWorldPresent(pointerScreen, startCamera, safeViewport)
+      if (event.altKey) {
+        const rotationDelta = Math.max(
+          -PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
+          Math.min(
+            PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
+            (event.deltaY / 120) * PRESENT_FREE_MOVE_ROTATION_STEP_RAD
+          )
+        )
+        if (Math.abs(rotationDelta) < 0.0001) {
+          return
+        }
+        const rotatedCamera: CameraState = {
+          ...startCamera,
+          rotation: startCamera.rotation + rotationDelta,
+        }
+        const worldAfter = screenToWorldPresent(pointerScreen, rotatedCamera, safeViewport)
+        const nextCamera: CameraState = {
+          ...rotatedCamera,
+          x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
+          y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
+        }
+        currentCameraRef.current = nextCamera
+        setRenderCamera(nextCamera)
+        return
+      }
+      const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08
+      const nextZoom = Math.max(0.05, Math.min(100, startCamera.zoom * zoomFactor))
+      const nextCamera: CameraState = {
+        ...startCamera,
+        zoom: nextZoom,
+      }
+      const worldAfter = screenToWorldPresent(pointerScreen, nextCamera, safeViewport)
+      const anchoredCamera: CameraState = {
+        ...nextCamera,
+        x: nextCamera.x + (worldBefore.x - worldAfter.x),
+        y: nextCamera.y + (worldBefore.y - worldAfter.y),
+      }
+      currentCameraRef.current = anchoredCamera
+      setRenderCamera(anchoredCamera)
+      return
+    }
+
+    const now = performance.now()
+    if (now < wheelNavigateThrottleUntilRef.current) {
+      return
+    }
+    if (Math.abs(event.deltaY) < 6) {
+      return
+    }
+    wheelNavigateThrottleUntilRef.current = now + 220
+    if (event.deltaY > 0) {
+      onNavigateNext()
+      return
+    }
+    onNavigatePrevious()
+  }
+
   return (
-    <div ref={stageRef} className="present-stage">
+    <div
+      ref={stageRef}
+      className={`present-stage ${freeMoveEnabled ? 'free-move-enabled' : ''}`}
+      onPointerDown={handlePresentStagePointerDown}
+      onPointerMove={handlePresentStagePointerMove}
+      onPointerUp={handlePresentStagePointerUp}
+      onPointerCancel={handlePresentStagePointerUp}
+      onWheel={handlePresentStageWheel}
+      onContextMenu={(event) => {
+        if (event.defaultPrevented) {
+          return
+        }
+        if (!freeMoveEnabled) {
+          event.preventDefault()
+        }
+      }}
+    >
       <div className="present-stage-background" style={backgroundLayerStyle} />
       <div ref={objectsLayerRef} className="present-stage-objects" />
     </div>
@@ -884,6 +1098,21 @@ function parseStoredFile(payload: string): { document: DocumentModel; camera: Ca
   }
 }
 
+function isInteractivePointerTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null
+  if (!element) {
+    return false
+  }
+  if (element.isContentEditable) {
+    return true
+  }
+  return Boolean(
+    element.closest(
+      'button,input,textarea,select,option,label,a[href],[contenteditable=\"true\"],[role=\"button\"]'
+    )
+  )
+}
+
 function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasObject>): boolean {
   let parentId = object.parentGroupId
   while (parentId) {
@@ -911,10 +1140,10 @@ const BORDER_STYLE_OPTIONS: Array<{
   value: ShapeData['borderType']
   label: string
 }> = [
-  { value: 'solid', label: 'Solid' },
-  { value: 'dashed', label: 'Dashed' },
-  { value: 'dotted', label: 'Dotted' },
-]
+    { value: 'solid', label: 'Solid' },
+    { value: 'dashed', label: 'Dashed' },
+    { value: 'dotted', label: 'Dotted' },
+  ]
 
 interface AutosavePayload {
   snapshot: string
@@ -956,6 +1185,17 @@ function getBorderWidthLabel(width: number): string {
   return `${width}px`
 }
 
+function normalizeShadowAngleDeg(value: number): number {
+  let normalized = Number.isFinite(value) ? value : 45
+  while (normalized > 180) {
+    normalized -= 360
+  }
+  while (normalized < -180) {
+    normalized += 360
+  }
+  return normalized
+}
+
 function ColorPickerChip({
   value,
   fallback,
@@ -980,27 +1220,29 @@ function ColorPickerChip({
 
   return (
     <>
-      <button
-        type="button"
-        className={className}
-        style={{ background: safeValue, ...style }}
-        disabled={disabled}
-        onClick={() => {
-          inputRef.current?.click()
-        }}
-        aria-label={ariaLabel}
-        title={title}
-      />
-      <input
-        ref={inputRef}
-        type="color"
-        className="object-param-color-input-hidden"
-        value={safeValue}
-        disabled={disabled}
-        tabIndex={-1}
-        aria-hidden="true"
-        onChange={(event) => onChange(event.target.value)}
-      />
+      <div className="object-param-color-chip-wrap">
+        <input
+          ref={inputRef}
+          type="color"
+          className="object-param-color-input-hidden"
+          value={safeValue}
+          disabled={disabled}
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          className={className}
+          style={{ background: safeValue, ...style }}
+          disabled={disabled}
+          onClick={() => {
+            inputRef.current?.click()
+          }}
+          aria-label={ariaLabel}
+          title={title}
+        />
+      </div>
     </>
   )
 }
@@ -1334,6 +1576,8 @@ function App() {
   const gradientDraggingStopIndexRef = useRef<number | null>(null)
   const gradientPreviewDraggingStopIndexRef = useRef<number | null>(null)
   const [hoveredSlideId, setHoveredSlideId] = useState<string | null>(null)
+  const presentFreeMoveEnabled = false
+  const presentMouseWheelThrottleUntilRef = useRef(0)
   const [isFillEditorOpen, setIsFillEditorOpen] = useState(false)
   const [fillEditorTarget, setFillEditorTarget] = useState<'object' | 'canvas' | null>(null)
 
@@ -1376,11 +1620,11 @@ function App() {
   )
   const isObjectGradientEditorVisible = Boolean(
     isFillEditorOpen &&
-      fillEditorTarget === 'object' &&
-      ((selectedShapeObject &&
-        selectedShapeObject.shapeData.fillMode === 'linearGradient') ||
-        (selectedTextboxObject &&
-          (selectedTextboxObject.textboxData.fillMode ?? 'solid') === 'linearGradient'))
+    fillEditorTarget === 'object' &&
+    ((selectedShapeObject &&
+      selectedShapeObject.shapeData.fillMode === 'linearGradient') ||
+      (selectedTextboxObject &&
+        (selectedTextboxObject.textboxData.fillMode ?? 'solid') === 'linearGradient'))
   )
   const canvasBackgroundGradient = useMemo(
     () => parseCanvasBackgroundGradient(document.canvas.background),
@@ -1403,9 +1647,9 @@ function App() {
   }, [canvasBackgroundGradient, document.canvas.background])
   const isCanvasGradientEditorVisible = Boolean(
     isFillEditorOpen &&
-      fillEditorTarget === 'canvas' &&
-      selectedObjectIds.length === 0 &&
-      canvasBackgroundControl.fillMode === 'linearGradient'
+    fillEditorTarget === 'canvas' &&
+    selectedObjectIds.length === 0 &&
+    canvasBackgroundControl.fillMode === 'linearGradient'
   )
   const isGradientEditorVisible = isObjectGradientEditorVisible || isCanvasGradientEditorVisible
   const gradientEditorLocked = isCanvasGradientEditorVisible ? false : selectedObjectTransformLocked
@@ -1498,20 +1742,41 @@ function App() {
       ? Math.max(0, Math.min(100, toFiniteNumber(selectedTextboxObject.textboxData.opacityPercent, 100)))
       : selectedImageObject
         ? Math.max(0, Math.min(100, toFiniteNumber(selectedImageObject.imageData.opacityPercent, 100)))
-      : 100
+        : 100
   const selectedObjectRadiusPercent = selectedShapeObject
     ? radiusPxToPercent(
-        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedShapeObject.shapeData.radius, 0))),
-        selectedShapeObject.w,
-        selectedShapeObject.h
-      )
+      Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedShapeObject.shapeData.radius, 0))),
+      selectedShapeObject.w,
+      selectedShapeObject.h
+    )
     : selectedImageObject
       ? radiusPxToPercent(
-          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedImageObject.imageData.radius, 0))),
-          selectedImageObject.w,
-          selectedImageObject.h
-        )
-    : 0
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedImageObject.imageData.radius, 0))),
+        selectedImageObject.w,
+        selectedImageObject.h
+      )
+      : 0
+  const selectedObjectShadowBlurPx = selectedShapeObject
+    ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedShapeObject.shapeData.shadowBlurPx, 0)))
+    : selectedTextboxObject
+      ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedTextboxObject.textboxData.shadowBlurPx, 0)))
+      : selectedImageObject
+        ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedImageObject.imageData.shadowBlurPx, 0)))
+        : 0
+  const selectedObjectShadowAngleDeg = selectedShapeObject
+    ? normalizeShadowAngleDeg(toFiniteNumber(selectedShapeObject.shapeData.shadowAngleDeg, 45))
+    : selectedTextboxObject
+      ? normalizeShadowAngleDeg(toFiniteNumber(selectedTextboxObject.textboxData.shadowAngleDeg, 45))
+      : selectedImageObject
+        ? normalizeShadowAngleDeg(toFiniteNumber(selectedImageObject.imageData.shadowAngleDeg, 45))
+        : 45
+  const selectedObjectShadowColor = selectedShapeObject
+    ? asHexColor(selectedShapeObject.shapeData.shadowColor, '#000000')
+    : selectedTextboxObject
+      ? asHexColor(selectedTextboxObject.textboxData.shadowColor, '#000000')
+      : selectedImageObject
+        ? asHexColor(selectedImageObject.imageData.shadowColor, '#000000')
+        : '#000000'
   const backgroundColorValue = canvasBackgroundControl.solidColor
   const canvasGradientCss = buildGradientCss(
     canvasBackgroundControl.gradient,
@@ -1607,6 +1872,9 @@ function App() {
       fillGradient: null,
       radius: 0,
       opacityPercent: 100,
+      shadowColor: '#000000',
+      shadowBlurPx: 0,
+      shadowAngleDeg: 45,
     }
   }
 
@@ -1657,6 +1925,9 @@ function App() {
             borderType: 'solid',
             borderWidth: DEFAULT_TEXTBOX_BORDER_WIDTH,
             opacityPercent: 100,
+            shadowColor: '#000000',
+            shadowBlurPx: 0,
+            shadowAngleDeg: 45,
           },
         })
         break
@@ -1671,13 +1942,17 @@ function App() {
           shapeData: getDefaultShapeData(),
         })
         break
-      case 'Circle':
+      case 'Circle': {
+        const circleSize = Math.min(base.w, base.h)
         createObject({
           ...base,
+          w: circleSize,
+          h: circleSize,
           type: 'shape_circle',
           shapeData: getDefaultShapeData(),
         })
         break
+      }
       case 'Arrow':
         createObject({
           ...base,
@@ -1756,6 +2031,11 @@ function App() {
             cropTopPercent: 0,
             cropRightPercent: 0,
             cropBottomPercent: 0,
+            effectsEnabled: false,
+            filterPreset: 'none',
+            shadowColor: '#000000',
+            shadowBlurPx: 0,
+            shadowAngleDeg: 45,
           },
         })
         createdIds.push(objectId)
@@ -1834,6 +2114,25 @@ function App() {
           )
         )
       ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(
+            toFiniteNumber(
+              patch.shadowBlurPx ?? selectedTextboxObject.textboxData.shadowBlurPx,
+              0
+            )
+          )
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? selectedTextboxObject.textboxData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? selectedTextboxObject.textboxData.shadowColor,
+        '#000000'
+      ),
     }
 
     if (nextTextboxData.fillMode === 'solid') {
@@ -1862,11 +2161,25 @@ function App() {
       return
     }
 
+    let nextWidth = Math.max(1, patch.w ?? selectedObject.w)
+    let nextHeight = Math.max(1, patch.h ?? selectedObject.h)
+
+    if (selectedObject.type === 'shape_circle' && (patch.w !== undefined || patch.h !== undefined)) {
+      const enforcedSize =
+        patch.w !== undefined && patch.h !== undefined
+          ? Math.max(nextWidth, nextHeight)
+          : patch.w !== undefined
+            ? nextWidth
+            : nextHeight
+      nextWidth = enforcedSize
+      nextHeight = enforcedSize
+    }
+
     moveObject(selectedObject.id, {
       x: patch.x ?? selectedObject.x,
       y: patch.y ?? selectedObject.y,
-      w: Math.max(1, patch.w ?? selectedObject.w),
-      h: Math.max(1, patch.h ?? selectedObject.h),
+      w: nextWidth,
+      h: nextHeight,
       rotation: patch.rotation ?? selectedObject.rotation,
     })
   }
@@ -1889,6 +2202,20 @@ function App() {
           MAX_SHAPE_RADIUS,
           toFiniteNumber(patch.radius ?? selectedShapeObject.shapeData.radius, 0)
         )
+      ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? selectedShapeObject.shapeData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? selectedShapeObject.shapeData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? selectedShapeObject.shapeData.shadowColor,
+        '#000000'
       ),
     }
 
@@ -1937,9 +2264,39 @@ function App() {
           Math.round(toFiniteNumber(patch.opacityPercent ?? selectedImageObject.imageData.opacityPercent, 100))
         )
       ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? selectedImageObject.imageData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? selectedImageObject.imageData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? selectedImageObject.imageData.shadowColor,
+        '#000000'
+      ),
     }
 
     setImageData(selectedImageObject.id, nextImageData)
+  }
+
+  function updateSelectedObjectShadow(
+    patch: Partial<Pick<ShapeData, 'shadowColor' | 'shadowBlurPx' | 'shadowAngleDeg'>>
+  ) {
+    if (selectedShapeObject) {
+      updateSelectedShapeData(patch)
+      return
+    }
+    if (selectedTextboxObject) {
+      updateSelectedTextboxData(patch)
+      return
+    }
+    if (selectedImageObject) {
+      updateSelectedImageData(patch)
+    }
   }
 
   function updateSelectedGradient(
@@ -2036,34 +2393,34 @@ function App() {
     const nextStops = selectedGradient.stops.map((stop, stopIndex) =>
       stopIndex === index
         ? {
-            color: asHexColor(patch.color ?? stop.color, stop.color),
-            positionPercent: Math.max(
-              boundedMin,
-              Math.min(
-                boundedMax,
-                Math.round(
-                  toFiniteNumber(
-                    patch.positionPercent ?? stop.positionPercent,
-                    fallbackPosition
-                  )
+          color: asHexColor(patch.color ?? stop.color, stop.color),
+          positionPercent: Math.max(
+            boundedMin,
+            Math.min(
+              boundedMax,
+              Math.round(
+                toFiniteNumber(
+                  patch.positionPercent ?? stop.positionPercent,
+                  fallbackPosition
                 )
               )
-            ),
-            xPercent: Math.max(
-              0,
-              Math.min(
-                100,
-                Math.round(toFiniteNumber(patch.xPercent ?? stop.xPercent ?? 50, stop.xPercent ?? 50))
-              )
-            ),
-            yPercent: Math.max(
-              0,
-              Math.min(
-                100,
-                Math.round(toFiniteNumber(patch.yPercent ?? stop.yPercent ?? 50, stop.yPercent ?? 50))
-              )
-            ),
-          }
+            )
+          ),
+          xPercent: Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(toFiniteNumber(patch.xPercent ?? stop.xPercent ?? 50, stop.xPercent ?? 50))
+            )
+          ),
+          yPercent: Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(toFiniteNumber(patch.yPercent ?? stop.yPercent ?? 50, stop.yPercent ?? 50))
+            )
+          ),
+        }
         : stop
     )
     updateSelectedGradient({ stops: nextStops })
@@ -2392,6 +2749,45 @@ function App() {
     goToSlideByIndex(activeSlideIndex - 1)
   }
 
+  function handlePresentShellPointerDownCapture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (mode !== 'present' || presentFreeMoveEnabled || isInteractivePointerTarget(event.target)) {
+      return
+    }
+    if (event.button === 0) {
+      event.preventDefault()
+      goToNextSlide()
+      return
+    }
+    if (event.button === 2) {
+      event.preventDefault()
+      goToPreviousSlide()
+    }
+  }
+
+  function handlePresentShellWheelCapture(event: WheelEvent<HTMLDivElement>) {
+    if (mode !== 'present' || presentFreeMoveEnabled || isInteractivePointerTarget(event.target)) {
+      return
+    }
+    event.preventDefault()
+    const now = performance.now()
+    if (now < presentMouseWheelThrottleUntilRef.current || Math.abs(event.deltaY) < 6) {
+      return
+    }
+    presentMouseWheelThrottleUntilRef.current = now + 220
+    if (event.deltaY > 0) {
+      goToNextSlide()
+      return
+    }
+    goToPreviousSlide()
+  }
+
+  function handlePresentShellContextMenuCapture(event: ReactMouseEvent<HTMLDivElement>) {
+    if (mode !== 'present' || presentFreeMoveEnabled || isInteractivePointerTarget(event.target)) {
+      return
+    }
+    event.preventDefault()
+  }
+
   function enterPresentMode(fromCurrent: boolean) {
     if (orderedSlides.length === 0) {
       setMode('present')
@@ -2599,6 +2995,13 @@ function App() {
       }
       return
     }
+    if (presentFreeMoveEnabled) {
+      if (timedAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(timedAdvanceTimeoutRef.current)
+        timedAdvanceTimeoutRef.current = null
+      }
+      return
+    }
     if (!activeSlide || activeSlide.triggerMode !== 'timed') {
       return
     }
@@ -2621,6 +3024,7 @@ function App() {
     activeSlideIndex,
     mode,
     orderedSlides.length,
+    presentFreeMoveEnabled,
     selectedSlideId,
     activeSlide?.triggerDelayMs,
     activeSlide?.triggerMode,
@@ -2756,7 +3160,12 @@ function App() {
   ]
 
   return (
-    <div className={`app-shell ${mode === 'present' ? 'present-mode' : ''}`}>
+    <div
+      className={`app-shell ${mode === 'present' ? 'present-mode' : ''}`}
+      onPointerDownCapture={handlePresentShellPointerDownCapture}
+      onWheelCapture={handlePresentShellWheelCapture}
+      onContextMenuCapture={handlePresentShellContextMenuCapture}
+    >
       <aside className="sidebar">
         <section className="panel">
           <h2>Project Name</h2>
@@ -2947,6 +3356,9 @@ function App() {
                     step={10}
                     value={activeSlideRotationDeg}
                     onWheel={handleRangeWheel}
+                    onDoubleClick={() => {
+                      updateActiveSlide({ rotation: 0 })
+                    }}
                     onChange={(event) => {
                       const parsed = parseNumberInput(event.target.value)
                       if (parsed !== null) {
@@ -3036,226 +3448,225 @@ function App() {
         <section className="panel">
           {!isGradientEditorVisible && <h2>Object Parameters</h2>}
           {isGradientEditorVisible ? (
-              <div className="object-gradient-editor">
-                <div className="object-gradient-editor-header">
-                  <h3>{isCanvasGradientEditorVisible ? 'Canvas Gradient' : 'Gradient'}</h3>
-                  <div className="object-gradient-editor-actions">
-                    <button
-                      type="button"
-                      className="object-param-secondary-btn icon-btn"
-                      disabled={gradientEditorLocked}
-                      onClick={randomizeSelectedGradient}
-                      aria-label="Randomize gradient"
-                      title="Randomize gradient"
-                    >
-                      <FontAwesomeIcon icon={faDice} />
-                    </button>
-                    <button
-                      type="button"
-                      className="object-param-secondary-btn"
-                      onClick={closeFillEditor}
-                    >
-                      Back
-                    </button>
-                  </div>
+            <div className="object-gradient-editor">
+              <div className="object-gradient-editor-header">
+                <h3>{isCanvasGradientEditorVisible ? 'Canvas Gradient' : 'Gradient'}</h3>
+                <div className="object-gradient-editor-actions">
+                  <button
+                    type="button"
+                    className="object-param-secondary-btn icon-btn"
+                    disabled={gradientEditorLocked}
+                    onClick={randomizeSelectedGradient}
+                    aria-label="Randomize gradient"
+                    title="Randomize gradient"
+                  >
+                    <FontAwesomeIcon icon={faDice} />
+                  </button>
+                  <button
+                    type="button"
+                    className="object-param-secondary-btn"
+                    onClick={closeFillEditor}
+                  >
+                    Back
+                  </button>
                 </div>
+              </div>
 
-                <div
-                  ref={gradientPreviewRef}
-                  className={`object-gradient-preview ${
-                    selectedGradient.gradientType === 'circles' ? 'circles-mode' : ''
+              <div
+                ref={gradientPreviewRef}
+                className={`object-gradient-preview ${selectedGradient.gradientType === 'circles' ? 'circles-mode' : ''
                   }`}
-                  style={{ background: selectedGradientCss }}
-                  onPointerMove={
-                    selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerMove : undefined
-                  }
-                  onPointerUp={
-                    selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
-                  }
-                  onPointerCancel={
-                    selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
-                  }
-                  onDoubleClick={
-                    selectedGradient.gradientType === 'circles' ? handleGradientPreviewDoubleClick : undefined
-                  }
-                >
-                  {selectedGradient.gradientType === 'circles' &&
-                    selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
-                      <button
-                        key={`${uiId}-point`}
-                        type="button"
-                        className="object-gradient-circle-point"
-                        style={{
-                          left: `${Math.max(0, Math.min(100, toFiniteNumber(stop.xPercent ?? 50, 50)))}%`,
-                          top: `${Math.max(0, Math.min(100, toFiniteNumber(stop.yPercent ?? 50, 50)))}%`,
-                          background: stop.color,
-                        }}
-                        disabled={gradientEditorLocked}
-                        onPointerDown={(event) => handleGradientPreviewPointerDown(event, index)}
-                        onDoubleClick={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          removeSelectedGradientStop(index)
-                        }}
-                        aria-label={`Circle point ${index + 1}`}
-                        title="Drag to position circle, double-click to remove"
-                      />
-                    ))}
-                  <div className="object-gradient-preview-meta">
-                    <span>
-                      {selectedGradient.gradientType === 'radial'
-                        ? 'Radial'
-                        : selectedGradient.gradientType === 'circles'
-                          ? 'Circles'
-                          : 'Linear'}
-                    </span>
-                    <span>
-                      {selectedGradient.gradientType === 'linear'
-                        ? `${selectedGradient.angleDeg}deg`
-                        : selectedGradient.gradientType === 'circles'
-                          ? `${selectedGradient.stops.length} circles`
-                          : `${selectedGradient.stops.length} stops`}
-                    </span>
-                    <span>{selectedGradient.stops.length} colors</span>
-                  </div>
+                style={{ background: selectedGradientCss }}
+                onPointerMove={
+                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerMove : undefined
+                }
+                onPointerUp={
+                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
+                }
+                onPointerCancel={
+                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
+                }
+                onDoubleClick={
+                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewDoubleClick : undefined
+                }
+              >
+                {selectedGradient.gradientType === 'circles' &&
+                  selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
+                    <button
+                      key={`${uiId}-point`}
+                      type="button"
+                      className="object-gradient-circle-point"
+                      style={{
+                        left: `${Math.max(0, Math.min(100, toFiniteNumber(stop.xPercent ?? 50, 50)))}%`,
+                        top: `${Math.max(0, Math.min(100, toFiniteNumber(stop.yPercent ?? 50, 50)))}%`,
+                        background: stop.color,
+                      }}
+                      disabled={gradientEditorLocked}
+                      onPointerDown={(event) => handleGradientPreviewPointerDown(event, index)}
+                      onDoubleClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        removeSelectedGradientStop(index)
+                      }}
+                      aria-label={`Circle point ${index + 1}`}
+                      title="Drag to position circle, double-click to remove"
+                    />
+                  ))}
+                <div className="object-gradient-preview-meta">
+                  <span>
+                    {selectedGradient.gradientType === 'radial'
+                      ? 'Radial'
+                      : selectedGradient.gradientType === 'circles'
+                        ? 'Circles'
+                        : 'Linear'}
+                  </span>
+                  <span>
+                    {selectedGradient.gradientType === 'linear'
+                      ? `${selectedGradient.angleDeg}deg`
+                      : selectedGradient.gradientType === 'circles'
+                        ? `${selectedGradient.stops.length} circles`
+                        : `${selectedGradient.stops.length} stops`}
+                  </span>
+                  <span>{selectedGradient.stops.length} colors</span>
                 </div>
+              </div>
 
-                {selectedGradient.gradientType !== 'circles' && (
-                  <div
-                    ref={gradientTrackRef}
-                    className="object-gradient-stop-track"
-                    style={{ background: selectedGradientTrackCss }}
-                    onPointerMove={handleGradientTrackPointerMove}
-                    onPointerUp={handleGradientTrackPointerUp}
-                    onPointerCancel={handleGradientTrackPointerUp}
-                    onDoubleClick={handleGradientTrackDoubleClick}
-                  >
-                    {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
-                      <span
-                        key={uiId}
-                        className="object-gradient-stop"
-                        data-gradient-stop-index={index}
-                        style={{
-                          left: `${stop.positionPercent}%`,
-                          background: stop.color,
-                        }}
-                        onPointerDown={(event) => handleGradientStopPointerDown(event, index)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                <div className="slide-param-switch switch-3 object-gradient-type-switch" role="group" aria-label="Gradient type">
-                  <button
-                    type="button"
-                    className={selectedGradient.gradientType === 'linear' ? 'active' : ''}
-                    disabled={gradientEditorLocked}
-                    onClick={() => updateSelectedGradient({ gradientType: 'linear' })}
-                  >
-                    Linear
-                  </button>
-                  <button
-                    type="button"
-                    className={selectedGradient.gradientType === 'radial' ? 'active' : ''}
-                    disabled={gradientEditorLocked}
-                    onClick={() => updateSelectedGradient({ gradientType: 'radial' })}
-                  >
-                    Radial
-                  </button>
-                  <button
-                    type="button"
-                    className={selectedGradient.gradientType === 'circles' ? 'active' : ''}
-                    disabled={gradientEditorLocked}
-                    onClick={() => updateSelectedGradient({ gradientType: 'circles' })}
-                  >
-                    Circles
-                  </button>
-                </div>
-
-                <DndContext
-                  sensors={gradientStopDnDSensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleGradientStopDragEnd}
+              {selectedGradient.gradientType !== 'circles' && (
+                <div
+                  ref={gradientTrackRef}
+                  className="object-gradient-stop-track"
+                  style={{ background: selectedGradientTrackCss }}
+                  onPointerMove={handleGradientTrackPointerMove}
+                  onPointerUp={handleGradientTrackPointerUp}
+                  onPointerCancel={handleGradientTrackPointerUp}
+                  onDoubleClick={handleGradientTrackDoubleClick}
                 >
-                  <SortableContext
-                    items={selectedGradientStopsWithUiIds.map((entry) => entry.uiId)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="object-gradient-stop-list">
-                      {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => {
-                        const previousStop = selectedGradient.stops[index - 1]
-                        const nextStop = selectedGradient.stops[index + 1]
-                        const minPosition = previousStop ? previousStop.positionPercent + 1 : 0
-                        const maxPosition = nextStop ? nextStop.positionPercent - 1 : 100
-                        return (
-                          <SortableGradientStopItem
-                            key={uiId}
-                            sortableId={uiId}
-                            stop={stop}
-                            index={index}
-                            minPosition={minPosition}
-                            maxPosition={maxPosition}
-                            canRemove={selectedGradient.stops.length > 2}
-                            disabled={gradientEditorLocked}
-                            onWheel={handleRangeWheel}
-                            onChangeColor={(stopIndex, color) =>
-                              updateSelectedGradientStop(stopIndex, { color })
-                            }
-                            onChangePosition={(stopIndex, positionPercent) =>
-                              updateSelectedGradientStop(stopIndex, { positionPercent })
-                            }
-                            onRemove={removeSelectedGradientStop}
-                          />
-                        )
-                      })}
-                    </div>
-                  </SortableContext>
-                </DndContext>
+                  {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
+                    <span
+                      key={uiId}
+                      className="object-gradient-stop"
+                      data-gradient-stop-index={index}
+                      style={{
+                        left: `${stop.positionPercent}%`,
+                        background: stop.color,
+                      }}
+                      onPointerDown={(event) => handleGradientStopPointerDown(event, index)}
+                    />
+                  ))}
+                </div>
+              )}
 
-                {selectedGradient.stops.length < MAX_GRADIENT_STOPS && (
-                  <button
-                    type="button"
-                    className="object-param-secondary-btn object-gradient-add-stop-btn"
-                    disabled={gradientEditorLocked}
-                    onClick={() => addSelectedGradientStop()}
-                    title="Add color stop"
-                    aria-label="Add color stop"
-                  >
-                    <FontAwesomeIcon icon={faPlus} />
-                  </button>
-                )}
+              <div className="slide-param-switch switch-3 object-gradient-type-switch" role="group" aria-label="Gradient type">
+                <button
+                  type="button"
+                  className={selectedGradient.gradientType === 'linear' ? 'active' : ''}
+                  disabled={gradientEditorLocked}
+                  onClick={() => updateSelectedGradient({ gradientType: 'linear' })}
+                >
+                  Linear
+                </button>
+                <button
+                  type="button"
+                  className={selectedGradient.gradientType === 'radial' ? 'active' : ''}
+                  disabled={gradientEditorLocked}
+                  onClick={() => updateSelectedGradient({ gradientType: 'radial' })}
+                >
+                  Radial
+                </button>
+                <button
+                  type="button"
+                  className={selectedGradient.gradientType === 'circles' ? 'active' : ''}
+                  disabled={gradientEditorLocked}
+                  onClick={() => updateSelectedGradient({ gradientType: 'circles' })}
+                >
+                  Circles
+                </button>
+              </div>
 
-                {selectedGradient.gradientType === 'linear' && (
-                  <div className="object-gradient-angle-row">
-                    <div className="object-gradient-angle-compass" aria-hidden="true">
-                      <span
-                        className="object-gradient-angle-compass-indicator"
-                        style={{ transform: `translateX(-50%) rotate(${selectedGradient.angleDeg}deg)` }}
-                      />
-                    </div>
-                    <div
-                      className="object-gradient-angle-presets"
-                      role="group"
-                      aria-label="Gradient direction presets"
-                    >
-                      {GRADIENT_ANGLE_PRESETS.map((preset) => (
-                        <button
-                          key={`${preset.angleDeg}-${preset.label}`}
-                          type="button"
-                          className={selectedGradient.angleDeg === preset.angleDeg ? 'active' : ''}
+              <DndContext
+                sensors={gradientStopDnDSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleGradientStopDragEnd}
+              >
+                <SortableContext
+                  items={selectedGradientStopsWithUiIds.map((entry) => entry.uiId)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="object-gradient-stop-list">
+                    {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => {
+                      const previousStop = selectedGradient.stops[index - 1]
+                      const nextStop = selectedGradient.stops[index + 1]
+                      const minPosition = previousStop ? previousStop.positionPercent + 1 : 0
+                      const maxPosition = nextStop ? nextStop.positionPercent - 1 : 100
+                      return (
+                        <SortableGradientStopItem
+                          key={uiId}
+                          sortableId={uiId}
+                          stop={stop}
+                          index={index}
+                          minPosition={minPosition}
+                          maxPosition={maxPosition}
+                          canRemove={selectedGradient.stops.length > 2}
                           disabled={gradientEditorLocked}
-                          onClick={() => updateSelectedGradient({ angleDeg: preset.angleDeg })}
-                          title={`${preset.angleDeg}°`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
+                          onWheel={handleRangeWheel}
+                          onChangeColor={(stopIndex, color) =>
+                            updateSelectedGradientStop(stopIndex, { color })
+                          }
+                          onChangePosition={(stopIndex, positionPercent) =>
+                            updateSelectedGradientStop(stopIndex, { positionPercent })
+                          }
+                          onRemove={removeSelectedGradientStop}
+                        />
+                      )
+                    })}
                   </div>
-                )}
+                </SortableContext>
+              </DndContext>
 
-                {selectedGradient.gradientType === 'linear' && (
-                  <label className="object-param-slider">
+              {selectedGradient.stops.length < MAX_GRADIENT_STOPS && (
+                <button
+                  type="button"
+                  className="object-param-secondary-btn object-gradient-add-stop-btn"
+                  disabled={gradientEditorLocked}
+                  onClick={() => addSelectedGradientStop()}
+                  title="Add color stop"
+                  aria-label="Add color stop"
+                >
+                  <FontAwesomeIcon icon={faPlus} />
+                </button>
+              )}
+
+              {selectedGradient.gradientType === 'linear' && (
+                <div className="object-gradient-angle-row">
+                  <div className="object-gradient-angle-compass" aria-hidden="true">
+                    <span
+                      className="object-gradient-angle-compass-indicator"
+                      style={{ transform: `translateX(-50%) rotate(${selectedGradient.angleDeg}deg)` }}
+                    />
+                  </div>
+                  <div
+                    className="object-gradient-angle-presets"
+                    role="group"
+                    aria-label="Gradient direction presets"
+                  >
+                    {GRADIENT_ANGLE_PRESETS.map((preset) => (
+                      <button
+                        key={`${preset.angleDeg}-${preset.label}`}
+                        type="button"
+                        className={selectedGradient.angleDeg === preset.angleDeg ? 'active' : ''}
+                        disabled={gradientEditorLocked}
+                        onClick={() => updateSelectedGradient({ angleDeg: preset.angleDeg })}
+                        title={`${preset.angleDeg}°`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedGradient.gradientType === 'linear' && (
+                <label className="object-param-slider">
                   <span>Angle</span>
                   <div className="object-param-slider-control object-gradient-angle-slider-control">
                     <input
@@ -3291,133 +3702,137 @@ function App() {
                     />
                     <strong>{selectedGradient.angleDeg}°</strong>
                   </div>
-                  </label>
-                )}
-              </div>
-            ) : selectedObject ? (
-              <div className="object-params-panel">
-                <div className="object-param-row">
-                  <span>X, Y</span>
-                  <div className="object-param-inputs">
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={selectedObject.x.toFixed(1)}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectTransform({ x: parsed })
-                        }
-                      }}
-                    />
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={selectedObject.y.toFixed(1)}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectTransform({ y: parsed })
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="object-param-row">
-                  <span>W, H</span>
-                  <div className="object-param-inputs">
-                    <input
-                      type="number"
-                      min={1}
-                      step={0.1}
-                      value={selectedObject.w.toFixed(1)}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectTransform({ w: parsed })
-                        }
-                      }}
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      step={0.1}
-                      value={selectedObject.h.toFixed(1)}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectTransform({ h: parsed })
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <label className="object-param-slider">
-                  <span>Rotation</span>
-                  <div className="object-param-slider-control">
-                    <input
-                      type="range"
-                      min={-180}
-                      max={180}
-                      step={1}
-                      value={selectedObjectRotationDeg}
-                      disabled={selectedObjectTransformLocked}
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectTransform({ rotation: (parsed * Math.PI) / 180 })
-                        }
-                      }}
-                    />
-                    <strong>{selectedObjectRotationDeg.toFixed(0)}°</strong>
-                  </div>
                 </label>
-
-                <label className="object-param-slider">
-                  <span>Opacity</span>
-                  <div className="object-param-slider-control">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={selectedObjectOpacityPercent}
-                      disabled={
-                        (!selectedShapeObject && !selectedTextboxObject && !selectedImageObject) ||
-                        selectedObjectTransformLocked
+              )}
+            </div>
+          ) : selectedObject ? (
+            <div className="object-params-panel">
+              <div className="object-param-row">
+                <span>X, Y</span>
+                <div className="object-param-inputs">
+                  <input
+                    type="number"
+                    step={0.1}
+                    value={selectedObject.x.toFixed(1)}
+                    disabled={selectedObjectTransformLocked}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateSelectedObjectTransform({ x: parsed })
                       }
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        if (selectedShapeObject) {
-                          handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
-                        } else if (selectedTextboxObject) {
-                          const parsed = parseNumberInput(event.target.value)
-                          if (parsed !== null) {
-                            updateSelectedTextboxData({ opacityPercent: parsed })
-                          }
-                        } else if (selectedImageObject) {
-                          const parsed = parseNumberInput(event.target.value)
-                          if (parsed !== null) {
-                            updateSelectedImageData({ opacityPercent: parsed })
-                          }
-                        }
-                      }}
-                    />
-                    <strong>
-                      {selectedShapeObject || selectedTextboxObject || selectedImageObject
-                        ? `${Math.round(selectedObjectOpacityPercent)}%`
-                        : 'N/A'}
-                    </strong>
-                  </div>
-                </label>
+                    }}
+                  />
+                  <input
+                    type="number"
+                    step={0.1}
+                    value={selectedObject.y.toFixed(1)}
+                    disabled={selectedObjectTransformLocked}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateSelectedObjectTransform({ y: parsed })
+                      }
+                    }}
+                  />
+                </div>
+              </div>
 
+              <div className="object-param-row">
+                <span>W, H</span>
+                <div className="object-param-inputs">
+                  <input
+                    type="number"
+                    min={1}
+                    step={0.1}
+                    value={selectedObject.w.toFixed(1)}
+                    disabled={selectedObjectTransformLocked}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateSelectedObjectTransform({ w: parsed })
+                      }
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={0.1}
+                    value={selectedObject.h.toFixed(1)}
+                    disabled={selectedObjectTransformLocked}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateSelectedObjectTransform({ h: parsed })
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              <label className="object-param-slider">
+                <span>Rotation</span>
+                <div className="object-param-slider-control">
+                  <input
+                    type="range"
+                    min={-180}
+                    max={180}
+                    step={1}
+                    value={selectedObjectRotationDeg}
+                    disabled={selectedObjectTransformLocked}
+                    onWheel={handleRangeWheel}
+                    onDoubleClick={() => {
+                      updateSelectedObjectTransform({ rotation: 0 })
+                    }}
+                    onChange={(event) => {
+                      const parsed = parseNumberInput(event.target.value)
+                      if (parsed !== null) {
+                        updateSelectedObjectTransform({ rotation: (parsed * Math.PI) / 180 })
+                      }
+                    }}
+                  />
+                  <strong>{selectedObjectRotationDeg.toFixed(0)}°</strong>
+                </div>
+              </label>
+
+              <label className="object-param-slider">
+                <span>Opacity</span>
+                <div className="object-param-slider-control">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={selectedObjectOpacityPercent}
+                    disabled={
+                      (!selectedShapeObject && !selectedTextboxObject && !selectedImageObject) ||
+                      selectedObjectTransformLocked
+                    }
+                    onWheel={handleRangeWheel}
+                    onChange={(event) => {
+                      if (selectedShapeObject) {
+                        handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
+                      } else if (selectedTextboxObject) {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateSelectedTextboxData({ opacityPercent: parsed })
+                        }
+                      } else if (selectedImageObject) {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateSelectedImageData({ opacityPercent: parsed })
+                        }
+                      }
+                    }}
+                  />
+                  <strong>
+                    {selectedShapeObject || selectedTextboxObject || selectedImageObject
+                      ? `${Math.round(selectedObjectOpacityPercent)}%`
+                      : 'N/A'}
+                  </strong>
+                </div>
+              </label>
+
+              {((selectedShapeObject && selectedShapeObject.type !== 'shape_circle') || selectedImageObject) && (
                 <label className="object-param-slider">
                   <span>Radius</span>
                   <div className="object-param-slider-control">
@@ -3426,12 +3841,8 @@ function App() {
                       min={0}
                       max={MAX_RADIUS_PERCENT}
                       step={1}
-                      value={selectedShapeObject?.type === 'shape_circle' ? 0 : selectedObjectRadiusPercent}
-                      disabled={
-                        (!selectedShapeObject && !selectedImageObject) ||
-                        (selectedShapeObject?.type === 'shape_circle') ||
-                        selectedObjectTransformLocked
-                      }
+                      value={selectedObjectRadiusPercent}
+                      disabled={selectedObjectTransformLocked}
                       onWheel={handleRangeWheel}
                       onChange={(event) => {
                         const parsed = parseNumberInput(event.target.value)
@@ -3447,18 +3858,65 @@ function App() {
                       }}
                     />
                     <strong>
-                      {selectedShapeObject
-                        ? selectedShapeObject.type === 'shape_circle'
-                          ? 'Auto'
-                          : `${Math.round(selectedObjectRadiusPercent)}%`
-                        : selectedImageObject
-                          ? `${Math.round(selectedObjectRadiusPercent)}%`
-                        : 'N/A'}
+                      {`${Math.round(selectedObjectRadiusPercent)}%`}
                     </strong>
                   </div>
                 </label>
+              )}
 
-                {(selectedShapeObject || selectedTextboxObject) && (
+              {(selectedShapeObject || selectedTextboxObject || selectedImageObject) && (
+                <div className="object-param-row">
+                  <span>Shadow</span>
+                  <div className="object-param-shadow-controls">
+                    <input
+                      type="range"
+                      min={-180}
+                      max={180}
+                      step={1}
+                      value={selectedObjectShadowAngleDeg}
+                      disabled={selectedObjectTransformLocked}
+                      onWheel={handleRangeWheel}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateSelectedObjectShadow({ shadowAngleDeg: parsed })
+                        }
+                      }}
+                      aria-label="Shadow angle"
+                      title="Shadow angle"
+                    />
+                    <strong>{Math.round(selectedObjectShadowAngleDeg)}°</strong>
+                    <input
+                      type="range"
+                      min={0}
+                      max={MAX_SHADOW_BLUR_PX}
+                      step={1}
+                      value={selectedObjectShadowBlurPx}
+                      disabled={selectedObjectTransformLocked}
+                      onWheel={handleRangeWheel}
+                      onChange={(event) => {
+                        const parsed = parseNumberInput(event.target.value)
+                        if (parsed !== null) {
+                          updateSelectedObjectShadow({ shadowBlurPx: parsed })
+                        }
+                      }}
+                      aria-label="Shadow blur"
+                      title="Shadow blur"
+                    />
+                    <strong>{Math.round(selectedObjectShadowBlurPx)}px</strong>
+                    <ColorPickerChip
+                      value={selectedObjectShadowColor}
+                      fallback="#000000"
+                      disabled={selectedObjectTransformLocked}
+                      onChange={(nextColor) => updateSelectedObjectShadow({ shadowColor: nextColor })}
+                      ariaLabel="Shadow color"
+                      title="Shadow color"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(selectedShapeObject || selectedTextboxObject) && (
                 <div className="object-param-row">
                   <span>Background</span>
                   {selectedShapeObject ? (
@@ -3468,7 +3926,7 @@ function App() {
                           type="button"
                           className={
                             selectedShapeObject.shapeData.fillMode === 'solid' &&
-                            selectedShapeObject.shapeData.fillColor !== 'transparent'
+                              selectedShapeObject.shapeData.fillColor !== 'transparent'
                               ? 'active'
                               : ''
                           }
@@ -3512,7 +3970,7 @@ function App() {
                           type="button"
                           className={
                             selectedShapeObject.shapeData.fillMode === 'solid' &&
-                            selectedShapeObject.shapeData.fillColor === 'transparent'
+                              selectedShapeObject.shapeData.fillColor === 'transparent'
                               ? 'active'
                               : ''
                           }
@@ -3531,7 +3989,7 @@ function App() {
                       </div>
 
                       {selectedShapeObject.shapeData.fillMode === 'solid' &&
-                      selectedShapeObject.shapeData.fillColor !== 'transparent' ? (
+                        selectedShapeObject.shapeData.fillColor !== 'transparent' ? (
                         <ColorPickerChip
                           className="object-param-color-chip"
                           value={asHexColor(selectedShapeObject.shapeData.fillColor, '#244a80')}
@@ -3562,7 +4020,7 @@ function App() {
                           type="button"
                           className={
                             selectedTextboxFillMode === 'solid' &&
-                            selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
+                              selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
                               ? 'active'
                               : ''
                           }
@@ -3606,7 +4064,7 @@ function App() {
                           type="button"
                           className={
                             selectedTextboxFillMode === 'solid' &&
-                            selectedTextboxObject.textboxData.backgroundColor === 'transparent'
+                              selectedTextboxObject.textboxData.backgroundColor === 'transparent'
                               ? 'active'
                               : ''
                           }
@@ -3625,7 +4083,7 @@ function App() {
                       </div>
 
                       {selectedTextboxFillMode === 'solid' &&
-                      selectedTextboxObject.textboxData.backgroundColor !== 'transparent' ? (
+                        selectedTextboxObject.textboxData.backgroundColor !== 'transparent' ? (
                         <ColorPickerChip
                           className="object-param-color-chip"
                           value={asHexColor(
@@ -3654,189 +4112,186 @@ function App() {
                     </div>
                   ) : null}
                 </div>
-                )}
+              )}
 
-                <div className="object-param-row">
-                  <span>Border</span>
-                  {selectedShapeObject ? (
-                    <div
-                      className={`object-param-border-controls ${
-                        selectedShapeObject.shapeData.borderWidth <= 0 ? 'border-none' : ''
+              <div className="object-param-row">
+                <span>Border</span>
+                {selectedShapeObject ? (
+                  <div
+                    className={`object-param-border-controls ${selectedShapeObject.shapeData.borderWidth <= 0 ? 'border-none' : ''
                       }`}
-                    >
-                      <BorderWidthDropdown
-                        value={selectedShapeObject.shapeData.borderWidth}
-                        borderColor={selectedShapeObject.shapeData.borderColor}
-                        disabled={selectedObjectTransformLocked}
-                        onChange={(nextValue) => {
-                          updateSelectedShapeData({
-                            borderWidth: Math.max(0, Math.min(20, Math.round(nextValue))),
-                          })
-                        }}
-                      />
-                      {selectedShapeObject.shapeData.borderWidth > 0 && (
-                        <>
-                          <BorderStyleDropdown
-                            value={selectedShapeObject.shapeData.borderType}
-                            borderColor={selectedShapeObject.shapeData.borderColor}
-                            borderWidth={selectedShapeObject.shapeData.borderWidth}
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextValue) =>
-                              updateSelectedShapeData({
-                                borderType: nextValue,
-                              })
-                            }
-                          />
-                          <ColorPickerChip
-                            value={asHexColor(selectedShapeObject.shapeData.borderColor, '#9db5de')}
-                            fallback="#9db5de"
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextColor) => {
-                              updateSelectedShapeData({ borderColor: nextColor })
-                            }}
-                            ariaLabel="Shape border color"
-                            title="Shape border color"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ) : selectedTextboxObject ? (
-                    <div
-                      className={`object-param-border-controls ${
-                        selectedTextboxObject.textboxData.borderWidth <= 0 ? 'border-none' : ''
-                      }`}
-                    >
-                      <BorderWidthDropdown
-                        value={selectedTextboxObject.textboxData.borderWidth}
-                        borderColor={selectedTextboxObject.textboxData.borderColor}
-                        disabled={selectedObjectTransformLocked}
-                        onChange={(nextValue) => {
-                          updateSelectedTextboxData({
-                            borderWidth: nextValue,
-                          })
-                        }}
-                      />
-                      {selectedTextboxObject.textboxData.borderWidth > 0 && (
-                        <>
-                          <BorderStyleDropdown
-                            value={selectedTextboxObject.textboxData.borderType}
-                            borderColor={selectedTextboxObject.textboxData.borderColor}
-                            borderWidth={selectedTextboxObject.textboxData.borderWidth}
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextValue) => {
-                              updateSelectedTextboxData({
-                                borderType: nextValue,
-                              })
-                            }}
-                          />
-                          <ColorPickerChip
-                            value={asHexColor(
-                              selectedTextboxObject.textboxData.borderColor,
-                              DEFAULT_TEXTBOX_BORDER_COLOR
-                            )}
-                            fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextColor) => {
-                              updateSelectedTextboxData({ borderColor: nextColor })
-                            }}
-                            ariaLabel="Textbox border color"
-                            title="Textbox border color"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ) : selectedImageObject ? (
-                    <div
-                      className={`object-param-border-controls ${
-                        selectedImageObject.imageData.borderWidth <= 0 ? 'border-none' : ''
-                      }`}
-                    >
-                      <BorderWidthDropdown
-                        value={selectedImageObject.imageData.borderWidth}
-                        borderColor={selectedImageObject.imageData.borderColor}
-                        disabled={selectedObjectTransformLocked}
-                        onChange={(nextValue) => {
-                          updateSelectedImageData({
-                            borderWidth: nextValue,
-                          })
-                        }}
-                      />
-                      {selectedImageObject.imageData.borderWidth > 0 && (
-                        <>
-                          <BorderStyleDropdown
-                            value={selectedImageObject.imageData.borderType}
-                            borderColor={selectedImageObject.imageData.borderColor}
-                            borderWidth={selectedImageObject.imageData.borderWidth}
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextValue) => {
-                              updateSelectedImageData({
-                                borderType: nextValue,
-                              })
-                            }}
-                          />
-                          <ColorPickerChip
-                            value={asHexColor(
-                              selectedImageObject.imageData.borderColor,
-                              DEFAULT_TEXTBOX_BORDER_COLOR
-                            )}
-                            fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
-                            disabled={selectedObjectTransformLocked}
-                            onChange={(nextColor) => {
-                              updateSelectedImageData({ borderColor: nextColor })
-                            }}
-                            ariaLabel="Image border color"
-                            title="Image border color"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="object-param-muted">Border controls are available for shapes, textboxes and images.</div>
-                  )}
-                </div>
-
-                <div className="object-param-row">
-                  <span>Protected</span>
-                  <div className="slide-param-switch" role="group" aria-label="Object protection">
-                    <button
-                      type="button"
-                      className={selectedObject.locked ? 'active' : ''}
-                      disabled={selectedObjectLockedByAncestor}
-                      onClick={() => setSelectedObjectProtected(true)}
-                    >
-                      <FontAwesomeIcon icon={faLock} /> On
-                    </button>
-                    <button
-                      type="button"
-                      className={!selectedObject.locked ? 'active' : ''}
-                      disabled={selectedObjectLockedByAncestor}
-                      onClick={() => setSelectedObjectProtected(false)}
-                    >
-                      <FontAwesomeIcon icon={faLockOpen} /> Off
-                    </button>
-                  </div>
-                </div>
-
-                {canToggleGroupFromSelection && (
-                  <div className="object-param-row">
-                    <span>Group</span>
-                    <button
-                      type="button"
-                      className="object-param-secondary-btn"
-                      onClick={() => {
-                        if (selectedGroupObject) {
-                          enterGroup(selectedGroupObject.id)
-                        }
+                  >
+                    <BorderWidthDropdown
+                      value={selectedShapeObject.shapeData.borderWidth}
+                      borderColor={selectedShapeObject.shapeData.borderColor}
+                      disabled={selectedObjectTransformLocked}
+                      onChange={(nextValue) => {
+                        updateSelectedShapeData({
+                          borderWidth: Math.max(0, Math.min(20, Math.round(nextValue))),
+                        })
                       }}
-                      aria-label="Enter group"
-                      title="Enter group"
-                    >
-                      <FontAwesomeIcon icon={faLayerGroup} /> Enter
-                    </button>
+                    />
+                    {selectedShapeObject.shapeData.borderWidth > 0 && (
+                      <>
+                        <BorderStyleDropdown
+                          value={selectedShapeObject.shapeData.borderType}
+                          borderColor={selectedShapeObject.shapeData.borderColor}
+                          borderWidth={selectedShapeObject.shapeData.borderWidth}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextValue) =>
+                            updateSelectedShapeData({
+                              borderType: nextValue,
+                            })
+                          }
+                        />
+                        <ColorPickerChip
+                          value={asHexColor(selectedShapeObject.shapeData.borderColor, '#9db5de')}
+                          fallback="#9db5de"
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextColor) => {
+                            updateSelectedShapeData({ borderColor: nextColor })
+                          }}
+                          ariaLabel="Shape border color"
+                          title="Shape border color"
+                        />
+                      </>
+                    )}
                   </div>
+                ) : selectedTextboxObject ? (
+                  <div
+                    className={`object-param-border-controls ${selectedTextboxObject.textboxData.borderWidth <= 0 ? 'border-none' : ''
+                      }`}
+                  >
+                    <BorderWidthDropdown
+                      value={selectedTextboxObject.textboxData.borderWidth}
+                      borderColor={selectedTextboxObject.textboxData.borderColor}
+                      disabled={selectedObjectTransformLocked}
+                      onChange={(nextValue) => {
+                        updateSelectedTextboxData({
+                          borderWidth: nextValue,
+                        })
+                      }}
+                    />
+                    {selectedTextboxObject.textboxData.borderWidth > 0 && (
+                      <>
+                        <BorderStyleDropdown
+                          value={selectedTextboxObject.textboxData.borderType}
+                          borderColor={selectedTextboxObject.textboxData.borderColor}
+                          borderWidth={selectedTextboxObject.textboxData.borderWidth}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextValue) => {
+                            updateSelectedTextboxData({
+                              borderType: nextValue,
+                            })
+                          }}
+                        />
+                        <ColorPickerChip
+                          value={asHexColor(
+                            selectedTextboxObject.textboxData.borderColor,
+                            DEFAULT_TEXTBOX_BORDER_COLOR
+                          )}
+                          fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextColor) => {
+                            updateSelectedTextboxData({ borderColor: nextColor })
+                          }}
+                          ariaLabel="Textbox border color"
+                          title="Textbox border color"
+                        />
+                      </>
+                    )}
+                  </div>
+                ) : selectedImageObject ? (
+                  <div
+                    className={`object-param-border-controls ${selectedImageObject.imageData.borderWidth <= 0 ? 'border-none' : ''
+                      }`}
+                  >
+                    <BorderWidthDropdown
+                      value={selectedImageObject.imageData.borderWidth}
+                      borderColor={selectedImageObject.imageData.borderColor}
+                      disabled={selectedObjectTransformLocked}
+                      onChange={(nextValue) => {
+                        updateSelectedImageData({
+                          borderWidth: nextValue,
+                        })
+                      }}
+                    />
+                    {selectedImageObject.imageData.borderWidth > 0 && (
+                      <>
+                        <BorderStyleDropdown
+                          value={selectedImageObject.imageData.borderType}
+                          borderColor={selectedImageObject.imageData.borderColor}
+                          borderWidth={selectedImageObject.imageData.borderWidth}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextValue) => {
+                            updateSelectedImageData({
+                              borderType: nextValue,
+                            })
+                          }}
+                        />
+                        <ColorPickerChip
+                          value={asHexColor(
+                            selectedImageObject.imageData.borderColor,
+                            DEFAULT_TEXTBOX_BORDER_COLOR
+                          )}
+                          fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(nextColor) => {
+                            updateSelectedImageData({ borderColor: nextColor })
+                          }}
+                          ariaLabel="Image border color"
+                          title="Image border color"
+                        />
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="object-param-muted">Border controls are available for shapes, textboxes and images.</div>
                 )}
               </div>
-            ) : selectedObjectIds.length > 1 ? (
+
+              <div className="object-param-row">
+                <span>Protected</span>
+                <div className="slide-param-switch" role="group" aria-label="Object protection">
+                  <button
+                    type="button"
+                    className={selectedObject.locked ? 'active' : ''}
+                    disabled={selectedObjectLockedByAncestor}
+                    onClick={() => setSelectedObjectProtected(true)}
+                  >
+                    <FontAwesomeIcon icon={faLock} /> On
+                  </button>
+                  <button
+                    type="button"
+                    className={!selectedObject.locked ? 'active' : ''}
+                    disabled={selectedObjectLockedByAncestor}
+                    onClick={() => setSelectedObjectProtected(false)}
+                  >
+                    <FontAwesomeIcon icon={faLockOpen} /> Off
+                  </button>
+                </div>
+              </div>
+
+              {canToggleGroupFromSelection && (
+                <div className="object-param-row">
+                  <span>Group</span>
+                  <button
+                    type="button"
+                    className="object-param-secondary-btn"
+                    onClick={() => {
+                      if (selectedGroupObject) {
+                        enterGroup(selectedGroupObject.id)
+                      }
+                    }}
+                    aria-label="Enter group"
+                    title="Enter group"
+                  >
+                    <FontAwesomeIcon icon={faLayerGroup} /> Enter
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : selectedObjectIds.length > 1 ? (
             <p className="panel-empty">
               Numeric transform fields are available only for a single selected object.
             </p>
@@ -3910,18 +4365,18 @@ function App() {
               className="present-hud-btn"
               onClick={goToPreviousSlide}
               title="Previous slide"
-              disabled={!activeSlide || activeSlideIndex <= 0}
+              disabled={presentFreeMoveEnabled || !activeSlide || activeSlideIndex <= 0}
             >
-              Prev
+              <FontAwesomeIcon icon={faBackwardStep} />
             </button>
             <button
               type="button"
               className="present-hud-btn"
               onClick={goToNextSlide}
               title="Next slide"
-              disabled={!activeSlide || activeSlideIndex >= orderedSlides.length - 1}
+              disabled={presentFreeMoveEnabled || !activeSlide || activeSlideIndex >= orderedSlides.length - 1}
             >
-              Next
+              <FontAwesomeIcon icon={faForwardStep} />
             </button>
             <button
               type="button"
@@ -3929,7 +4384,7 @@ function App() {
               onClick={exitPresentMode}
               title="Exit present mode"
             >
-              Exit
+              <FontAwesomeIcon icon={faXmark} />
             </button>
           </div>
         )}
@@ -3951,7 +4406,13 @@ function App() {
         />
 
         {mode === 'present' ? (
-          <PresentStage model={document} slide={activeSlide} />
+          <PresentStage
+            model={document}
+            slide={activeSlide}
+            freeMoveEnabled={presentFreeMoveEnabled}
+            onNavigateNext={goToNextSlide}
+            onNavigatePrevious={goToPreviousSlide}
+          />
         ) : (
           <CanvasViewport hoveredSlideId={hoveredSlideId} />
         )}
