@@ -1,34 +1,3 @@
-            function handleAssetBundlerExport() {
-              // TODO: Gather checked styles, templates, assets and export to single file
-              alert('Export functionality coming soon!')
-            }
-            {/* TODO: Add export button */}
-            <div className="asset-bundler-footer">
-              <button
-                type="button"
-                className="asset-bundler-export-btn"
-                onClick={handleAssetBundlerExport}
-                disabled={
-                  bundlerCheckedStyles.size === 0 &&
-                  bundlerCheckedTemplates.size === 0 &&
-                  bundlerCheckedAssets.size === 0
-                }
-              >
-                Export Selected
-              </button>
-            </div>
-// ...existing code...
-const [bundlerCheckedStyles, setBundlerCheckedStyles] = useState<Set<string>>(new Set())
-const [bundlerCheckedTemplates, setBundlerCheckedTemplates] = useState<Set<string>>(new Set())
-const [bundlerCheckedAssets, setBundlerCheckedAssets] = useState<Set<string>>(new Set())
-// ...existing code...
-const [isAssetBundlerOpen, setAssetBundlerOpen] = useState(false)
-function openAssetBundlerModal() {
-  setAssetBundlerOpen(true)
-}
-function closeAssetBundlerModal() {
-  setAssetBundlerOpen(false)
-}
 import {
   useEffect,
   useMemo,
@@ -64,6 +33,7 @@ import {
   faArrowUpShortWide,
   faArrowUpZA,
   faBackwardStep,
+  faBoxArchive,
   faDice,
   faFont,
   faFileArrowDown,
@@ -87,7 +57,6 @@ import {
   faVideo,
   faVolumeHigh,
   faXmark,
-  faBoxArchive,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
 import {
@@ -2744,6 +2713,10 @@ function App() {
   const [assetLibrarySort, setAssetLibrarySort] = useState<AssetLibrarySort>('name')
   const [assetLibrarySortDirection, setAssetLibrarySortDirection] =
     useState<AssetLibrarySortDirection>('asc')
+  const [isAssetBundlerOpen, setIsAssetBundlerOpen] = useState(false)
+  const [bundlerCheckedStyles, setBundlerCheckedStyles] = useState<Set<string>>(new Set())
+  const [bundlerCheckedTemplates, setBundlerCheckedTemplates] = useState<Set<string>>(new Set())
+  const [bundlerCheckedAssets, setBundlerCheckedAssets] = useState<Set<string>>(new Set())
   const [styleCatalogSearch, setStyleCatalogSearch] = useState('')
   const [styleCatalogSortDirection, setStyleCatalogSortDirection] =
     useState<AssetLibrarySortDirection>('asc')
@@ -4133,6 +4106,54 @@ function App() {
     }
     setAssetLibrarySort(nextSort)
     setAssetLibrarySortDirection('asc')
+  }
+
+  function openAssetBundlerModal() {
+    setIsAssetBundlerOpen(true)
+  }
+
+  function closeAssetBundlerModal() {
+    setIsAssetBundlerOpen(false)
+  }
+
+  function handleAssetBundlerExport() {
+    const selectedItems = {
+      styles: Array.from(bundlerCheckedStyles),
+      templates: Array.from(bundlerCheckedTemplates),
+      assets: Array.from(bundlerCheckedAssets),
+    }
+
+    if (
+      selectedItems.styles.length === 0 &&
+      selectedItems.templates.length === 0 &&
+      selectedItems.assets.length === 0
+    ) {
+      return
+    }
+
+    // Create bundle object
+    const bundle = {
+      version: 1,
+      styles: selectedItems.styles.map(id => stylePresetCatalogEntries.find(e => e.definition.id === id)?.definition).filter(Boolean),
+      templates: selectedItems.templates.map(id => slideTemplateCatalogEntries.find(e => e.definition.id === id)?.definition).filter(Boolean),
+      assets: selectedItems.assets.map(id => document.assets.find(a => a.id === id)).filter(Boolean),
+    }
+
+    // Export as JSON
+    const jsonString = JSON.stringify(bundle, null, 2)
+    const blob = new Blob([jsonString], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `asset-bundle-${Date.now()}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+
+    // Reset selection and close modal
+    setBundlerCheckedStyles(new Set())
+    setBundlerCheckedTemplates(new Set())
+    setBundlerCheckedAssets(new Set())
+    closeAssetBundlerModal()
   }
 
   function handleStyleCatalogNameSortToggle() {
@@ -6422,22 +6443,114 @@ function App() {
       onContextMenuCapture={handlePresentShellContextMenuCapture}
     >
       {isAssetBundlerOpen && createPortal(
-        <div className="asset-bundler-modal fullscreen">
-          <div className="asset-bundler-header">
-            <span className="asset-bundler-title">Asset Bundler</span>
-            <button
-              type="button"
-              className="asset-bundler-close-btn"
-              onClick={closeAssetBundlerModal}
-              aria-label="Close asset bundler"
-            >
-              <FontAwesomeIcon icon={faXmark} />
-            </button>
+        <div className="asset-bundler-modal-overlay fullscreen" onClick={closeAssetBundlerModal}>
+          <div className="asset-bundler-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="asset-bundler-header">
+              <h2 className="asset-bundler-title">Asset Bundler</h2>
+              <button
+                type="button"
+                className="asset-bundler-close-btn"
+                onClick={closeAssetBundlerModal}
+                aria-label="Close asset bundler"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="asset-bundler-body">
+              <div className="asset-bundler-section">
+                <h3>Styles ({bundlerCheckedStyles.size})</h3>
+                <div className="asset-bundler-list">
+                  {stylePresetCatalogEntries.map((entry) => (
+                    <label key={entry.definition.id} className="asset-bundler-item">
+                      <input
+                        type="checkbox"
+                        checked={bundlerCheckedStyles.has(entry.definition.id)}
+                        onChange={() => {
+                          setBundlerCheckedStyles((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(entry.definition.id)) {
+                              next.delete(entry.definition.id)
+                            } else {
+                              next.add(entry.definition.id)
+                            }
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{entry.preset.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="asset-bundler-section">
+                <h3>Templates ({bundlerCheckedTemplates.size})</h3>
+                <div className="asset-bundler-list">
+                  {slideTemplateCatalogEntries.map((entry) => (
+                    <label key={entry.definition.id} className="asset-bundler-item">
+                      <input
+                        type="checkbox"
+                        checked={bundlerCheckedTemplates.has(entry.definition.id)}
+                        onChange={() => {
+                          setBundlerCheckedTemplates((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(entry.definition.id)) {
+                              next.delete(entry.definition.id)
+                            } else {
+                              next.add(entry.definition.id)
+                            }
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{entry.definition.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="asset-bundler-section">
+                <h3>Assets ({bundlerCheckedAssets.size})</h3>
+                <div className="asset-bundler-list">
+                  {assetLibraryEntries.map((entry) => (
+                    <label key={entry.asset.id} className="asset-bundler-item">
+                      <input
+                        type="checkbox"
+                        checked={bundlerCheckedAssets.has(entry.asset.id)}
+                        onChange={() => {
+                          setBundlerCheckedAssets((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(entry.asset.id)) {
+                              next.delete(entry.asset.id)
+                            } else {
+                              next.add(entry.asset.id)
+                            }
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{entry.asset.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="asset-bundler-footer">
+              <button
+                type="button"
+                className="asset-bundler-export-btn"
+                onClick={handleAssetBundlerExport}
+                disabled={
+                  bundlerCheckedStyles.size === 0 &&
+                  bundlerCheckedTemplates.size === 0 &&
+                  bundlerCheckedAssets.size === 0
+                }
+              >
+                Export Selected
+              </button>
+            </div>
           </div>
-          <div className="asset-bundler-body">
-            {/* TODO: List styles, templates, assets with checkboxes */}
-          </div>
-        </div>, document.body)}
+        </div>,
+        document.body
+      )}
       <aside className="sidebar sidebar-left">
         <section className="panel">
           <h2>Infiniprez</h2>
@@ -7111,13 +7224,12 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      className="asset-bundler-btn"
+                      className="asset-library-order-btn"
                       onClick={openAssetBundlerModal}
                       title="Open asset bundler"
                       aria-label="Open asset bundler"
                     >
                       <FontAwesomeIcon icon={faBoxArchive} />
-                      <span>Bundle</span>
                     </button>
                   </div>
                   <div className="asset-library-filter-row" role="group" aria-label="Filter assets by type">
