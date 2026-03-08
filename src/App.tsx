@@ -800,7 +800,6 @@ interface AssetLibraryEntry {
 type AssetLibraryFilter = LibraryAssetKind | null
 type AssetLibrarySort = 'name' | 'size'
 type AssetLibrarySortDirection = 'asc' | 'desc'
-type AssetBundlerSelectionKind = 'style' | 'template' | 'asset'
 
 function buildAssetDataUrl(asset: Asset): string {
   return `data:${asset.mimeType};base64,${asset.dataBase64}`
@@ -3186,6 +3185,60 @@ function App() {
 
     return ordered
   }, [assetLibraryEntries, assetLibraryFilter, assetLibrarySearch, assetLibrarySort, assetLibrarySortDirection])
+  const bundlerStyleSections = useMemo(() => {
+    const grouped = new Map<string, typeof stylePresetCatalogEntries>()
+    for (const entry of stylePresetCatalogEntries) {
+      const fileName = entry.sourceType === 'asset'
+        ? (entry.sourceFileName ?? 'Imported JSON')
+        : 'Built-in styles'
+      const current = grouped.get(fileName)
+      if (current) {
+        current.push(entry)
+      } else {
+        grouped.set(fileName, [entry])
+      }
+    }
+    return [...grouped.entries()].map(([fileName, entries]) => ({ fileName, entries }))
+  }, [stylePresetCatalogEntries])
+  const bundlerTemplateSections = useMemo(() => {
+    const grouped = new Map<string, typeof slideTemplateCatalogEntries>()
+    for (const entry of slideTemplateCatalogEntries) {
+      const fileName = entry.sourceType === 'asset'
+        ? (entry.sourceFileName ?? 'Imported JSON')
+        : 'Built-in templates'
+      const current = grouped.get(fileName)
+      if (current) {
+        current.push(entry)
+      } else {
+        grouped.set(fileName, [entry])
+      }
+    }
+    return [...grouped.entries()].map(([fileName, entries]) => ({ fileName, entries }))
+  }, [slideTemplateCatalogEntries])
+  const bundlerAssetTree = useMemo(() => {
+    const childrenByParent = new Map<string, AssetLibraryEntry[]>()
+    const roots: AssetLibraryEntry[] = []
+    for (const entry of assetLibraryEntries) {
+      if (!entry.parentStyleAssetId) {
+        roots.push(entry)
+        continue
+      }
+      const current = childrenByParent.get(entry.parentStyleAssetId)
+      if (current) {
+        current.push(entry)
+      } else {
+        childrenByParent.set(entry.parentStyleAssetId, [entry])
+      }
+    }
+    roots.sort((a, b) => a.asset.name.localeCompare(b.asset.name, undefined, { sensitivity: 'base' }))
+    for (const siblings of childrenByParent.values()) {
+      siblings.sort((a, b) => a.asset.name.localeCompare(b.asset.name, undefined, { sensitivity: 'base' }))
+    }
+    return roots.map((root) => ({
+      root,
+      children: childrenByParent.get(root.asset.id) ?? [],
+    }))
+  }, [assetLibraryEntries])
   const selectedObjects = useMemo(
     () =>
       selectedObjectIds
@@ -4143,7 +4196,7 @@ function App() {
     const jsonString = JSON.stringify(bundle, null, 2)
     const blob = new Blob([jsonString], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
+    const link = window.document.createElement('a')
     link.href = url
     link.download = `asset-bundle-${Date.now()}.json`
     link.click()
@@ -4185,7 +4238,39 @@ function App() {
   }
 
   function handleDeleteAsset(assetId: string) {
-    deleteAsset(assetId)
+    const childEntries = assetLibraryEntries.filter(
+      (entry) =>
+        embeddedStyleAssetChildLinks.parentByChildAssetId.get(entry.asset.id)
+          ?.parentStyleAssetId === assetId
+    )
+
+    if (childEntries.length === 0) {
+      deleteAsset(assetId)
+      return
+    }
+
+    const usedChildren = childEntries.filter((child) => child.usageCount > 0)
+
+    if (usedChildren.length > 0) {
+      const usedNames = usedChildren.map((c) => c.asset.name).join(', ')
+      const keep = window.confirm(
+        `The following embedded assets are currently in use and cannot be automatically removed:\n\n${usedNames}\n\nClick OK to keep those assets and delete everything else.\nClick Cancel to abort.`
+      )
+      if (!keep) {
+        return
+      }
+      deleteAsset(assetId)
+      for (const child of childEntries) {
+        if (child.usageCount === 0) {
+          deleteAsset(child.asset.id)
+        }
+      }
+    } else {
+      deleteAsset(assetId)
+      for (const child of childEntries) {
+        deleteAsset(child.asset.id)
+      }
+    }
   }
 
   function ensureLibraryAsset(asset: Asset): Asset {
@@ -6442,8 +6527,8 @@ function App() {
       onWheelCapture={handlePresentShellWheelCapture}
       onContextMenuCapture={handlePresentShellContextMenuCapture}
     >
-      {isAssetBundlerOpen && createPortal(
-        <div className="asset-bundler-modal-overlay fullscreen" onClick={closeAssetBundlerModal}>
+      {isAssetBundlerOpen && typeof window !== 'undefined' && window.document.body && createPortal(
+        <div className="asset-bundler-modal-overlay" onClick={closeAssetBundlerModal}>
           <div className="asset-bundler-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="asset-bundler-header">
               <h2 className="asset-bundler-title">Asset Bundler</h2>
@@ -6460,75 +6545,132 @@ function App() {
               <div className="asset-bundler-section">
                 <h3>Styles ({bundlerCheckedStyles.size})</h3>
                 <div className="asset-bundler-list">
-                  {stylePresetCatalogEntries.map((entry) => (
-                    <label key={entry.definition.id} className="asset-bundler-item">
-                      <input
-                        type="checkbox"
-                        checked={bundlerCheckedStyles.has(entry.definition.id)}
-                        onChange={() => {
-                          setBundlerCheckedStyles((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(entry.definition.id)) {
-                              next.delete(entry.definition.id)
-                            } else {
-                              next.add(entry.definition.id)
-                            }
-                            return next
-                          })
-                        }}
-                      />
-                      <span>{entry.preset.name}</span>
-                    </label>
+                  {bundlerStyleSections.map((section, sectionIndex) => (
+                    <div key={`bundler-style-${section.fileName}`} className="asset-bundler-subsection">
+                      {sectionIndex > 0 ? <hr className="asset-bundler-divider" /> : null}
+                      <div className="asset-bundler-subtitle">{section.fileName}</div>
+                      {section.entries.map((entry) => (
+                        <label key={entry.definition.id} className="asset-bundler-item">
+                          <input
+                            type="checkbox"
+                            checked={bundlerCheckedStyles.has(entry.definition.id)}
+                            onChange={() => {
+                              setBundlerCheckedStyles((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(entry.definition.id)) {
+                                  next.delete(entry.definition.id)
+                                } else {
+                                  next.add(entry.definition.id)
+                                }
+                                return next
+                              })
+                            }}
+                          />
+                          <span className="asset-bundler-item-preview">
+                            <FontAwesomeIcon icon={faLayerGroup} />
+                          </span>
+                          <span className="asset-bundler-item-name">{entry.preset.name}</span>
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </div>
               <div className="asset-bundler-section">
                 <h3>Templates ({bundlerCheckedTemplates.size})</h3>
                 <div className="asset-bundler-list">
-                  {slideTemplateCatalogEntries.map((entry) => (
-                    <label key={entry.definition.id} className="asset-bundler-item">
-                      <input
-                        type="checkbox"
-                        checked={bundlerCheckedTemplates.has(entry.definition.id)}
-                        onChange={() => {
-                          setBundlerCheckedTemplates((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(entry.definition.id)) {
-                              next.delete(entry.definition.id)
-                            } else {
-                              next.add(entry.definition.id)
-                            }
-                            return next
-                          })
-                        }}
-                      />
-                      <span>{entry.definition.name}</span>
-                    </label>
+                  {bundlerTemplateSections.map((section, sectionIndex) => (
+                    <div key={`bundler-template-${section.fileName}`} className="asset-bundler-subsection">
+                      {sectionIndex > 0 ? <hr className="asset-bundler-divider" /> : null}
+                      <div className="asset-bundler-subtitle">{section.fileName}</div>
+                      {section.entries.map((entry) => (
+                        <label key={entry.definition.id} className="asset-bundler-item">
+                          <input
+                            type="checkbox"
+                            checked={bundlerCheckedTemplates.has(entry.definition.id)}
+                            onChange={() => {
+                              setBundlerCheckedTemplates((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(entry.definition.id)) {
+                                  next.delete(entry.definition.id)
+                                } else {
+                                  next.add(entry.definition.id)
+                                }
+                                return next
+                              })
+                            }}
+                          />
+                          <span className="asset-bundler-item-preview">
+                            <FontAwesomeIcon icon={faFileImport} />
+                          </span>
+                          <span className="asset-bundler-item-name">{entry.definition.name}</span>
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </div>
               <div className="asset-bundler-section">
                 <h3>Assets ({bundlerCheckedAssets.size})</h3>
                 <div className="asset-bundler-list">
-                  {assetLibraryEntries.map((entry) => (
-                    <label key={entry.asset.id} className="asset-bundler-item">
-                      <input
-                        type="checkbox"
-                        checked={bundlerCheckedAssets.has(entry.asset.id)}
-                        onChange={() => {
-                          setBundlerCheckedAssets((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(entry.asset.id)) {
-                              next.delete(entry.asset.id)
-                            } else {
-                              next.add(entry.asset.id)
-                            }
-                            return next
-                          })
-                        }}
-                      />
-                      <span>{entry.asset.name}</span>
-                    </label>
+                  {bundlerAssetTree.map(({ root, children }) => (
+                    <div key={`bundler-asset-root-${root.asset.id}`} className="asset-bundler-tree-node">
+                      <label className="asset-bundler-item">
+                        <input
+                          type="checkbox"
+                          checked={bundlerCheckedAssets.has(root.asset.id)}
+                          onChange={() => {
+                            setBundlerCheckedAssets((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(root.asset.id)) {
+                                next.delete(root.asset.id)
+                              } else {
+                                next.add(root.asset.id)
+                              }
+                              return next
+                            })
+                          }}
+                        />
+                        <span className={`asset-bundler-item-preview ${root.kind}`}>
+                          {root.kind === 'image' ? (
+                            <img src={root.src} alt="" draggable={false} />
+                          ) : (
+                            <FontAwesomeIcon icon={getAssetTypeIcon(root.kind)} />
+                          )}
+                        </span>
+                        <span className="asset-bundler-item-name">{root.asset.name}</span>
+                      </label>
+                      {children.map((child) => (
+                        <label
+                          key={`bundler-asset-child-${child.asset.id}`}
+                          className="asset-bundler-item asset-bundler-item-child"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={bundlerCheckedAssets.has(child.asset.id)}
+                            onChange={() => {
+                              setBundlerCheckedAssets((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(child.asset.id)) {
+                                  next.delete(child.asset.id)
+                                } else {
+                                  next.add(child.asset.id)
+                                }
+                                return next
+                              })
+                            }}
+                          />
+                          <span className={`asset-bundler-item-preview ${child.kind}`}>
+                            {child.kind === 'image' ? (
+                              <img src={child.src} alt="" draggable={false} />
+                            ) : (
+                              <FontAwesomeIcon icon={getAssetTypeIcon(child.kind)} />
+                            )}
+                          </span>
+                          <span className="asset-bundler-item-name">{child.asset.name}</span>
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -6549,7 +6691,7 @@ function App() {
             </div>
           </div>
         </div>,
-        document.body
+        window.document.body
       )}
       <aside className="sidebar sidebar-left">
         <section className="panel">
@@ -7222,15 +7364,6 @@ function App() {
                         }
                       />
                     </button>
-                    <button
-                      type="button"
-                      className="asset-library-order-btn"
-                      onClick={openAssetBundlerModal}
-                      title="Open asset bundler"
-                      aria-label="Open asset bundler"
-                    >
-                      <FontAwesomeIcon icon={faBoxArchive} />
-                    </button>
                   </div>
                   <div className="asset-library-filter-row" role="group" aria-label="Filter assets by type">
                     {(['image', 'video', 'audio', 'font', 'style'] as const).map((kind) => (
@@ -7247,6 +7380,15 @@ function App() {
                         <FontAwesomeIcon icon={getAssetTypeIcon(kind)} />
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      className="asset-library-order-btn asset-library-bundler-btn"
+                      onClick={openAssetBundlerModal}
+                      title="Open asset bundler"
+                      aria-label="Open asset bundler"
+                    >
+                      <FontAwesomeIcon icon={faBoxArchive} />
+                    </button>
                   </div>
                 </div>
               ) : null}
@@ -7351,14 +7493,6 @@ function App() {
                               </>
                             ) : (
                               <>
-                                {entry.parentStyleAssetName ? (
-                                  <span
-                                    className="asset-library-design-pill asset-library-parent-pill"
-                                    title={`Embedded in ${entry.parentStyleAssetName}`}
-                                  >
-                                    {entry.parentStyleAssetName}
-                                  </span>
-                                ) : null}
                                 <span className="asset-library-usage">
                                   {entry.usageCount === 1 ? '1 use' : `${entry.usageCount} uses`}
                                 </span>
@@ -7374,7 +7508,7 @@ function App() {
                             </span>
                           </span>
                         </span>
-                        {entry.usageCount === 0 ? (
+                        {entry.usageCount === 0 && !entry.parentStyleAssetId ? (
                           <button
                             type="button"
                             className="asset-library-delete-btn"
