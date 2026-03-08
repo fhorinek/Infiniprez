@@ -16,7 +16,7 @@ function createSlide(overrides: Partial<Slide> = {}): Slide {
     name: 'Slide 1',
     x: 0,
     y: 0,
-    zoom: 1,
+    diagonal: 849.056535,
     rotation: 0,
     triggerMode: 'manual',
     triggerDelayMs: 0,

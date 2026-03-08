@@ -88,7 +88,7 @@ function createSlide(index = 0): Slide {
     name: `Slide ${index + 1}`,
     x: 0,
     y: 0,
-    zoom: 1,
+    diagonal: 849.056535,
     rotation: 0,
     triggerMode: 'manual',
     triggerDelayMs: 0,

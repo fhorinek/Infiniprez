@@ -563,7 +563,14 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       ? {
           x: toNumber(slide.x, 0),
           y: toNumber(slide.y, 0),
-          zoom: clamp(toNumber(slide.zoom, 1), 0.01, 100),
+          zoom: (() => {
+            const diagonal = toNumber(slide.diagonal, NaN);
+            if (Number.isFinite(diagonal) && diagonal > 0) {
+              const defaultFrameHalfDiagonal = Math.hypot(1600, 900) / 2;
+              return clamp(defaultFrameHalfDiagonal / diagonal, 0.01, 100);
+            }
+            return clamp(toNumber(slide.zoom, 1), 0.01, 100);
+          })(),
           rotation: toNumber(slide.rotation, 0),
         }
       : { x: 0, y: 0, zoom: 1, rotation: 0 };

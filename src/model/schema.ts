@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import { CURRENT_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, type DocumentModel } from './types'
+import {
+  DEFAULT_TARGET_FRAME_HEIGHT,
+  DEFAULT_TARGET_FRAME_WIDTH,
+  diagonalFromZoom,
+} from '../slideDiagonal'
 
 const nonEmptyStringSchema = z.string().trim().min(1)
 const idSchema = nonEmptyStringSchema
@@ -279,13 +284,28 @@ const slideSchema = z
     name: nonEmptyStringSchema,
     x: z.number(),
     y: z.number(),
-    zoom: z.number().positive(),
+    diagonal: z.number().positive().optional(),
+    zoom: z.number().positive().optional(),
     rotation: z.number(),
     triggerMode: z.enum(['manual', 'timed']),
     triggerDelayMs: z.number().int().min(0).max(60_000),
     transitionType: z.enum(['ease', 'linear', 'instant']),
     transitionDurationMs: z.number().int().min(0).max(10_000),
     orderIndex: z.number().int().nonnegative(),
+  })
+  .transform((slide) => {
+    const diagonal =
+      slide.diagonal ??
+      diagonalFromZoom(
+        slide.zoom ?? 1,
+        DEFAULT_TARGET_FRAME_WIDTH,
+        DEFAULT_TARGET_FRAME_HEIGHT
+      )
+    const { zoom: _zoom, ...rest } = slide
+    return {
+      ...rest,
+      diagonal,
+    }
   })
   .superRefine((slide, ctx) => {
     if (

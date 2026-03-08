@@ -34,6 +34,8 @@ import {
   faArrowUpZA,
   faBackwardStep,
   faBoxArchive,
+  faChevronLeft,
+  faChevronRight,
   faDice,
   faFont,
   faFileArrowDown,
@@ -128,6 +130,7 @@ import {
   getSlideTemplateDefinitionById,
   getSlideTemplateFrameSize,
   registerRuntimeSlideTemplateDefinition,
+  unregisterRuntimeSlideTemplateDefinitionsBySourceAssetId,
   getSlideTemplatesForStyle,
   isSlideTemplateDefinition,
   resolveSlideTemplateTheme,
@@ -149,6 +152,7 @@ import {
   getObjectStyleRole,
   isStylePresetDefinition,
   registerRuntimeStylePresetDefinition,
+  unregisterRuntimeStylePresetDefinitionsBySourceAssetId,
   getTextStyleRole,
   type ObjectStyleRoleId,
   type StylePresetDefinition,
@@ -156,6 +160,11 @@ import {
 } from './stylePresets'
 import { ASSET_LIBRARY_DRAG_MIME, type AssetLibraryDragPayload } from './assetDrag'
 import { buildAssetFontFaceCss, resolveAssetFontFamily } from './fontAssets'
+import {
+  diagonalFromZoom,
+  getTargetFrameHalfDiagonal,
+  zoomFromDiagonal,
+} from './slideDiagonal'
 import './App.css'
 
 const OBJECT_SCALE_MIN_PERCENT = 1
@@ -1053,17 +1062,6 @@ function PresentStage({
     }
   }, [])
 
-  const targetCamera = slide
-    ? {
-      x: toFiniteNumber(slide.x, 0),
-      y: toFiniteNumber(slide.y, 0),
-      zoom: Math.min(100, Math.max(0.01, toFiniteNumber(slide.zoom, 1))),
-      rotation: toFiniteNumber(slide.rotation, 0),
-    }
-    : { x: 0, y: 0, zoom: 1, rotation: 0 }
-  const currentCameraRef = useRef<CameraState>(targetCamera)
-  const previousFreeMoveEnabledRef = useRef(freeMoveEnabled)
-  const [renderCamera, setRenderCamera] = useState<CameraState>(targetCamera)
   const safeViewport =
     viewport.width > 0 && viewport.height > 0
       ? viewport
@@ -1071,6 +1069,30 @@ function PresentStage({
         width: typeof window === 'undefined' ? 1 : window.innerWidth,
         height: typeof window === 'undefined' ? 1 : window.innerHeight,
       }
+  const targetCamera = slide
+    ? {
+      x: toFiniteNumber(slide.x, 0),
+      y: toFiniteNumber(slide.y, 0),
+      zoom: Math.min(
+        100,
+        Math.max(
+          0.01,
+          zoomFromDiagonal(
+            toFiniteNumber(
+              slide.diagonal,
+              diagonalFromZoom(1, safeViewport.width, safeViewport.height)
+            ),
+            safeViewport.width,
+            safeViewport.height
+          )
+        )
+      ),
+      rotation: toFiniteNumber(slide.rotation, 0),
+    }
+    : { x: 0, y: 0, zoom: 1, rotation: 0 }
+  const currentCameraRef = useRef<CameraState>(targetCamera)
+  const previousFreeMoveEnabledRef = useRef(freeMoveEnabled)
+  const [renderCamera, setRenderCamera] = useState<CameraState>(targetCamera)
 
   useEffect(() => {
     currentCameraRef.current = renderCamera
@@ -2727,9 +2749,15 @@ function App() {
   const [selectedObjectScalePercent, setSelectedObjectScalePercent] = useState(100)
   const [multiSelectionScalePercent, setMultiSelectionScalePercent] = useState(100)
   const [activeDesignTab, setActiveDesignTab] = useState<RightSidebarDesignTab>('templates')
+  const [isLeftSidebarHidden, setIsLeftSidebarHidden] = useState(false)
+  const [isRightSidebarHidden, setIsRightSidebarHidden] = useState(false)
   const [leftObjectParamsPortalNode, setLeftObjectParamsPortalNode] = useState<HTMLDivElement | null>(null)
   const [slidesTargetDisplayPortalNode, setSlidesTargetDisplayPortalNode] = useState<HTMLDivElement | null>(null)
   const [templateTargetDisplayFrame, setTemplateTargetDisplayFrame] = useState<{ width: number; height: number }>({
+    width: 1600,
+    height: 900,
+  })
+  const [templateTargetDisplayFittedFrame, setTemplateTargetDisplayFittedFrame] = useState<{ width: number; height: number }>({
     width: 1600,
     height: 900,
   })
@@ -3838,7 +3866,7 @@ function App() {
     const targetCamera: CameraState = {
       x: slide.x,
       y: slide.y,
-      zoom: slide.zoom,
+      zoom: resolveSlideZoom(slide),
       rotation: slide.rotation,
     }
 
@@ -4238,6 +4266,18 @@ function App() {
   }
 
   function handleDeleteAsset(assetId: string) {
+    const targetEntry = assetLibraryEntries.find((entry) => entry.asset.id === assetId) ?? null
+    const removeImportedDesignEntriesFromBundleSource = () => {
+      if (!targetEntry || targetEntry.kind !== 'style') {
+        return
+      }
+      const removedStyleCount = unregisterRuntimeStylePresetDefinitionsBySourceAssetId(assetId)
+      const removedTemplateCount = unregisterRuntimeSlideTemplateDefinitionsBySourceAssetId(assetId)
+      if (removedStyleCount > 0 || removedTemplateCount > 0) {
+        setDesignAssetRevision((current) => current + 1)
+      }
+    }
+
     const childEntries = assetLibraryEntries.filter(
       (entry) =>
         embeddedStyleAssetChildLinks.parentByChildAssetId.get(entry.asset.id)
@@ -4246,6 +4286,7 @@ function App() {
 
     if (childEntries.length === 0) {
       deleteAsset(assetId)
+      removeImportedDesignEntriesFromBundleSource()
       return
     }
 
@@ -4260,6 +4301,7 @@ function App() {
         return
       }
       deleteAsset(assetId)
+      removeImportedDesignEntriesFromBundleSource()
       for (const child of childEntries) {
         if (child.usageCount === 0) {
           deleteAsset(child.asset.id)
@@ -4267,6 +4309,7 @@ function App() {
       }
     } else {
       deleteAsset(assetId)
+      removeImportedDesignEntriesFromBundleSource()
       for (const child of childEntries) {
         deleteAsset(child.asset.id)
       }
@@ -5918,13 +5961,55 @@ function App() {
     }
   }
 
+  function resolveTargetFrameFitScale() {
+    const logicalHalfDiagonal = getTargetFrameHalfDiagonal(
+      templateTargetDisplayFrame.width,
+      templateTargetDisplayFrame.height
+    )
+    const fittedHalfDiagonal = getTargetFrameHalfDiagonal(
+      templateTargetDisplayFittedFrame.width,
+      templateTargetDisplayFittedFrame.height
+    )
+    if (!Number.isFinite(logicalHalfDiagonal) || !Number.isFinite(fittedHalfDiagonal) || fittedHalfDiagonal <= 0) {
+      return 1
+    }
+    return logicalHalfDiagonal / fittedHalfDiagonal
+  }
+
+  function resolveSlideZoom(slide: Slide) {
+    return Math.min(
+      100,
+      Math.max(
+        0.01,
+        zoomFromDiagonal(
+          Math.max(0.0001, slide.diagonal),
+          templateTargetDisplayFittedFrame.width,
+          templateTargetDisplayFittedFrame.height
+        )
+      )
+    )
+  }
+
+  function resolveSlideDiagonal(zoom: number) {
+    return Math.max(
+      0.0001,
+      diagonalFromZoom(
+        zoom,
+        templateTargetDisplayFittedFrame.width,
+        templateTargetDisplayFittedFrame.height
+      )
+    )
+  }
+
   function handleCreateSlide() {
+    const frameFitScale = resolveTargetFrameFitScale()
+    const initialZoom = camera.zoom * frameFitScale
     const slide: Slide = {
       id: createId(),
       name: `Slide ${orderedSlides.length + 1}`,
       x: camera.x,
       y: camera.y,
-      zoom: camera.zoom,
+      diagonal: resolveSlideDiagonal(initialZoom),
       rotation: camera.rotation,
       triggerMode: 'manual',
       triggerDelayMs: 0,
@@ -5946,7 +6031,8 @@ function App() {
 
     const centerX = camera.x
     const centerY = camera.y
-    const referenceZoom = camera.zoom
+    const frameFitScale = resolveTargetFrameFitScale()
+    const referenceZoom = camera.zoom * frameFitScale
     const referenceRotation = camera.rotation
     const targetTemplateWidth = Math.max(1, templateTargetDisplayFrame.width)
     const targetTemplateHeight = Math.max(1, templateTargetDisplayFrame.height)
@@ -6015,7 +6101,7 @@ function App() {
       ...activeSlide,
       x: camera.x,
       y: camera.y,
-      zoom: camera.zoom,
+      diagonal: resolveSlideDiagonal(camera.zoom),
       rotation: camera.rotation,
     })
   }
@@ -6040,13 +6126,13 @@ function App() {
     const cameraFieldsChanged =
       patch.x !== undefined ||
       patch.y !== undefined ||
-      patch.zoom !== undefined ||
+      patch.diagonal !== undefined ||
       patch.rotation !== undefined
     if (cameraFieldsChanged && mode !== 'present') {
       setCamera({
         x: nextSlide.x,
         y: nextSlide.y,
-        zoom: nextSlide.zoom,
+        zoom: resolveSlideZoom(nextSlide),
         rotation: nextSlide.rotation,
       })
     }
@@ -6522,7 +6608,7 @@ function App() {
 
   return (
     <div
-      className={`app-shell ${mode === 'present' ? 'present-mode' : 'has-context-sidebar'}`}
+      className={`app-shell ${mode === 'present' ? 'present-mode' : 'has-context-sidebar'} ${isLeftSidebarHidden ? 'left-sidebar-hidden' : ''} ${isRightSidebarHidden ? 'right-sidebar-hidden' : ''}`}
       onPointerDownCapture={handlePresentShellPointerDownCapture}
       onWheelCapture={handlePresentShellWheelCapture}
       onContextMenuCapture={handlePresentShellContextMenuCapture}
@@ -6693,7 +6779,7 @@ function App() {
         </div>,
         window.document.body
       )}
-      <aside className="sidebar sidebar-left">
+      <aside className={`sidebar sidebar-left ${isLeftSidebarHidden ? 'hidden' : ''}`}>
         <section className="panel">
           <h2>Infiniprez</h2>
           <div className="action-grid project-action-grid">
@@ -6854,23 +6940,32 @@ function App() {
               </div>
 
               <label className="slide-param-slider">
-                <span>Zoom</span>
+                <span>Diagonal</span>
                 <div className="slide-param-slider-control">
                   <input
                     type="range"
-                    min={0.01}
-                    max={100}
-                    step={0.01}
-                    value={activeSlide.zoom}
+                    min={Math.max(
+                      0.0001,
+                      getTargetFrameHalfDiagonal(templateTargetDisplayFrame.width, templateTargetDisplayFrame.height) / 100
+                    )}
+                    max={Math.max(
+                      0.001,
+                      getTargetFrameHalfDiagonal(templateTargetDisplayFrame.width, templateTargetDisplayFrame.height) / 0.01
+                    )}
+                    step={Math.max(
+                      0.0001,
+                      getTargetFrameHalfDiagonal(templateTargetDisplayFrame.width, templateTargetDisplayFrame.height) / 1000
+                    )}
+                    value={activeSlide.diagonal}
                     onWheel={handleRangeWheel}
                     onChange={(event) => {
                       const parsed = parseNumberInput(event.target.value)
                       if (parsed !== null) {
-                        updateActiveSlide({ zoom: Math.min(100, Math.max(0.01, parsed)) })
+                        updateActiveSlide({ diagonal: Math.max(0.0001, parsed) })
                       }
                     }}
                   />
-                  <strong>{activeSlide.zoom.toFixed(2)}x</strong>
+                  <strong>{activeSlide.diagonal.toFixed(1)}</strong>
                 </div>
               </label>
 
@@ -7044,7 +7139,7 @@ function App() {
       </aside>
 
       <aside
-        className={`sidebar sidebar-right ${isAssetLibraryDragOver ? 'asset-drop-target' : ''}`}
+        className={`sidebar sidebar-right ${isAssetLibraryDragOver ? 'asset-drop-target' : ''} ${isRightSidebarHidden ? 'hidden' : ''}`}
         onDragOver={handleAssetLibraryDragOver}
         onDragLeave={handleAssetLibraryDragLeave}
         onDrop={handleAssetLibraryDrop}
@@ -9069,6 +9164,54 @@ function App() {
         })()}
       </aside>
 
+      {mode !== 'present' && !isLeftSidebarHidden ? (
+        <button
+          type="button"
+          className="sidebar-hide-btn left"
+          onClick={() => setIsLeftSidebarHidden(true)}
+          aria-label="Hide left sidebar"
+          title="Hide left sidebar"
+        >
+          <FontAwesomeIcon icon={faChevronLeft} />
+        </button>
+      ) : null}
+
+      {mode !== 'present' && !isRightSidebarHidden ? (
+        <button
+          type="button"
+          className="sidebar-hide-btn right"
+          onClick={() => setIsRightSidebarHidden(true)}
+          aria-label="Hide right sidebar"
+          title="Hide right sidebar"
+        >
+          <FontAwesomeIcon icon={faChevronRight} />
+        </button>
+      ) : null}
+
+      {mode !== 'present' && isLeftSidebarHidden ? (
+        <button
+          type="button"
+          className="sidebar-reopen-btn left"
+          onClick={() => setIsLeftSidebarHidden(false)}
+          aria-label="Show left sidebar"
+          title="Show left sidebar"
+        >
+          <FontAwesomeIcon icon={faChevronRight} />
+        </button>
+      ) : null}
+
+      {mode !== 'present' && isRightSidebarHidden ? (
+        <button
+          type="button"
+          className="sidebar-reopen-btn right"
+          onClick={() => setIsRightSidebarHidden(false)}
+          aria-label="Show right sidebar"
+          title="Show right sidebar"
+        >
+          <FontAwesomeIcon icon={faChevronLeft} />
+        </button>
+      ) : null}
+
       <main className="canvas-area">
         {mode === 'present' && (
           <div className="present-hud">
@@ -9163,7 +9306,13 @@ function App() {
             creationTool={currentCreationTool}
             onCreateObjectFromTool={handleCreateObjectFromTool}
             targetDisplayPortalNode={slidesTargetDisplayPortalNode}
-            onTargetDisplayFrameChange={setTemplateTargetDisplayFrame}
+            onTargetDisplayFrameChange={(frame) => {
+              setTemplateTargetDisplayFrame({ width: frame.width, height: frame.height })
+              setTemplateTargetDisplayFittedFrame({
+                width: frame.fittedWidth,
+                height: frame.fittedHeight,
+              })
+            }}
           />
         )}
       </main>

@@ -1,5 +1,6 @@
 import type { CanvasObject, ShapeData, Slide, TemplatePlaceholderData, TextboxData } from './model'
 import type { StylePreset, TextStyleRoleId } from './stylePresets'
+import { diagonalFromZoom } from './slideDiagonal'
 import { getObjectStyleRole, getTextStyleRole } from './stylePresets'
 import {
   buildObjectsFromTemplateLayout,
@@ -196,6 +197,20 @@ export function registerRuntimeSlideTemplateDefinition(
     sourceAssetId: options?.sourceAssetId?.trim() || null,
   })
   return { added: true, reason: null }
+}
+
+export function unregisterRuntimeSlideTemplateDefinitionsBySourceAssetId(sourceAssetId: string) {
+  const normalizedSourceAssetId = sourceAssetId.trim()
+  if (!normalizedSourceAssetId) {
+    return 0
+  }
+  const initialLength = runtimeTemplateCatalogEntries.length
+  for (let index = runtimeTemplateCatalogEntries.length - 1; index >= 0; index -= 1) {
+    if (runtimeTemplateCatalogEntries[index].sourceAssetId === normalizedSourceAssetId) {
+      runtimeTemplateCatalogEntries.splice(index, 1)
+    }
+  }
+  return initialLength - runtimeTemplateCatalogEntries.length
 }
 
 export function getSlideTemplateCatalogEntries(): SlideTemplateCatalogEntry[] {
@@ -640,7 +655,11 @@ export function buildSlideTemplateInstance(
     name: `${template.name} ${options.orderIndex + 1}`,
     x: options.centerX,
     y: options.centerY,
-    zoom: options.zoom,
+    diagonal: diagonalFromZoom(
+      options.zoom,
+      options.frameWidth ?? TEMPLATE_FRAME_WIDTH,
+      options.frameHeight ?? TEMPLATE_FRAME_HEIGHT
+    ),
     rotation: options.rotation,
     triggerMode: 'manual',
     triggerDelayMs: 0,

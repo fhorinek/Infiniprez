@@ -48,7 +48,7 @@ export interface Slide {
   name: string
   x: number
   y: number
-  zoom: number
+  diagonal: number
   rotation: number
   triggerMode: TriggerMode
   triggerDelayMs: number

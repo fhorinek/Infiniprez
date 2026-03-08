@@ -55,6 +55,7 @@ import {
 import type { StylePreset } from '../stylePresets'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
+import { zoomFromDiagonal } from '../slideDiagonal'
 import {
   cameraDragDeltaToWorld,
   clamp,
@@ -114,7 +115,7 @@ interface GridLine {
   value: number
 }
 
-type TargetDisplayPreset = 'display' | 'desktop' | 'phone' | 'tablet' | 'tv'
+type TargetDisplayPreset = 'ratio-19-9' | 'ratio-16-10' | 'ratio-20-9' | 'ratio-4-3'
 type TargetDisplayOrientation = 'landscape' | 'portrait'
 
 interface PanInteraction {
@@ -275,6 +276,7 @@ type TemplatePlaceholderChoice = 'text' | 'list' | 'image' | 'video'
 const DOUBLE_CLICK_MS = 500
 const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180
 const TEXTBOX_CAMERA_ROTATION_TRANSITION_MS = 220
+const CAMERA_RESET_TRANSITION_MS = 260
 const DEFAULT_TEXTBOX_BACKGROUND = '#1f3151'
 const DEFAULT_TEXTBOX_BORDER_COLOR = '#b2c6ee'
 const DEFAULT_TEXTBOX_BORDER_WIDTH = 1
@@ -287,11 +289,10 @@ const TARGET_DISPLAY_PRESETS: Array<{
   width: number | null
   height: number | null
 }> = [
-    { value: 'display', label: 'Display', width: null, height: null },
-    { value: 'desktop', label: 'Desktop', width: 1440, height: 900 },
-    { value: 'phone', label: 'Phone', width: 390, height: 844 },
-    { value: 'tablet', label: 'Tablet', width: 834, height: 1112 },
-    { value: 'tv', label: 'TV', width: 1920, height: 1080 },
+    { value: 'ratio-19-9', label: '19:9', width: 1900, height: 900 },
+    { value: 'ratio-16-10', label: '16:10', width: 1600, height: 1000 },
+    { value: 'ratio-20-9', label: '20:9', width: 2000, height: 900 },
+    { value: 'ratio-4-3', label: '4:3', width: 1600, height: 1200 },
   ]
 const UNIVERSAL_TEMPLATE_CHOICES: Array<{
   choice: TemplatePlaceholderChoice
@@ -1228,7 +1229,12 @@ interface CanvasViewportProps {
   stylePreset?: StylePreset | null
   creationTool?: CreationToolConfig | null
   targetDisplayPortalNode?: HTMLDivElement | null
-  onTargetDisplayFrameChange?: (frame: { width: number; height: number }) => void
+  onTargetDisplayFrameChange?: (frame: {
+    width: number
+    height: number
+    fittedWidth: number
+    fittedHeight: number
+  }) => void
   onCreateObjectFromTool?: (
     tool: CreationToolConfig['type'],
     frame: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
@@ -1267,6 +1273,7 @@ export function CanvasViewport({
   const videoElementMapRef = useRef<Map<string, HTMLVideoElement>>(new Map())
   const soundElementMapRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const cameraRotationAnimationFrameRef = useRef<number | null>(null)
+  const cameraResetAnimationFrameRef = useRef<number | null>(null)
   const textboxEditingCameraRotationRef = useRef<number | null>(null)
   const editingTextboxMeasuredHeightPxRef = useRef<number | null>(null)
   const lastPointerDownRef = useRef<{ enterGroupId: string | null; timestampMs: number } | null>(null)
@@ -1281,9 +1288,10 @@ export function CanvasViewport({
   const [styleCopySourceObjectId, setStyleCopySourceObjectId] = useState<string | null>(null)
   const [smartGuides, setSmartGuides] = useState<SmartGuideLine[]>([])
   const [creationPreviewRect, setCreationPreviewRect] = useState<Rect | null>(null)
-  const [targetDisplayPreset, setTargetDisplayPreset] = useState<TargetDisplayPreset>('display')
+  const [targetDisplayPreset, setTargetDisplayPreset] = useState<TargetDisplayPreset>('ratio-16-10')
   const [targetDisplayOrientation, setTargetDisplayOrientation] =
     useState<TargetDisplayOrientation>('landscape')
+  const [isTargetDisplayOverlayEnabled, setIsTargetDisplayOverlayEnabled] = useState(true)
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -1333,6 +1341,10 @@ export function CanvasViewport({
       if (cameraRotationAnimationFrameRef.current !== null) {
         cancelAnimationFrame(cameraRotationAnimationFrameRef.current)
         cameraRotationAnimationFrameRef.current = null
+      }
+      if (cameraResetAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(cameraResetAnimationFrameRef.current)
+        cameraResetAnimationFrameRef.current = null
       }
     }
   }, [])
@@ -1736,23 +1748,21 @@ export function CanvasViewport({
     () => getViewWorldBounds(camera, viewportSize),
     [camera, viewportSize]
   )
-  const targetDisplayFrame = useMemo(() => {
-    if (targetDisplayPreset === 'display') {
-      return {
-        left: 0,
-        top: 0,
-        width: viewportSize.width,
-        height: viewportSize.height,
-        aspectRatioLabel: formatAspectRatio(viewportSize.width, viewportSize.height),
-        isConstrained: false,
-      }
-    }
-
+  const targetDisplayLogicalFrame = useMemo(() => {
     const preset = TARGET_DISPLAY_PRESETS.find((entry) => entry.value === targetDisplayPreset)
     const baseWidth = preset?.width ?? viewportSize.width
     const baseHeight = preset?.height ?? viewportSize.height
     const ratioWidth = targetDisplayOrientation === 'landscape' ? Math.max(baseWidth, baseHeight) : Math.min(baseWidth, baseHeight)
     const ratioHeight = targetDisplayOrientation === 'landscape' ? Math.min(baseWidth, baseHeight) : Math.max(baseWidth, baseHeight)
+
+    return {
+      width: Math.max(1, ratioWidth),
+      height: Math.max(1, ratioHeight),
+      aspectRatioLabel: formatAspectRatio(ratioWidth, ratioHeight),
+    }
+  }, [targetDisplayOrientation, targetDisplayPreset, viewportSize.height, viewportSize.width])
+
+  const targetDisplayFrame = useMemo(() => {
     const availableWidth = Math.max(
       1,
       viewportSize.width - TARGET_DISPLAY_MIN_BORDER_SEPARATION_PX * 2
@@ -1762,28 +1772,53 @@ export function CanvasViewport({
       viewportSize.height - TARGET_DISPLAY_MIN_BORDER_SEPARATION_PX * 2
     )
     const scale = Math.min(
-      availableWidth / Math.max(1, ratioWidth),
-      availableHeight / Math.max(1, ratioHeight)
+      availableWidth / targetDisplayLogicalFrame.width,
+      availableHeight / targetDisplayLogicalFrame.height
     )
-    const width = Math.max(1, ratioWidth * scale)
-    const height = Math.max(1, ratioHeight * scale)
+    const width = Math.max(1, targetDisplayLogicalFrame.width * scale)
+    const height = Math.max(1, targetDisplayLogicalFrame.height * scale)
 
     return {
       left: (viewportSize.width - width) / 2,
       top: (viewportSize.height - height) / 2,
       width,
       height,
-      aspectRatioLabel: formatAspectRatio(ratioWidth, ratioHeight),
+      aspectRatioLabel: targetDisplayLogicalFrame.aspectRatioLabel,
       isConstrained: true,
     }
-  }, [targetDisplayOrientation, targetDisplayPreset, viewportSize.height, viewportSize.width])
+  }, [targetDisplayLogicalFrame, viewportSize.height, viewportSize.width])
+
+  const targetDisplayOriginMarker = useMemo(() => {
+    const frameViewport = {
+      width: targetDisplayFrame.width,
+      height: targetDisplayFrame.height,
+    }
+    const withinFrame = worldToScreen({ x: 0, y: 0 }, camera, frameViewport)
+    const markerRadiusPx = 4
+    const clampedX = clamp(withinFrame.x, markerRadiusPx, targetDisplayFrame.width - markerRadiusPx)
+    const clampedY = clamp(withinFrame.y, markerRadiusPx, targetDisplayFrame.height - markerRadiusPx)
+    const isClamped = clampedX !== withinFrame.x || clampedY !== withinFrame.y
+    return {
+      x: targetDisplayFrame.left + clampedX,
+      y: targetDisplayFrame.top + clampedY,
+      isClamped,
+    }
+  }, [camera, targetDisplayFrame])
 
   useEffect(() => {
     onTargetDisplayFrameChange?.({
-      width: targetDisplayFrame.width,
-      height: targetDisplayFrame.height,
+      width: targetDisplayLogicalFrame.width,
+      height: targetDisplayLogicalFrame.height,
+      fittedWidth: targetDisplayFrame.width,
+      fittedHeight: targetDisplayFrame.height,
     })
-  }, [onTargetDisplayFrameChange, targetDisplayFrame.height, targetDisplayFrame.width])
+  }, [
+    onTargetDisplayFrameChange,
+    targetDisplayFrame.height,
+    targetDisplayFrame.width,
+    targetDisplayLogicalFrame.height,
+    targetDisplayLogicalFrame.width,
+  ])
 
   const majorGridLines = useMemo(() => {
     if (!canvasSettings.gridVisible) {
@@ -1838,9 +1873,16 @@ export function CanvasViewport({
     }
 
     return orderedSlides.map((slide) => {
-      const safeSlideZoom = Math.max(0.0001, slide.zoom)
-      const frameWorldWidth = targetDisplayFrame.width / safeSlideZoom
-      const frameWorldHeight = targetDisplayFrame.height / safeSlideZoom
+      const safeSlideZoom = Math.max(
+        0.0001,
+        zoomFromDiagonal(
+          Math.max(0.0001, slide.diagonal),
+          targetDisplayLogicalFrame.width,
+          targetDisplayLogicalFrame.height
+        )
+      )
+      const frameWorldWidth = targetDisplayLogicalFrame.width / safeSlideZoom
+      const frameWorldHeight = targetDisplayLogicalFrame.height / safeSlideZoom
       const centerScreen = worldToTargetFrameScreen({ x: slide.x, y: slide.y })
       const frameWidthPx = frameWorldWidth * camera.zoom
       const frameHeightPx = frameWorldHeight * camera.zoom
@@ -1870,7 +1912,7 @@ export function CanvasViewport({
         isHovered: slide.id === hoveredSlideId,
       }
     })
-  }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, targetDisplayFrame])
+  }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, targetDisplayFrame, targetDisplayLogicalFrame])
 
   const activeSlideBadge = useMemo(() => {
     if (!selectedSlideId) {
@@ -2108,6 +2150,52 @@ export function CanvasViewport({
     }
 
     cameraRotationAnimationFrameRef.current = requestAnimationFrame(tick)
+  }
+
+  function animateCameraResetTo(nextTarget: Partial<CameraState>) {
+    const startCamera = cameraRef.current ?? camera
+    const targetCamera: CameraState = {
+      x: nextTarget.x ?? startCamera.x,
+      y: nextTarget.y ?? startCamera.y,
+      zoom: nextTarget.zoom ?? startCamera.zoom,
+      rotation: nextTarget.rotation ?? startCamera.rotation,
+    }
+    const rotationDelta = getShortestAngleDelta(startCamera.rotation, targetCamera.rotation)
+
+    if (
+      Math.abs(targetCamera.x - startCamera.x) < 0.0001 &&
+      Math.abs(targetCamera.y - startCamera.y) < 0.0001 &&
+      Math.abs(targetCamera.zoom - startCamera.zoom) < 0.0001 &&
+      Math.abs(rotationDelta) < 0.0001
+    ) {
+      return
+    }
+
+    if (cameraResetAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(cameraResetAnimationFrameRef.current)
+      cameraResetAnimationFrameRef.current = null
+    }
+
+    const startedAtMs = performance.now()
+    const tick = (nowMs: number) => {
+      const elapsed = nowMs - startedAtMs
+      const progress = Math.min(1, Math.max(0, elapsed / CAMERA_RESET_TRANSITION_MS))
+      const eased = easeInOutCubic(progress)
+      setCamera({
+        x: startCamera.x + (targetCamera.x - startCamera.x) * eased,
+        y: startCamera.y + (targetCamera.y - startCamera.y) * eased,
+        zoom: startCamera.zoom + (targetCamera.zoom - startCamera.zoom) * eased,
+        rotation: startCamera.rotation + rotationDelta * eased,
+      })
+      if (progress < 1) {
+        cameraResetAnimationFrameRef.current = requestAnimationFrame(tick)
+        return
+      }
+      cameraResetAnimationFrameRef.current = null
+      setCamera(targetCamera)
+    }
+
+    cameraResetAnimationFrameRef.current = requestAnimationFrame(tick)
   }
 
   function startTextboxEditing(target: Extract<CanvasObject, { type: 'textbox' }>) {
@@ -4797,7 +4885,7 @@ export function CanvasViewport({
         ))}
       </div>
 
-      {targetDisplayFrame.isConstrained && (
+      {targetDisplayFrame.isConstrained && isTargetDisplayOverlayEnabled && (
         <div className="target-display-overlay" aria-hidden="true">
           <div
             className="target-display-mask top"
@@ -4843,6 +4931,14 @@ export function CanvasViewport({
               width: targetDisplayFrame.width,
               height: targetDisplayFrame.height,
             }}
+          />
+          <div
+            className={`target-display-origin-dot ${targetDisplayOriginMarker.isClamped ? 'clamped' : ''}`}
+            style={{
+              left: targetDisplayOriginMarker.x,
+              top: targetDisplayOriginMarker.y,
+            }}
+            title={targetDisplayOriginMarker.isClamped ? 'Origin (0,0) is outside frame' : 'Origin (0,0)'}
           />
         </div>
       )}
@@ -5735,13 +5831,61 @@ export function CanvasViewport({
       />
 
       <div className="camera-card" aria-label="Camera position">
-        <span className="camera-pos-item">X {camera.x.toFixed(1)}</span>
-        <span className="camera-pos-item">Y {camera.y.toFixed(1)}</span>
-        <span className="camera-pos-item">
+        <span
+          className="camera-pos-item camera-pos-item-action"
+          title="Click to reset coordinates"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.stopPropagation()
+            animateCameraResetTo({ x: 0, y: 0 })
+          }}
+        >
+          X {camera.x.toFixed(1)}
+        </span>
+        <span
+          className="camera-pos-item camera-pos-item-action"
+          title="Click to reset coordinates"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.stopPropagation()
+            animateCameraResetTo({ x: 0, y: 0 })
+          }}
+        >
+          Y {camera.y.toFixed(1)}
+        </span>
+        <span
+          className="camera-pos-item camera-pos-item-action"
+          title="Click to reset zoom"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.stopPropagation()
+            animateCameraResetTo({ zoom: 1 })
+          }}
+        >
           <FontAwesomeIcon icon={faMagnifyingGlass} />
           {camera.zoom.toFixed(2)}
         </span>
-        <span className="camera-pos-item">
+        <span
+          className="camera-pos-item camera-pos-item-action"
+          title="Click to reset angle"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.stopPropagation()
+            animateCameraResetTo({ rotation: 0 })
+          }}
+        >
           <FontAwesomeIcon icon={faCompass} />
           {((camera.rotation * 180) / Math.PI).toFixed(1)}°
         </span>
@@ -5772,15 +5916,15 @@ export function CanvasViewport({
             }}
           >
             <div className="target-display-card-controls">
-              <span className="target-display-card-label">Target display</span>
+              <span className="target-display-card-label">Target frame</span>
               <select
                 className="target-display-select"
                 value={targetDisplayPreset}
                 onChange={(event) => {
                   setTargetDisplayPreset(event.target.value as TargetDisplayPreset)
                 }}
-                aria-label="Target display"
-                title="Target display"
+                aria-label="Target frame"
+                title="Target frame"
               >
                 {TARGET_DISPLAY_PRESETS.map((preset) => (
                   <option key={preset.value} value={preset.value}>
@@ -5790,13 +5934,23 @@ export function CanvasViewport({
               </select>
               <button
                 type="button"
+                className={`target-display-toggle ${isTargetDisplayOverlayEnabled ? 'active' : ''}`}
+                onClick={() => {
+                  setIsTargetDisplayOverlayEnabled((current) => !current)
+                }}
+                aria-label={isTargetDisplayOverlayEnabled ? 'Disable target frame overlay' : 'Enable target frame overlay'}
+                title={isTargetDisplayOverlayEnabled ? 'Disable overlay' : 'Enable overlay'}
+              >
+                {isTargetDisplayOverlayEnabled ? 'On' : 'Off'}
+              </button>
+              <button
+                type="button"
                 className={`camera-control-btn ${targetDisplayOrientation === 'portrait' ? 'active' : ''}`}
                 onClick={() => {
                   setTargetDisplayOrientation((current) =>
                     current === 'landscape' ? 'portrait' : 'landscape'
                   )
                 }}
-                disabled={targetDisplayPreset === 'display'}
                 aria-label="Rotate target display"
                 title="Rotate target display"
               >

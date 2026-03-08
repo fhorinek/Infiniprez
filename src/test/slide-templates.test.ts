@@ -8,6 +8,7 @@ import {
   getSlideTemplateFrameSize,
   resolveSlideTemplateTheme,
 } from '../slideTemplates'
+import { DEFAULT_TARGET_FRAME_HEIGHT, DEFAULT_TARGET_FRAME_WIDTH, zoomFromDiagonal } from '../slideDiagonal'
 
 describe('slide templates', () => {
   it('defines a reusable set of slide layout templates', () => {
@@ -124,7 +125,15 @@ describe('slide templates', () => {
       .filter((radius) => radius > 0)
     const zoom2ScreenRadii = zoom2Slide.objects
       .filter((object): object is Extract<(typeof zoom2Slide.objects)[number], { type: 'shape_rect' }> => object.type === 'shape_rect')
-      .map((object) => object.shapeData.radius * zoom2Slide.slide.zoom)
+      .map(
+        (object) =>
+          object.shapeData.radius *
+          zoomFromDiagonal(
+            zoom2Slide.slide.diagonal,
+            DEFAULT_TARGET_FRAME_WIDTH,
+            DEFAULT_TARGET_FRAME_HEIGHT
+          )
+      )
       .filter((radius) => radius > 0)
 
     expect(zoom2ScreenRadii).toEqual(zoom1ScreenRadii)

@@ -366,6 +366,20 @@ export function registerRuntimeStylePresetDefinition(
   return { added: true, reason: null }
 }
 
+export function unregisterRuntimeStylePresetDefinitionsBySourceAssetId(sourceAssetId: string) {
+  const normalizedSourceAssetId = sourceAssetId.trim()
+  if (!normalizedSourceAssetId) {
+    return 0
+  }
+  const initialLength = runtimeStylePresetEntries.length
+  for (let index = runtimeStylePresetEntries.length - 1; index >= 0; index -= 1) {
+    if (runtimeStylePresetEntries[index].sourceAssetId === normalizedSourceAssetId) {
+      runtimeStylePresetEntries.splice(index, 1)
+    }
+  }
+  return initialLength - runtimeStylePresetEntries.length
+}
+
 export function getStylePresetCatalogEntries(): StylePresetCatalogEntry[] {
   return [...BUILTIN_STYLE_PRESET_ENTRIES, ...runtimeStylePresetEntries]
 }
