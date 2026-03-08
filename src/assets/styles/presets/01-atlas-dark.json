@@ -1,0 +1,36 @@
+{
+  "id": "atlas-dark",
+  "name": "Blueprint Dark",
+  "inspiration": "Technical blueprint motifs with high contrast",
+  "fontFamily": "Verdana",
+  "canvasBackground": "radial-gradient(circle at 18% 16%, #29446d 0%, #111b2f 42%, #080d17 100%)",
+  "text": {
+    "primary": "#eef4ff",
+    "secondary": "#c8d9f7",
+    "muted": "#91abd2",
+    "accent": "#8db9ff"
+  },
+  "objects": {
+    "foregroundFill": "#2f5c98",
+    "foregroundBorder": "#99c1ff",
+    "foregroundText": "#f5f9ff",
+    "backgroundFill": "#18263f",
+    "backgroundBorder": "#6f8fbe",
+    "backgroundText": "#e8f1ff",
+    "accentFill": "#5b8fe4",
+    "accentBorder": "#c1dcff",
+    "accentText": "#f8fbff",
+    "mutedFill": "#263654",
+    "mutedBorder": "#5b769f",
+    "mutedText": "#c2d3ee",
+    "highlightFill": "#68a8ff",
+    "highlightBorder": "#d5e7ff",
+    "highlightText": "#f9fcff"
+  },
+  "assets": {
+    "imageBorder": "#b5cffc",
+    "videoBorder": "#b5cffc",
+    "audioBorder": "#b5cffc",
+    "iconTint": "#c6ddff"
+  }
+}

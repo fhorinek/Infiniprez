@@ -1,3 +1,34 @@
+            function handleAssetBundlerExport() {
+              // TODO: Gather checked styles, templates, assets and export to single file
+              alert('Export functionality coming soon!')
+            }
+            {/* TODO: Add export button */}
+            <div className="asset-bundler-footer">
+              <button
+                type="button"
+                className="asset-bundler-export-btn"
+                onClick={handleAssetBundlerExport}
+                disabled={
+                  bundlerCheckedStyles.size === 0 &&
+                  bundlerCheckedTemplates.size === 0 &&
+                  bundlerCheckedAssets.size === 0
+                }
+              >
+                Export Selected
+              </button>
+            </div>
+// ...existing code...
+const [bundlerCheckedStyles, setBundlerCheckedStyles] = useState<Set<string>>(new Set())
+const [bundlerCheckedTemplates, setBundlerCheckedTemplates] = useState<Set<string>>(new Set())
+const [bundlerCheckedAssets, setBundlerCheckedAssets] = useState<Set<string>>(new Set())
+// ...existing code...
+const [isAssetBundlerOpen, setAssetBundlerOpen] = useState(false)
+function openAssetBundlerModal() {
+  setAssetBundlerOpen(true)
+}
+function closeAssetBundlerModal() {
+  setAssetBundlerOpen(false)
+}
 import {
   useEffect,
   useMemo,
@@ -5,10 +36,12 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   DndContext,
   PointerSensor,
@@ -26,10 +59,13 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
+  faArrowDownAZ,
+  faArrowDownWideShort,
+  faArrowUpShortWide,
+  faArrowUpZA,
   faBackwardStep,
-  faArrowsUpDownLeftRight,
-  faCircle,
   faDice,
+  faFont,
   faFileArrowDown,
   faFileCirclePlus,
   faFileExport,
@@ -45,32 +81,59 @@ import {
   faPlay,
   faPlus,
   faRotateLeft,
-  faSquare,
+  faShapes,
   faTrashCan,
   faUndo,
+  faVideo,
+  faVolumeHigh,
   faXmark,
+  faBoxArchive,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
 import {
   deserializeDocument,
   serializeDocument,
+  type Asset,
   type CanvasObject,
   type DocumentModel,
   type FillMode,
   type FillGradient,
   type FillGradientStop,
   type ImageData,
+  type ShapeKind,
   type ShapeData,
   type Slide,
+  type SoundData,
   type TextboxData,
+  type VideoData,
 } from './model'
 import {
   buildPresentationExportHtml,
 } from './persistence'
-import { resolveTransitionDurationMs, resolveTransitionProgress } from './presentation'
+import {
+  isBackwardPresentationKey,
+  isForwardPresentationKey,
+  shouldAutoAdvanceSlide,
+  resolveTransitionDurationMs,
+  resolveTransitionProgress,
+} from './presentation'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
-import { resolveTextboxRichHtml } from './textboxRichText'
+import {
+  applyTextboxThemeRichHtml,
+  resolveTextboxBaseTextStyle,
+  resolveTextboxRichHtml,
+  textboxUsesFontFamily,
+} from './textboxRichText'
+import {
+  buildLibraryAsset,
+  findMatchingLibraryAsset,
+  isSupportedLibraryAssetFile,
+  resolveLibraryAssetKind,
+  SUPPORTED_LIBRARY_ASSET_ACCEPT,
+  validateLibraryAssetFile,
+  type LibraryAssetKind,
+} from './assetFile'
 import {
   SUPPORTED_IMAGE_ACCEPT,
   getImageDimensions,
@@ -80,8 +143,133 @@ import {
 } from './imageFile'
 import { cameraDragDeltaToWorld } from './canvas/math'
 import { resolveImageFilterCss } from './imageEffects'
+import {
+  createDefaultImageData,
+  createDefaultSoundData,
+  createDefaultVideoData,
+  getDefaultPlacedMediaSize,
+  getZoomAdjustedObjectScalePercent,
+  isObjectAspectRatioLocked,
+  resolveObjectBorderScale,
+} from './objectDefaults'
 import { resolveObjectDropShadowFilter, resolveObjectShadowCss } from './objectShadow'
+import {
+  buildSlideTemplateInstance,
+  getSlideTemplateCatalogEntries,
+  getSlideTemplateDefinitionById,
+  getSlideTemplateFrameSize,
+  registerRuntimeSlideTemplateDefinition,
+  getSlideTemplatesForStyle,
+  isSlideTemplateDefinition,
+  resolveSlideTemplateTheme,
+  type SlideTemplateDefinition,
+  type SlideTemplate,
+} from './slideTemplates'
+import {
+  SHAPE_KIND_OPTIONS,
+  clampShapeAdjustment,
+  getDefaultShapeAdjustment,
+  getShapeSvgDescriptor,
+  normalizeShapeKind,
+  shapeSupportsRadius,
+} from './shapeStyle'
+import { ShapeSvg } from './ShapeSvg'
+import {
+  getStylePresetCatalogEntries,
+  getStylePresetDefinitionById,
+  getObjectStyleRole,
+  isStylePresetDefinition,
+  registerRuntimeStylePresetDefinition,
+  getTextStyleRole,
+  type ObjectStyleRoleId,
+  type StylePresetDefinition,
+  type StylePreset,
+} from './stylePresets'
+import { ASSET_LIBRARY_DRAG_MIME, type AssetLibraryDragPayload } from './assetDrag'
+import { buildAssetFontFaceCss, resolveAssetFontFamily } from './fontAssets'
 import './App.css'
+
+const OBJECT_SCALE_MIN_PERCENT = 1
+const OBJECT_SCALE_MAX_PERCENT = 10000
+
+type ScalableCanvasObject = Extract<
+  CanvasObject,
+  {
+    type:
+    | 'shape_rect'
+    | 'shape_circle'
+    | 'textbox'
+    | 'image'
+    | 'video'
+    | 'sound'
+    | 'template_placeholder'
+  }
+>
+type RightSidebarDesignTab = 'styles' | 'templates' | 'assets'
+type ShapeCreationPresetId = ShapeKind | 'circle'
+type DesignAssetContextMenu =
+  | {
+    kind: 'style'
+    id: string
+    x: number
+    y: number
+  }
+  | {
+    kind: 'template'
+    id: string
+    x: number
+    y: number
+  }
+
+interface ObjectScaleBaseline {
+  id: string
+  type: ScalableCanvasObject['type']
+  x: number
+  y: number
+  w: number
+  h: number
+  rotation: number
+  scalePercent: number
+}
+
+function clampObjectScalePercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 100
+  }
+  return Math.max(OBJECT_SCALE_MIN_PERCENT, Math.min(OBJECT_SCALE_MAX_PERCENT, Math.round(value)))
+}
+
+function createObjectScaleBaseline(object: ScalableCanvasObject): ObjectScaleBaseline {
+  return {
+    id: object.id,
+    type: object.type,
+    x: object.x,
+    y: object.y,
+    w: object.w,
+    h: object.h,
+    rotation: object.rotation,
+    scalePercent: object.scalePercent,
+  }
+}
+
+function resolveTextboxObjectScale(_textboxData: TextboxData, scalePercent: number) {
+  return clampObjectScalePercent(scalePercent) / 100
+}
+
+function getTemplatePlaceholderBadge(
+  kind: Extract<CanvasObject, { type: 'template_placeholder' }>['templatePlaceholderData']['kind']
+) {
+  if (kind === 'universal') {
+    return 'ANY'
+  }
+  if (kind === 'image') {
+    return 'IMG'
+  }
+  if (kind === 'list') {
+    return 'LIST'
+  }
+  return 'TEXT'
+}
 
 function SortableSlideItem({
   slide,
@@ -591,7 +779,7 @@ function radiusPercentToPx(radiusPercent: number, width: number, height: number)
 const DEFAULT_TEXTBOX_BACKGROUND = '#1f3151'
 const DEFAULT_TEXTBOX_BORDER_COLOR = '#b2c6ee'
 const DEFAULT_TEXTBOX_BORDER_WIDTH = 1
-const MAX_SHAPE_RADIUS = 1000
+const MAX_SHAPE_RADIUS = 1000000
 const MAX_RADIUS_PERCENT = 100
 const MAX_SHADOW_BLUR_PX = 200
 const MAX_GRADIENT_STOPS = 5
@@ -607,6 +795,244 @@ const GRADIENT_ANGLE_PRESETS = [
   { label: '←', angleDeg: -90 },
   { label: '↖', angleDeg: -45 },
 ]
+
+type CreationToolType = 'textbox' | 'shape_rect' | 'shape_circle' | 'image'
+const SUPPORTED_VIDEO_ACCEPT = 'video/mp4,video/webm,video/ogg,video/quicktime,.mp4,.webm,.ogg,.ogv,.mov'
+const SUPPORTED_AUDIO_ACCEPT =
+  'audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/wave,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,audio/webm,audio/flac,audio/x-flac,.mp3,.wav,.m4a,.aac,.ogg,.oga,.flac'
+
+interface PendingImagePlacement {
+  assetId?: string
+  name: string
+  mimeType: string
+  dataBase64: string
+  intrinsicWidth: number
+  intrinsicHeight: number
+  persistAfterPlace?: boolean
+}
+
+interface AssetLibraryEntry {
+  asset: Asset
+  src: string
+  intrinsicWidth: number
+  intrinsicHeight: number
+  usageCount: number
+  kind: LibraryAssetKind
+  base64Size: number
+  durationSec: number | null
+  linkedStylePresetNames: string[]
+  linkedSlideTemplateNames: string[]
+  parentStyleAssetId: string | null
+  parentStyleAssetName: string | null
+  embeddedChildAssetCount: number
+  embeddedChildAssetNames: string[]
+}
+
+type AssetLibraryFilter = LibraryAssetKind | null
+type AssetLibrarySort = 'name' | 'size'
+type AssetLibrarySortDirection = 'asc' | 'desc'
+type AssetBundlerSelectionKind = 'style' | 'template' | 'asset'
+
+function buildAssetDataUrl(asset: Asset): string {
+  return `data:${asset.mimeType};base64,${asset.dataBase64}`
+}
+
+function AssetDropHint({
+  compact = false,
+  onClick,
+}: {
+  compact?: boolean
+  onClick?: () => void
+}) {
+  const items = [
+    { key: 'image', icon: faImage, label: 'Image' },
+    { key: 'video', icon: faVideo, label: 'Video' },
+    { key: 'font', icon: faFont, label: 'Font' },
+    { key: 'sound', icon: faVolumeHigh, label: 'Sound' },
+    { key: 'style', icon: faFileImport, label: 'Style' },
+  ]
+
+  const content = (
+    <>
+      <span className={`asset-drop-hint ${compact ? 'compact' : ''}`}>
+        {items.map((item) => (
+          <span key={item.key} className="asset-drop-hint-item">
+            <span className="asset-drop-hint-icon">
+              <FontAwesomeIcon icon={item.icon} />
+              <span className="asset-drop-hint-plus">
+                <FontAwesomeIcon icon={faPlus} />
+              </span>
+            </span>
+            <span className="asset-drop-hint-label">{item.label}</span>
+          </span>
+        ))}
+      </span>
+      <span className="asset-drop-hint-caption">... or drop here from your computer</span>
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`asset-drop-hint-action ${compact ? 'compact' : ''}`}
+        onClick={onClick}
+        title="Add assets from your computer"
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <span className={`asset-drop-hint-static ${compact ? 'compact' : ''}`} aria-hidden="true">
+      {content}
+    </span>
+  )
+}
+
+function formatBase64PayloadSize(size: number) {
+  if (size >= 1_000_000) {
+    return `${(size / 1_000_000).toFixed(2)} MB`
+  }
+  if (size >= 1_000) {
+    return `${(size / 1_000).toFixed(1)} KB`
+  }
+  return `${size} B`
+}
+
+function formatAssetDuration(durationSec: number | null | undefined) {
+  if (durationSec === null || durationSec === undefined || !Number.isFinite(durationSec) || durationSec <= 0) {
+    return null
+  }
+  const totalSeconds = Math.round(durationSec)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function getAssetTypeLabel(kind: LibraryAssetKind) {
+  switch (kind) {
+    case 'audio':
+      return 'Sound'
+    case 'video':
+      return 'Video'
+    case 'font':
+      return 'Font'
+    case 'style':
+      return 'Style JSON'
+    default:
+      return 'Image'
+  }
+}
+
+function getAssetTypeIcon(kind: LibraryAssetKind) {
+  switch (kind) {
+    case 'audio':
+      return faVolumeHigh
+    case 'video':
+      return faVideo
+    case 'font':
+      return faFont
+    case 'style':
+      return faFileImport
+    default:
+      return faImage
+  }
+}
+
+function inferStylePreset(document: DocumentModel, presets: StylePreset[]): StylePreset | null {
+  const firstTextbox = document.objects.find((object) => object.type === 'textbox')
+  return (
+    presets.find(
+      (preset) =>
+        document.canvas.background === preset.canvasBackground &&
+        (!firstTextbox || firstTextbox.textboxData.fontFamily === preset.fontFamily)
+    ) ?? null
+  )
+}
+
+function normalizeColorForStyleMatch(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function resolvePresetTextRole(
+  preset: StylePreset | null,
+  role: Parameters<typeof getTextStyleRole>[1],
+  stylePresets: StylePreset[]
+) {
+  const fallbackPreset = preset ?? stylePresets[0] ?? null
+  return getTextStyleRole(fallbackPreset, role)
+}
+
+function resolvePresetObjectRole(
+  preset: StylePreset | null,
+  role: ObjectStyleRoleId,
+  stylePresets: StylePreset[]
+) {
+  const fallbackPreset = preset ?? stylePresets[0] ?? null
+  return getObjectStyleRole(fallbackPreset, role)
+}
+
+function inferObjectStyleRoleIdForObject(
+  object: CanvasObject | null,
+  preset: StylePreset | null
+): ObjectStyleRoleId | null {
+  if (!object || object.type === 'group' || object.type === 'template_placeholder') {
+    return null
+  }
+  if (!preset) {
+    return null
+  }
+  const candidates = preset.objectStyles
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const findByMatch = (predicate: (entry: (typeof candidates)[number]) => boolean) =>
+    candidates.find(predicate)?.id ?? null
+
+  if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+    const fill = normalizeColorForStyleMatch(object.shapeData.fillColor)
+    const border = normalizeColorForStyleMatch(object.shapeData.borderColor)
+    return findByMatch(
+      (entry) =>
+        normalizeColorForStyleMatch(entry.fillColor) === fill &&
+        normalizeColorForStyleMatch(entry.borderColor) === border
+    )
+  }
+
+  if (object.type === 'textbox') {
+    const fill = normalizeColorForStyleMatch(object.textboxData.backgroundColor)
+    const border = normalizeColorForStyleMatch(object.textboxData.borderColor)
+    return findByMatch(
+      (entry) =>
+        normalizeColorForStyleMatch(entry.fillColor) === fill &&
+        normalizeColorForStyleMatch(entry.borderColor) === border
+    )
+  }
+
+  if (object.type === 'image') {
+    const border = normalizeColorForStyleMatch(object.imageData.borderColor)
+    return findByMatch((entry) => normalizeColorForStyleMatch(entry.borderColor) === border)
+  }
+
+  if (object.type === 'video') {
+    const border = normalizeColorForStyleMatch(object.videoData.borderColor)
+    return findByMatch((entry) => normalizeColorForStyleMatch(entry.borderColor) === border)
+  }
+
+  if (object.type === 'sound') {
+    const border = normalizeColorForStyleMatch(object.soundData.borderColor)
+    return findByMatch((entry) => normalizeColorForStyleMatch(entry.borderColor) === border)
+  }
+
+  return null
+}
 
 function PresentStage({
   model,
@@ -796,25 +1222,83 @@ function PresentStage({
       element.style.height = `${height}px`
       element.style.transform = `rotate(${objectRotation + renderCamera.rotation}rad)`
 
-      if (object.type === 'shape_rect' || object.type === 'shape_circle' || object.type === 'shape_arrow') {
-        const borderWidth = Math.max(0, toFiniteNumber(object.shapeData.borderWidth, 1))
-        const radiusPx =
-          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.shapeData.radius, 0))) * renderCamera.zoom
-        element.style.borderWidth = `${borderWidth * renderCamera.zoom}px`
-        element.style.borderStyle = object.shapeData.borderType
-        element.style.borderColor = object.shapeData.borderColor
-        element.style.background = getShapeBackground(object.shapeData)
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        const borderWidth =
+          Math.max(0, toFiniteNumber(object.shapeData.borderWidth, 1)) *
+          resolveObjectBorderScale(object.scalePercent)
         element.style.opacity = `${Math.max(0, Math.min(100, object.shapeData.opacityPercent)) / 100}`
-        element.style.borderRadius = object.type === 'shape_circle' ? '999px' : `${radiusPx}px`
-        element.style.boxShadow = resolveObjectShadowCss(object.shapeData, renderCamera.zoom)
-        if (object.type === 'shape_arrow') {
-          element.textContent = '→'
-          element.style.fontSize = `${Math.max(14, 24 * renderCamera.zoom)}px`
-          element.style.display = 'grid'
-          element.style.placeItems = 'center'
+        element.style.filter = resolveObjectDropShadowFilter(object.shapeData, renderCamera.zoom)
+        const svgNamespace = 'http://www.w3.org/2000/svg'
+        const shapeSvg = dom.createElementNS(svgNamespace, 'svg')
+        shapeSvg.setAttribute('viewBox', `0 0 ${objectW} ${objectH}`)
+        shapeSvg.setAttribute('preserveAspectRatio', 'none')
+        shapeSvg.setAttribute('class', 'present-shape-outline')
+        shapeSvg.style.position = 'absolute'
+        shapeSvg.style.inset = '0'
+        shapeSvg.style.width = '100%'
+        shapeSvg.style.height = '100%'
+        shapeSvg.style.overflow = 'visible'
+        const descriptor = getShapeSvgDescriptor(object.type, object.shapeData, objectW, objectH)
+        const borderShape =
+          descriptor.kind === 'ellipse'
+            ? dom.createElementNS(svgNamespace, 'ellipse')
+            : dom.createElementNS(svgNamespace, 'path')
+        if (descriptor.kind === 'ellipse') {
+          borderShape.setAttribute('cx', String(descriptor.cx))
+          borderShape.setAttribute('cy', String(descriptor.cy))
+          borderShape.setAttribute('rx', String(descriptor.rx))
+          borderShape.setAttribute('ry', String(descriptor.ry))
+        } else {
+          borderShape.setAttribute('d', String(descriptor.d))
         }
+        const clipPathId = `present-shape-fill-${String(object.id).replace(/[^a-zA-Z0-9_-]/g, '')}`
+        const defs = dom.createElementNS(svgNamespace, 'defs')
+        const clipPath = dom.createElementNS(svgNamespace, 'clipPath')
+        clipPath.setAttribute('id', clipPathId)
+        clipPath.setAttribute('clipPathUnits', 'userSpaceOnUse')
+        const clipShape =
+          descriptor.kind === 'ellipse'
+            ? dom.createElementNS(svgNamespace, 'ellipse')
+            : dom.createElementNS(svgNamespace, 'path')
+        if (descriptor.kind === 'ellipse') {
+          clipShape.setAttribute('cx', String(descriptor.cx))
+          clipShape.setAttribute('cy', String(descriptor.cy))
+          clipShape.setAttribute('rx', String(descriptor.rx))
+          clipShape.setAttribute('ry', String(descriptor.ry))
+        } else {
+          clipShape.setAttribute('d', String(descriptor.d))
+        }
+        clipPath.appendChild(clipShape)
+        defs.appendChild(clipPath)
+        shapeSvg.appendChild(defs)
+        const fillLayer = dom.createElementNS(svgNamespace, 'foreignObject')
+        fillLayer.setAttribute('x', '0')
+        fillLayer.setAttribute('y', '0')
+        fillLayer.setAttribute('width', String(objectW))
+        fillLayer.setAttribute('height', String(objectH))
+        fillLayer.setAttribute('clip-path', `url(#${clipPathId})`)
+        const fillLayerContent = dom.createElementNS('http://www.w3.org/1999/xhtml', 'div')
+        fillLayerContent.style.width = '100%'
+        fillLayerContent.style.height = '100%'
+        fillLayerContent.style.background = getShapeBackground(object.shapeData)
+        fillLayer.appendChild(fillLayerContent)
+        borderShape.setAttribute('fill', 'none')
+        borderShape.setAttribute('stroke', object.shapeData.borderColor)
+        borderShape.setAttribute('stroke-width', String(borderWidth))
+        borderShape.setAttribute('stroke-linejoin', 'round')
+        borderShape.setAttribute('stroke-linecap', 'round')
+        if (object.shapeData.borderType === 'dashed') {
+          borderShape.setAttribute('stroke-dasharray', `${borderWidth * 4} ${borderWidth * 2}`)
+        } else if (object.shapeData.borderType === 'dotted') {
+          borderShape.setAttribute('stroke-dasharray', `${borderWidth} ${borderWidth * 1.8}`)
+        }
+        shapeSvg.appendChild(fillLayer)
+        shapeSvg.appendChild(borderShape)
+        element.appendChild(shapeSvg)
       } else if (object.type === 'image') {
-        const imageBorderWidth = Math.max(0, toFiniteNumber(object.imageData.borderWidth, 0))
+        const imageBorderWidth =
+          Math.max(0, toFiniteNumber(object.imageData.borderWidth, 0)) *
+          resolveObjectBorderScale(object.scalePercent)
         const imageOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.imageData.opacityPercent, 100))) / 100
         const imageRadiusPx =
           Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.imageData.radius, 0))) * renderCamera.zoom
@@ -840,25 +1324,156 @@ function PresentStage({
           clipLayer.appendChild(image)
         }
         element.appendChild(clipLayer)
+      } else if (object.type === 'video') {
+        const videoBorderWidth =
+          Math.max(0, toFiniteNumber(object.videoData.borderWidth, 0)) *
+          resolveObjectBorderScale(object.scalePercent)
+        const videoOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.videoData.opacityPercent, 100))) / 100
+        const videoRadiusPx =
+          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.videoData.radius, 0))) * renderCamera.zoom
+        element.style.opacity = `${videoOpacity}`
+        element.style.background = 'transparent'
+        element.style.filter = resolveObjectDropShadowFilter(object.videoData, renderCamera.zoom)
+        element.style.cursor = 'pointer'
+        element.addEventListener('pointerdown', (event) => {
+          event.stopPropagation()
+        })
+        const clipLayer = dom.createElement('div')
+        clipLayer.className = 'present-image-clip'
+        clipLayer.style.borderWidth = `${videoBorderWidth * renderCamera.zoom}px`
+        clipLayer.style.borderStyle = object.videoData.borderType
+        clipLayer.style.borderColor = object.videoData.borderColor
+        clipLayer.style.clipPath = `inset(0% 0% 0% 0% round ${videoRadiusPx}px)`
+        const asset = assetById.get(object.videoData.assetId)
+        if (asset) {
+          const video = dom.createElement('video')
+          video.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
+          video.muted = object.videoData.muted
+          video.loop = object.videoData.loop
+          video.autoplay = false
+          video.playsInline = true
+          video.controls = false
+          video.preload = 'metadata'
+          video.style.width = '100%'
+          video.style.height = '100%'
+          video.style.objectFit = 'fill'
+          clipLayer.appendChild(video)
+          element.addEventListener('click', (event) => {
+            event.stopPropagation()
+            if (video.paused) {
+              void video.play().catch(() => undefined)
+            } else {
+              video.pause()
+            }
+          })
+        }
+        element.appendChild(clipLayer)
+      } else if (object.type === 'sound') {
+        const soundBorderWidth =
+          Math.max(0, toFiniteNumber(object.soundData.borderWidth, 0)) *
+          resolveObjectBorderScale(object.scalePercent)
+        const soundContentScale = resolveObjectBorderScale(object.scalePercent)
+        const soundOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.soundData.opacityPercent, 100))) / 100
+        const soundRadiusPx =
+          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.soundData.radius, 0))) * renderCamera.zoom
+        element.style.opacity = `${soundOpacity}`
+        element.style.background =
+          'linear-gradient(135deg, rgba(32, 52, 92, 0.92), rgba(19, 28, 48, 0.96))'
+        element.style.filter = resolveObjectDropShadowFilter(object.soundData, renderCamera.zoom)
+        element.style.borderWidth = `${soundBorderWidth * renderCamera.zoom}px`
+        element.style.borderStyle = object.soundData.borderType
+        element.style.borderColor = object.soundData.borderColor
+        element.style.borderRadius = `${soundRadiusPx}px`
+        element.style.cursor = 'pointer'
+        element.addEventListener('pointerdown', (event) => {
+          event.stopPropagation()
+        })
+        element.style.padding = `${12 * renderCamera.zoom * soundContentScale}px ${16 * renderCamera.zoom * soundContentScale}px`
+        element.style.display = 'grid'
+        element.style.gridTemplateColumns = `${18 * renderCamera.zoom * soundContentScale}px minmax(0, 1fr)`
+        element.style.alignItems = 'center'
+        element.style.gap = `${12 * renderCamera.zoom * soundContentScale}px`
+        const asset = assetById.get(object.soundData.assetId)
+        const icon = dom.createElement('span')
+        icon.textContent = '▶'
+        icon.style.fontSize = `${Math.max(14, 18 * renderCamera.zoom * soundContentScale)}px`
+        icon.style.lineHeight = '1'
+        const label = dom.createElement('strong')
+        label.textContent = asset?.name || 'Sound'
+        label.style.overflow = 'hidden'
+        label.style.textOverflow = 'ellipsis'
+        label.style.whiteSpace = 'nowrap'
+        label.style.fontSize = `${Math.max(11, 13 * renderCamera.zoom * soundContentScale)}px`
+        const audio = dom.createElement('audio')
+        if (asset) {
+          audio.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
+        }
+        audio.loop = object.soundData.loop
+        audio.preload = 'metadata'
+        audio.addEventListener('play', () => {
+          icon.textContent = '❚❚'
+        })
+        audio.addEventListener('pause', () => {
+          icon.textContent = '▶'
+        })
+        element.addEventListener('click', (event) => {
+          event.stopPropagation()
+          if (audio.paused) {
+            void audio.play().catch(() => undefined)
+          } else {
+            audio.pause()
+          }
+        })
+        element.appendChild(icon)
+        element.appendChild(label)
+        element.appendChild(audio)
+      } else if (object.type === 'template_placeholder') {
+        const templateScale =
+          renderCamera.zoom * resolveObjectBorderScale(object.scalePercent)
+        element.style.setProperty(
+          '--present-template-scale',
+          `${Math.max(0.01, templateScale)}`
+        )
+        element.classList.add('template-placeholder')
+        element.innerHTML =
+          '<div class="present-template-placeholder kind-' +
+          object.templatePlaceholderData.kind +
+          '"><span>' +
+          getTemplatePlaceholderBadge(object.templatePlaceholderData.kind) +
+          '</span><strong>' +
+          object.templatePlaceholderData.prompt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+          '</strong></div>'
       } else if (object.type === 'textbox') {
         const borderWidth = Math.max(
           0,
           toFiniteNumber(object.textboxData.borderWidth, DEFAULT_TEXTBOX_BORDER_WIDTH)
+        ) * resolveObjectBorderScale(object.scalePercent)
+        const textboxBaseTextStyle = resolveTextboxBaseTextStyle(object.textboxData)
+        const renderTextboxScale = Math.max(
+          0.01,
+          renderCamera.zoom * resolveTextboxObjectScale(object.textboxData, object.scalePercent)
         )
         element.style.borderWidth = `${borderWidth * renderCamera.zoom}px`
         element.style.borderStyle = object.textboxData.borderType
         element.style.borderColor = object.textboxData.borderColor
+        element.style.borderRadius = `${Math.max(
+          0,
+          Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.textboxData.radius, 0))
+        ) * renderCamera.zoom}px`
         element.style.background = getTextboxBackground(object.textboxData)
         element.style.opacity = `${Math.max(0, Math.min(100, toFiniteNumber(object.textboxData.opacityPercent, 100))) / 100
           }`
         element.style.boxShadow = resolveObjectShadowCss(object.textboxData, renderCamera.zoom)
+        const textboxVerticalAlignment = object.textboxData.verticalAlignment ?? 'top'
         const richContent = dom.createElement('div')
-        richContent.className = 'present-textbox-content textbox-rich-content'
-        richContent.style.transform = `scale(${Math.max(0.01, renderCamera.zoom)})`
+        richContent.className = `present-textbox-content textbox-rich-content textbox-v-align-${textboxVerticalAlignment}`
+        richContent.style.transform = `scale(${renderTextboxScale})`
         richContent.style.transformOrigin = 'top left'
-        richContent.style.width = `${100 / Math.max(0.01, renderCamera.zoom)}%`
-        richContent.style.height = `${100 / Math.max(0.01, renderCamera.zoom)}%`
-        richContent.style.fontFamily = object.textboxData.fontFamily
+        richContent.style.width = `${100 / renderTextboxScale}%`
+        richContent.style.height = `${100 / renderTextboxScale}%`
+        richContent.style.fontFamily = textboxBaseTextStyle.fontFamily
+        richContent.style.fontSize = `${textboxBaseTextStyle.fontSizePx}px`
+        richContent.style.color = textboxBaseTextStyle.textColor
         richContent.innerHTML = resolveTextboxRichHtml(object.textboxData)
         element.appendChild(richContent)
       }
@@ -1098,6 +1713,284 @@ function parseStoredFile(payload: string): { document: DocumentModel; camera: Ca
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+}
+
+interface LibraryAssetDefinition {
+  name: string
+  mimeType: string
+  dataBase64: string
+  intrinsicWidth?: number | null
+  intrinsicHeight?: number | null
+  durationSec?: number | null
+}
+
+interface TypedDesignBundleExtraction {
+  styles: StylePresetDefinition[]
+  templates: SlideTemplateDefinition[]
+  assets: LibraryAssetDefinition[]
+}
+
+function parseDataUrlAssetPayload(value: string): { mimeType: string; dataBase64: string } | null {
+  const match = value.trim().match(/^data:([^;,]+);base64,(.+)$/i)
+  if (!match) {
+    return null
+  }
+  return {
+    mimeType: match[1].trim().toLowerCase(),
+    dataBase64: match[2].trim(),
+  }
+}
+
+function parseLibraryAssetDefinitionFromUnknown(payload: unknown): LibraryAssetDefinition | null {
+  const record = asRecord(payload)
+  if (!record) {
+    return null
+  }
+
+  const nestedAsset = asRecord(record.asset)
+  const source = nestedAsset ?? record
+
+  const parsedDataUrl =
+    typeof source.dataUrl === 'string' && source.dataUrl.trim().length > 0
+      ? parseDataUrlAssetPayload(source.dataUrl)
+      : null
+  const explicitBase64 =
+    typeof source.dataBase64 === 'string' && source.dataBase64.trim().length > 0
+      ? source.dataBase64.trim()
+      : null
+  const mimeType =
+    (typeof source.mimeType === 'string' && source.mimeType.trim().length > 0
+      ? source.mimeType.trim().toLowerCase()
+      : parsedDataUrl?.mimeType) ?? ''
+  const dataBase64 = explicitBase64 ?? parsedDataUrl?.dataBase64 ?? ''
+  const name = typeof source.name === 'string' ? source.name.trim() : ''
+  if (!name || !mimeType || !dataBase64) {
+    return null
+  }
+
+  const kind = resolveLibraryAssetKind({ mimeType, name })
+  if (!kind || kind === 'style') {
+    return null
+  }
+
+  const intrinsicWidth =
+    typeof source.intrinsicWidth === 'number' && Number.isFinite(source.intrinsicWidth) && source.intrinsicWidth > 0
+      ? source.intrinsicWidth
+      : null
+  const intrinsicHeight =
+    typeof source.intrinsicHeight === 'number' && Number.isFinite(source.intrinsicHeight) && source.intrinsicHeight > 0
+      ? source.intrinsicHeight
+      : null
+  const durationSec =
+    typeof source.durationSec === 'number' && Number.isFinite(source.durationSec) && source.durationSec >= 0
+      ? source.durationSec
+      : null
+
+  return {
+    name,
+    mimeType,
+    dataBase64,
+    intrinsicWidth,
+    intrinsicHeight,
+    durationSec,
+  }
+}
+
+function extractTypedDesignBundleFromUnknown(payload: unknown): TypedDesignBundleExtraction | null {
+  if (!Array.isArray(payload)) {
+    return null
+  }
+
+  const styles: StylePresetDefinition[] = []
+  const templates: SlideTemplateDefinition[] = []
+  const assets: LibraryAssetDefinition[] = []
+  let hasTypedItems = false
+
+  for (const item of payload) {
+    const record = asRecord(item)
+    if (!record || typeof record.type !== 'string') {
+      continue
+    }
+    hasTypedItems = true
+    const itemType = record.type.trim().toLowerCase()
+    if (itemType === 'style') {
+      const candidate = asRecord(record.style) ?? asRecord(record.definition) ?? asRecord(record.value) ?? record
+      if (isStylePresetDefinition(candidate)) {
+        styles.push(candidate)
+      }
+      continue
+    }
+    if (itemType === 'template') {
+      const candidate =
+        asRecord(record.template) ?? asRecord(record.definition) ?? asRecord(record.value) ?? record
+      if (isSlideTemplateDefinition(candidate)) {
+        templates.push(candidate)
+      }
+      continue
+    }
+    if (itemType === 'asset') {
+      const parsed = parseLibraryAssetDefinitionFromUnknown(record)
+      if (parsed) {
+        assets.push(parsed)
+      }
+    }
+  }
+
+  if (!hasTypedItems) {
+    return null
+  }
+
+  return {
+    styles,
+    templates,
+    assets,
+  }
+}
+
+function extractStylePresetDefinitionsFromUnknown(payload: unknown): StylePresetDefinition[] {
+  const typedBundle = extractTypedDesignBundleFromUnknown(payload)
+  if (typedBundle) {
+    return typedBundle.styles
+  }
+  if (isStylePresetDefinition(payload)) {
+    return [payload]
+  }
+  if (Array.isArray(payload)) {
+    return payload.filter(isStylePresetDefinition)
+  }
+  const record = asRecord(payload)
+  if (!record) {
+    return []
+  }
+  if (isStylePresetDefinition(record.preset)) {
+    return [record.preset]
+  }
+  if (Array.isArray(record.stylePresets)) {
+    return record.stylePresets.filter(isStylePresetDefinition)
+  }
+  if (Array.isArray(record.styles)) {
+    return record.styles.filter(isStylePresetDefinition)
+  }
+  return []
+}
+
+function extractSlideTemplateDefinitionsFromUnknown(payload: unknown): SlideTemplateDefinition[] {
+  const typedBundle = extractTypedDesignBundleFromUnknown(payload)
+  if (typedBundle) {
+    return typedBundle.templates
+  }
+  if (isSlideTemplateDefinition(payload)) {
+    return [payload]
+  }
+  if (Array.isArray(payload)) {
+    return payload.filter(isSlideTemplateDefinition)
+  }
+  const record = asRecord(payload)
+  if (!record) {
+    return []
+  }
+  if (isSlideTemplateDefinition(record.template)) {
+    return [record.template]
+  }
+  if (Array.isArray(record.slideTemplates)) {
+    return record.slideTemplates.filter(isSlideTemplateDefinition)
+  }
+  if (Array.isArray(record.templates)) {
+    return record.templates.filter(isSlideTemplateDefinition)
+  }
+  return []
+}
+
+function extractLibraryAssetDefinitionsFromUnknown(payload: unknown): LibraryAssetDefinition[] {
+  const typedBundle = extractTypedDesignBundleFromUnknown(payload)
+  if (typedBundle) {
+    return typedBundle.assets
+  }
+  if (Array.isArray(payload)) {
+    return payload
+      .map((entry) => parseLibraryAssetDefinitionFromUnknown(entry))
+      .filter((entry): entry is LibraryAssetDefinition => Boolean(entry))
+  }
+  const record = asRecord(payload)
+  if (!record) {
+    return []
+  }
+  if (Array.isArray(record.assets)) {
+    return record.assets
+      .map((entry) => parseLibraryAssetDefinitionFromUnknown(entry))
+      .filter((entry): entry is LibraryAssetDefinition => Boolean(entry))
+  }
+  if (Array.isArray(record.libraryAssets)) {
+    return record.libraryAssets
+      .map((entry) => parseLibraryAssetDefinitionFromUnknown(entry))
+      .filter((entry): entry is LibraryAssetDefinition => Boolean(entry))
+  }
+  const single = parseLibraryAssetDefinitionFromUnknown(record)
+  return single ? [single] : []
+}
+
+function registerDesignAssetDefinitionsFromPayload(
+  payload: unknown,
+  sourceFileName: string | null,
+  sourceAssetId: string | null = null
+): {
+  styleAdded: number
+  styleDuplicates: number
+  styleRejected: number
+  templateAdded: number
+  templateDuplicates: number
+  templateRejected: number
+} {
+  const styleDefinitions = extractStylePresetDefinitionsFromUnknown(payload)
+  const templateDefinitions = extractSlideTemplateDefinitionsFromUnknown(payload)
+
+  let styleAdded = 0
+  let styleDuplicates = 0
+  let styleRejected = 0
+  let templateAdded = 0
+  let templateDuplicates = 0
+  let templateRejected = 0
+
+  for (const definition of styleDefinitions) {
+    const result = registerRuntimeStylePresetDefinition(definition, { sourceFileName, sourceAssetId })
+    if (result.added) {
+      styleAdded += 1
+    } else if (result.reason === 'duplicate-id') {
+      styleDuplicates += 1
+    } else {
+      styleRejected += 1
+    }
+  }
+
+  for (const definition of templateDefinitions) {
+    const result = registerRuntimeSlideTemplateDefinition(definition, { sourceFileName, sourceAssetId })
+    if (result.added) {
+      templateAdded += 1
+    } else if (result.reason === 'duplicate-id') {
+      templateDuplicates += 1
+    } else {
+      templateRejected += 1
+    }
+  }
+
+  return {
+    styleAdded,
+    styleDuplicates,
+    styleRejected,
+    templateAdded,
+    templateDuplicates,
+    templateRejected,
+  }
+}
+
+function decodeAssetBase64ToText(dataBase64: string): string {
+  const binary = window.atob(dataBase64)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
 function isInteractivePointerTarget(target: EventTarget | null): boolean {
   const element = target instanceof HTMLElement ? target : null
   if (!element) {
@@ -1106,11 +1999,28 @@ function isInteractivePointerTarget(target: EventTarget | null): boolean {
   if (element.isContentEditable) {
     return true
   }
+  if (element.closest('.present-object.video, .present-object.sound, video, audio')) {
+    return true
+  }
   return Boolean(
     element.closest(
-      'button,input,textarea,select,option,label,a[href],[contenteditable=\"true\"],[role=\"button\"]'
+      'button,input,textarea,select,option,label,a[href],[contenteditable="true"],[role="button"]'
     )
   )
+}
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null
+  if (!element) {
+    return false
+  }
+
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true
+  }
+
+  return element.isContentEditable
 }
 
 function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasObject>): boolean {
@@ -1531,10 +2441,237 @@ function BorderStyleDropdown({
   )
 }
 
+function SlideTemplatePreview({
+  objects,
+  frameWidth,
+  frameHeight,
+}: {
+  objects: CanvasObject[]
+  frameWidth: number
+  frameHeight: number
+}) {
+  const orderedObjects = [...objects].sort((a, b) => a.zIndex - b.zIndex)
+
+  return (
+    <svg
+      className="slide-template-preview-canvas"
+      viewBox={`0 0 ${frameWidth} ${frameHeight}`}
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      {orderedObjects.map((object) => {
+        if (object.type === 'group') {
+          return null
+        }
+
+        const left = object.x - object.w / 2 + frameWidth / 2
+        const top = object.y - object.h / 2 + frameHeight / 2
+
+        if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+          return (
+            <foreignObject
+              key={object.id}
+              x={left}
+              y={top}
+              width={object.w}
+              height={object.h}
+            >
+              <div
+                className="slide-template-preview-node"
+                style={{
+                  position: 'relative',
+                  opacity: object.shapeData.opacityPercent / 100,
+                }}
+              >
+                <ShapeSvg
+                  shapeType={object.type}
+                  shapeData={object.shapeData}
+                  width={object.w}
+                  height={object.h}
+                  borderScale={resolveObjectBorderScale(object.scalePercent)}
+                  fillBackground={getShapeBackground(object.shapeData)}
+                  className="shape-svg-outline"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    overflow: 'visible',
+                  }}
+                />
+              </div>
+            </foreignObject>
+          )
+        }
+
+        if (object.type === 'video') {
+          return (
+            <foreignObject
+              key={object.id}
+              x={left}
+              y={top}
+              width={object.w}
+              height={object.h}
+            >
+              <div
+                className="slide-template-preview-node slide-template-preview-video"
+                style={{
+                  borderColor: object.videoData.borderColor,
+                  borderStyle: object.videoData.borderType,
+                  borderWidth: `${object.videoData.borderWidth * resolveObjectBorderScale(object.scalePercent)}px`,
+                  borderRadius: `${object.videoData.radius}px`,
+                  opacity: object.videoData.opacityPercent / 100,
+                }}
+              >
+                <span>VIDEO</span>
+              </div>
+            </foreignObject>
+          )
+        }
+
+        if (object.type === 'sound') {
+          return (
+            <foreignObject
+              key={object.id}
+              x={left}
+              y={top}
+              width={object.w}
+              height={object.h}
+            >
+              <div
+                className="slide-template-preview-node slide-template-preview-sound"
+                style={{
+                  borderColor: object.soundData.borderColor,
+                  borderStyle: object.soundData.borderType,
+                  borderWidth: `${object.soundData.borderWidth * resolveObjectBorderScale(object.scalePercent)}px`,
+                  borderRadius: `${object.soundData.radius}px`,
+                  opacity: object.soundData.opacityPercent / 100,
+                }}
+              >
+                <FontAwesomeIcon icon={faVolumeHigh} />
+                <span>SOUND</span>
+              </div>
+            </foreignObject>
+          )
+        }
+
+        if (object.type === 'image') {
+          return null
+        }
+
+        if (object.type === 'template_placeholder') {
+          return (
+            <foreignObject
+              key={object.id}
+              x={left}
+              y={top}
+              width={object.w}
+              height={object.h}
+            >
+              <div
+                className={`slide-template-preview-node slide-template-preview-placeholder kind-${object.templatePlaceholderData.kind}`}
+              >
+                <span>{getTemplatePlaceholderBadge(object.templatePlaceholderData.kind)}</span>
+                <strong>{object.templatePlaceholderData.prompt}</strong>
+              </div>
+            </foreignObject>
+          )
+        }
+
+        const textboxBaseStyle = resolveTextboxBaseTextStyle(object.textboxData)
+        const textboxContentScale = resolveTextboxObjectScale(object.textboxData, object.scalePercent)
+        const textboxVerticalAlignment = object.textboxData.verticalAlignment ?? 'top'
+        return (
+          <foreignObject
+            key={object.id}
+            x={left}
+            y={top}
+            width={object.w}
+            height={object.h}
+          >
+            <div
+              className={`slide-template-preview-node textbox align-${object.textboxData.alignment}`}
+              style={{
+                background: getTextboxBackground(object.textboxData),
+                borderColor: object.textboxData.borderColor,
+                borderStyle: object.textboxData.borderType,
+                borderWidth: `${object.textboxData.borderWidth * resolveObjectBorderScale(object.scalePercent)}px`,
+                borderRadius: `${object.textboxData.radius}px`,
+                color: textboxBaseStyle.textColor,
+                fontFamily: textboxBaseStyle.fontFamily,
+                opacity: object.textboxData.opacityPercent / 100,
+              }}
+            >
+              <div
+                className={`slide-template-preview-richtext v-align-${textboxVerticalAlignment}`}
+                style={{
+                  transform: `scale(${textboxContentScale})`,
+                  transformOrigin: 'top left',
+                  width: `${100 / textboxContentScale}%`,
+                  height: `${100 / textboxContentScale}%`,
+                }}
+                dangerouslySetInnerHTML={{ __html: resolveTextboxRichHtml(object.textboxData) }}
+              />
+            </div>
+          </foreignObject>
+        )
+      })}
+    </svg>
+  )
+}
+
+function AssetVideoPreview({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  function seekToPreviewStart() {
+    const video = videoRef.current
+    if (!video) {
+      return
+    }
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      video.currentTime = Math.max(0, Math.min(video.duration, video.duration * 0.1))
+    }
+  }
+
+  return (
+    <span
+      className="asset-library-video-preview"
+      onPointerEnter={() => {
+        const video = videoRef.current
+        if (!video) {
+          return
+        }
+        seekToPreviewStart()
+        void video.play().catch(() => undefined)
+      }}
+      onPointerLeave={() => {
+        const video = videoRef.current
+        if (!video) {
+          return
+        }
+        video.pause()
+        seekToPreviewStart()
+      }}
+    >
+      <video
+        ref={videoRef}
+        src={src}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={seekToPreviewStart}
+      />
+    </span>
+  )
+}
+
 function App() {
   const loadInputRef = useRef<HTMLInputElement>(null)
+  const assetLibraryInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const pendingImagePlacementCameraRef = useRef<CameraState | null>(null)
+  const videoInputRef = useRef<HTMLInputElement>(null)
+  const soundInputRef = useRef<HTMLInputElement>(null)
   const didAttemptAutosaveRestoreRef = useRef(false)
   const latestDocumentSnapshotRef = useRef<string>('')
   const latestAutosavedSnapshotRef = useRef<string>('')
@@ -1543,25 +2680,32 @@ function App() {
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
   const undo = useEditorStore((state) => state.undo)
+  const redo = useEditorStore((state) => state.redo)
   const canUndo = useEditorStore((state) => state.history.past.length > 0)
+  const canRedo = useEditorStore((state) => state.history.future.length > 0)
   const replaceDocument = useEditorStore((state) => state.replaceDocument)
   const resetDocument = useEditorStore((state) => state.resetDocument)
   const mode = useEditorStore((state) => state.ui.mode)
   const setMode = useEditorStore((state) => state.setMode)
   const selectedObjectIds = useEditorStore((state) => state.ui.selectedObjectIds)
-  const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
+  const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const createObject = useEditorStore((state) => state.createObject)
   const createAsset = useEditorStore((state) => state.createAsset)
+  const deleteAsset = useEditorStore((state) => state.deleteAsset)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
   const moveObject = useEditorStore((state) => state.moveObject)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
+  const setObjectKeepAspectRatio = useEditorStore((state) => state.setObjectKeepAspectRatio)
   const setCanvasBackground = useEditorStore((state) => state.setCanvasBackground)
+  const setCanvasSettings = useEditorStore((state) => state.setCanvasSettings)
   const setTextboxData = useEditorStore((state) => state.setTextboxData)
   const setShapeOpacity = useEditorStore((state) => state.setShapeOpacity)
   const setShapeData = useEditorStore((state) => state.setShapeData)
   const setImageData = useEditorStore((state) => state.setImageData)
+  const setVideoData = useEditorStore((state) => state.setVideoData)
+  const setSoundData = useEditorStore((state) => state.setSoundData)
   const enterGroup = useEditorStore((state) => state.enterGroup)
   const reorderSlides = useEditorStore((state) => state.reorderSlides)
   const createSlide = useEditorStore((state) => state.createSlide)
@@ -1575,28 +2719,603 @@ function App() {
   const gradientPreviewRef = useRef<HTMLDivElement | null>(null)
   const gradientDraggingStopIndexRef = useRef<number | null>(null)
   const gradientPreviewDraggingStopIndexRef = useRef<number | null>(null)
+  const selectedObjectScaleBaselineRef = useRef<ObjectScaleBaseline | null>(null)
+  const multiSelectionScaleBaselineRef = useRef<{
+    selectionKey: string
+    centerX: number
+    centerY: number
+    objects: ObjectScaleBaseline[]
+  } | null>(null)
   const [hoveredSlideId, setHoveredSlideId] = useState<string | null>(null)
+  const [hoveredAssetId, setHoveredAssetId] = useState<string | null>(null)
   const presentFreeMoveEnabled = false
   const presentMouseWheelThrottleUntilRef = useRef(0)
   const [isFillEditorOpen, setIsFillEditorOpen] = useState(false)
   const [fillEditorTarget, setFillEditorTarget] = useState<'object' | 'canvas' | null>(null)
-
+  const [activeStylePresetId, setActiveStylePresetId] = useState<string | null>(null)
+  const [designAssetRevision, setDesignAssetRevision] = useState(0)
+  const [designAssetContextMenu, setDesignAssetContextMenu] = useState<DesignAssetContextMenu | null>(
+    null
+  )
+  const [activeCreationTool, setActiveCreationTool] = useState<CreationToolType | null>(null)
+  const [isAssetLibraryDragOver, setIsAssetLibraryDragOver] = useState(false)
+  const [assetLibrarySearch, setAssetLibrarySearch] = useState('')
+  const [assetLibraryFilter, setAssetLibraryFilter] = useState<AssetLibraryFilter>(null)
+  const [assetLibrarySort, setAssetLibrarySort] = useState<AssetLibrarySort>('name')
+  const [assetLibrarySortDirection, setAssetLibrarySortDirection] =
+    useState<AssetLibrarySortDirection>('asc')
+  const [styleCatalogSearch, setStyleCatalogSearch] = useState('')
+  const [styleCatalogSortDirection, setStyleCatalogSortDirection] =
+    useState<AssetLibrarySortDirection>('asc')
+  const [templateCatalogSearch, setTemplateCatalogSearch] = useState('')
+  const [templateCatalogSortDirection, setTemplateCatalogSortDirection] =
+    useState<AssetLibrarySortDirection>('asc')
+  const [activeShapePresetId, setActiveShapePresetId] = useState<ShapeCreationPresetId>('rect')
+  const [pendingImagePlacements, setPendingImagePlacements] = useState<PendingImagePlacement[]>([])
+  const [selectedObjectScalePercent, setSelectedObjectScalePercent] = useState(100)
+  const [multiSelectionScalePercent, setMultiSelectionScalePercent] = useState(100)
+  const [activeDesignTab, setActiveDesignTab] = useState<RightSidebarDesignTab>('templates')
+  const [leftObjectParamsPortalNode, setLeftObjectParamsPortalNode] = useState<HTMLDivElement | null>(null)
+  const [slidesTargetDisplayPortalNode, setSlidesTargetDisplayPortalNode] = useState<HTMLDivElement | null>(null)
+  const [templateTargetDisplayFrame, setTemplateTargetDisplayFrame] = useState<{ width: number; height: number }>({
+    width: 1600,
+    height: 900,
+  })
+  const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false)
+  const shapeMenuRef = useRef<HTMLDivElement | null>(null)
+  const stylePresetCatalogEntries = useMemo(() => getStylePresetCatalogEntries(), [designAssetRevision])
+  const availableStylePresets = useMemo(
+    () => stylePresetCatalogEntries.map((entry) => entry.preset),
+    [stylePresetCatalogEntries]
+  )
+  const inferredStylePreset = useMemo(
+    () => inferStylePreset(document, availableStylePresets),
+    [availableStylePresets, document]
+  )
+  const currentStylePreset = useMemo(
+    () =>
+      availableStylePresets.find((preset) => preset.id === activeStylePresetId) ?? inferredStylePreset,
+    [activeStylePresetId, availableStylePresets, inferredStylePreset]
+  )
+  const effectiveStylePreset = currentStylePreset ?? availableStylePresets[0] ?? null
+  const assetFontFaceCss = useMemo(() => buildAssetFontFaceCss(document.assets), [document.assets])
+  const slideTemplateTheme = useMemo(
+    () => resolveSlideTemplateTheme(effectiveStylePreset),
+    [effectiveStylePreset]
+  )
+  const slideTemplateCatalogEntries = useMemo(
+    () => getSlideTemplateCatalogEntries(),
+    [designAssetRevision]
+  )
+  const slideTemplateCatalogEntryById = useMemo(
+    () => new Map(slideTemplateCatalogEntries.map((entry) => [entry.definition.id, entry])),
+    [slideTemplateCatalogEntries]
+  )
+  const slideTemplateSets = useMemo(
+    () => getSlideTemplatesForStyle(),
+    [designAssetRevision]
+  )
+  const genericSlideTemplates = useMemo(
+    () =>
+      slideTemplateSets.generic.filter(
+        (template) => slideTemplateCatalogEntryById.get(template.id)?.sourceType !== 'asset'
+      ),
+    [slideTemplateCatalogEntryById, slideTemplateSets.generic]
+  )
+  const importedTemplateSections = useMemo(() => {
+    const grouped = new Map<string, SlideTemplate[]>()
+    for (const template of slideTemplateSets.all) {
+      const entry = slideTemplateCatalogEntryById.get(template.id)
+      if (!entry || entry.sourceType !== 'asset') {
+        continue
+      }
+      const sourceFileName = entry.sourceFileName ?? 'Imported JSON'
+      const current = grouped.get(sourceFileName)
+      if (current) {
+        current.push(template)
+      } else {
+        grouped.set(sourceFileName, [template])
+      }
+    }
+    return [...grouped.entries()].map(([fileName, templates]) => ({ fileName, templates }))
+  }, [slideTemplateCatalogEntryById, slideTemplateSets.all])
+  const builtinStylePresets = useMemo(
+    () => stylePresetCatalogEntries.filter((entry) => entry.sourceType === 'builtin').map((entry) => entry.preset),
+    [stylePresetCatalogEntries]
+  )
+  const importedStylePresetSections = useMemo(() => {
+    const grouped = new Map<string, StylePreset[]>()
+    for (const entry of stylePresetCatalogEntries) {
+      if (entry.sourceType !== 'asset') {
+        continue
+      }
+      const sourceFileName = entry.sourceFileName ?? 'Imported JSON'
+      const current = grouped.get(sourceFileName)
+      if (current) {
+        current.push(entry.preset)
+      } else {
+        grouped.set(sourceFileName, [entry.preset])
+      }
+    }
+    return [...grouped.entries()].map(([fileName, presets]) => ({ fileName, presets }))
+  }, [stylePresetCatalogEntries])
+  const filteredBuiltinStylePresets = useMemo(() => {
+    const normalizedSearch = styleCatalogSearch.trim().toLowerCase()
+    const filtered = builtinStylePresets.filter((preset) => {
+      if (normalizedSearch.length === 0) {
+        return true
+      }
+      return (
+        preset.name.toLowerCase().includes(normalizedSearch) ||
+        preset.inspiration.toLowerCase().includes(normalizedSearch)
+      )
+    })
+    filtered.sort((a, b) => {
+      const comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      return styleCatalogSortDirection === 'desc' ? comparison * -1 : comparison
+    })
+    return filtered
+  }, [builtinStylePresets, styleCatalogSearch, styleCatalogSortDirection])
+  const filteredImportedStylePresetSections = useMemo(() => {
+    const normalizedSearch = styleCatalogSearch.trim().toLowerCase()
+    return importedStylePresetSections
+      .map((section) => {
+        const presets = section.presets.filter((preset) => {
+          if (normalizedSearch.length === 0) {
+            return true
+          }
+          return (
+            preset.name.toLowerCase().includes(normalizedSearch) ||
+            preset.inspiration.toLowerCase().includes(normalizedSearch)
+          )
+        })
+        presets.sort((a, b) => {
+          const comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          return styleCatalogSortDirection === 'desc' ? comparison * -1 : comparison
+        })
+        return {
+          fileName: section.fileName,
+          presets,
+        }
+      })
+      .filter((section) => section.presets.length > 0)
+  }, [importedStylePresetSections, styleCatalogSearch, styleCatalogSortDirection])
+  const filteredGenericSlideTemplates = useMemo(() => {
+    const normalizedSearch = templateCatalogSearch.trim().toLowerCase()
+    const filtered = genericSlideTemplates.filter((template) => {
+      if (normalizedSearch.length === 0) {
+        return true
+      }
+      return (
+        template.name.toLowerCase().includes(normalizedSearch) ||
+        template.description.toLowerCase().includes(normalizedSearch)
+      )
+    })
+    filtered.sort((a, b) => {
+      const comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      return templateCatalogSortDirection === 'desc' ? comparison * -1 : comparison
+    })
+    return filtered
+  }, [genericSlideTemplates, templateCatalogSearch, templateCatalogSortDirection])
+  const filteredImportedTemplateSections = useMemo(() => {
+    const normalizedSearch = templateCatalogSearch.trim().toLowerCase()
+    return importedTemplateSections
+      .map((section) => {
+        const templates = section.templates.filter((template) => {
+          if (normalizedSearch.length === 0) {
+            return true
+          }
+          return (
+            template.name.toLowerCase().includes(normalizedSearch) ||
+            template.description.toLowerCase().includes(normalizedSearch)
+          )
+        })
+        templates.sort((a, b) => {
+          const comparison = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+          return templateCatalogSortDirection === 'desc' ? comparison * -1 : comparison
+        })
+        return {
+          fileName: section.fileName,
+          templates,
+        }
+      })
+      .filter((section) => section.templates.length > 0)
+  }, [importedTemplateSections, templateCatalogSearch, templateCatalogSortDirection])
+  const availableSlideTemplates = slideTemplateSets.all
+  const slideTemplatePreviews = useMemo(() => {
+    const frame = getSlideTemplateFrameSize(1)
+    return new Map(
+      availableSlideTemplates.map((template) => {
+        let previewObjectIndex = 0
+        const preview = buildSlideTemplateInstance(template, {
+          slideId: `preview-${template.id}`,
+          orderIndex: 0,
+          centerX: 0,
+          centerY: 0,
+          zoom: 1,
+          rotation: 0,
+          createId: () => `preview-${template.id}-${previewObjectIndex++}`,
+          zIndexStart: 1,
+          stylePreset: effectiveStylePreset,
+        })
+        return [
+          template.id,
+          {
+            frameWidth: frame.width,
+            frameHeight: frame.height,
+            objects: preview.objects,
+          },
+        ] as const
+      })
+    )
+  }, [availableSlideTemplates, effectiveStylePreset])
+  const currentCreationTool = useMemo(() => {
+    if (activeCreationTool === 'image') {
+      return pendingImagePlacements.length > 0
+        ? { type: 'image' as const, image: pendingImagePlacements[0] }
+        : null
+    }
+    if (activeCreationTool === 'shape_rect') {
+      return { type: 'shape_rect' as const, shapeKind: normalizeShapeKind(activeShapePresetId) }
+    }
+    return activeCreationTool ? { type: activeCreationTool } : null
+  }, [activeCreationTool, activeShapePresetId, pendingImagePlacements])
   const selectedObject =
     selectedObjectIds.length === 1
       ? (document.objects.find((entry) => entry.id === selectedObjectIds[0]) ?? null)
       : null
-  const objectById = new Map(document.objects.map((object) => [object.id, object]))
+  const objectById = useMemo(
+    () => new Map(document.objects.map((object) => [object.id, object])),
+    [document.objects]
+  )
+  const embeddedStyleAssetChildLinks = useMemo(() => {
+    const parentByChildAssetId = new Map<
+      string,
+      {
+        parentStyleAssetId: string
+        parentStyleAssetName: string
+      }
+    >()
+    const childNamesByParentStyleAssetId = new Map<string, string[]>()
+
+    for (const asset of document.assets) {
+      if (resolveLibraryAssetKind(asset) !== 'style') {
+        continue
+      }
+      try {
+        const parsed = JSON.parse(decodeAssetBase64ToText(asset.dataBase64)) as unknown
+        const embeddedAssets = extractLibraryAssetDefinitionsFromUnknown(parsed)
+        for (const embeddedAsset of embeddedAssets) {
+          const matchingAsset = findMatchingLibraryAsset(document.assets, {
+            dataBase64: embeddedAsset.dataBase64,
+          })
+          if (!matchingAsset || matchingAsset.id === asset.id) {
+            continue
+          }
+          if (resolveLibraryAssetKind(matchingAsset) === 'style') {
+            continue
+          }
+          if (parentByChildAssetId.has(matchingAsset.id)) {
+            continue
+          }
+          parentByChildAssetId.set(matchingAsset.id, {
+            parentStyleAssetId: asset.id,
+            parentStyleAssetName: asset.name,
+          })
+          const parentNames = childNamesByParentStyleAssetId.get(asset.id)
+          if (parentNames) {
+            if (!parentNames.includes(matchingAsset.name)) {
+              parentNames.push(matchingAsset.name)
+            }
+          } else {
+            childNamesByParentStyleAssetId.set(asset.id, [matchingAsset.name])
+          }
+        }
+      } catch {
+        // Ignore invalid JSON in style assets.
+      }
+    }
+
+    return {
+      parentByChildAssetId,
+      childNamesByParentStyleAssetId,
+    }
+  }, [document.assets])
+  const assetLibraryEntries = useMemo(() => {
+    const imageUsageByAssetId = new Map<string, Array<Extract<CanvasObject, { type: 'image' }>>>()
+    const videoUsageByAssetId = new Map<string, Array<Extract<CanvasObject, { type: 'video' }>>>()
+    const soundUsageByAssetId = new Map<string, Array<Extract<CanvasObject, { type: 'sound' }>>>()
+    const fontUsageByAssetId = new Map<string, number>()
+    const stylePresetNamesByAssetId = new Map<string, string[]>()
+    const templateNamesByAssetId = new Map<string, string[]>()
+
+    for (const entry of stylePresetCatalogEntries) {
+      if (entry.sourceType !== 'asset' || !entry.sourceAssetId) {
+        continue
+      }
+      const current = stylePresetNamesByAssetId.get(entry.sourceAssetId)
+      if (current) {
+        current.push(entry.preset.name)
+      } else {
+        stylePresetNamesByAssetId.set(entry.sourceAssetId, [entry.preset.name])
+      }
+    }
+
+    for (const entry of slideTemplateCatalogEntries) {
+      if (entry.sourceType !== 'asset' || !entry.sourceAssetId) {
+        continue
+      }
+      const current = templateNamesByAssetId.get(entry.sourceAssetId)
+      if (current) {
+        current.push(entry.definition.name)
+      } else {
+        templateNamesByAssetId.set(entry.sourceAssetId, [entry.definition.name])
+      }
+    }
+
+    document.objects.forEach((object) => {
+      if (object.type === 'image') {
+        const current = imageUsageByAssetId.get(object.imageData.assetId)
+        if (current) {
+          current.push(object)
+        } else {
+          imageUsageByAssetId.set(object.imageData.assetId, [object])
+        }
+      } else if (object.type === 'video') {
+        const current = videoUsageByAssetId.get(object.videoData.assetId)
+        if (current) {
+          current.push(object)
+        } else {
+          videoUsageByAssetId.set(object.videoData.assetId, [object])
+        }
+      } else if (object.type === 'sound') {
+        const current = soundUsageByAssetId.get(object.soundData.assetId)
+        if (current) {
+          current.push(object)
+        } else {
+          soundUsageByAssetId.set(object.soundData.assetId, [object])
+        }
+      } else if (object.type === 'textbox') {
+        document.assets.forEach((asset) => {
+          if (resolveLibraryAssetKind(asset) !== 'font') {
+            return
+          }
+          if (!textboxUsesFontFamily(object.textboxData, resolveAssetFontFamily(asset))) {
+            return
+          }
+          fontUsageByAssetId.set(asset.id, (fontUsageByAssetId.get(asset.id) ?? 0) + 1)
+        })
+      }
+    })
+
+    return document.assets.map((asset) => {
+      const linkedImages = imageUsageByAssetId.get(asset.id) ?? []
+      const linkedVideos = videoUsageByAssetId.get(asset.id) ?? []
+      const linkedSounds = soundUsageByAssetId.get(asset.id) ?? []
+      const firstImageUsage = linkedImages[0] ?? null
+      const firstVideoUsage = linkedVideos[0] ?? null
+      const kind = resolveLibraryAssetKind(asset) ?? 'image'
+      const linkedStylePresetNames = stylePresetNamesByAssetId.get(asset.id) ?? []
+      const linkedSlideTemplateNames = templateNamesByAssetId.get(asset.id) ?? []
+      const parentLink = embeddedStyleAssetChildLinks.parentByChildAssetId.get(asset.id) ?? null
+      const embeddedChildAssetNames =
+        kind === 'style'
+          ? (embeddedStyleAssetChildLinks.childNamesByParentStyleAssetId.get(asset.id) ?? [])
+          : []
+      const usageCount =
+        kind === 'font'
+          ? (fontUsageByAssetId.get(asset.id) ?? 0)
+          : kind === 'video'
+            ? linkedVideos.length
+            : kind === 'audio'
+              ? linkedSounds.length
+              : kind === 'style'
+                ? 0
+                : linkedImages.length
+      return {
+        asset,
+        src: buildAssetDataUrl(asset),
+        intrinsicWidth:
+          firstImageUsage?.imageData.intrinsicWidth ??
+          firstVideoUsage?.videoData.intrinsicWidth ??
+          asset.intrinsicWidth ??
+          1200,
+        intrinsicHeight:
+          firstImageUsage?.imageData.intrinsicHeight ??
+          firstVideoUsage?.videoData.intrinsicHeight ??
+          asset.intrinsicHeight ??
+          800,
+        usageCount,
+        kind,
+        base64Size: asset.dataBase64.length,
+        durationSec: asset.durationSec ?? null,
+        linkedStylePresetNames,
+        linkedSlideTemplateNames,
+        parentStyleAssetId: parentLink?.parentStyleAssetId ?? null,
+        parentStyleAssetName: parentLink?.parentStyleAssetName ?? null,
+        embeddedChildAssetCount: embeddedChildAssetNames.length,
+        embeddedChildAssetNames,
+      } satisfies AssetLibraryEntry
+    })
+  }, [
+    embeddedStyleAssetChildLinks,
+    document.assets,
+    document.objects,
+    slideTemplateCatalogEntries,
+    stylePresetCatalogEntries,
+  ])
+  const filteredAssetLibraryEntries = useMemo(() => {
+    const normalizedSearch = assetLibrarySearch.trim().toLowerCase()
+    const entries = [...assetLibraryEntries]
+    const matchesFilter = (entry: AssetLibraryEntry) => {
+      if (assetLibraryFilter !== null && entry.kind !== assetLibraryFilter) {
+        return false
+      }
+      if (normalizedSearch.length === 0) {
+        return true
+      }
+      return entry.asset.name.toLowerCase().includes(normalizedSearch)
+    }
+
+    entries.sort((a, b) => {
+      let comparison = 0
+      if (assetLibrarySort === 'size') {
+        if (a.base64Size !== b.base64Size) {
+          comparison = a.base64Size - b.base64Size
+        }
+      } else {
+        comparison = a.asset.name.localeCompare(b.asset.name, undefined, { sensitivity: 'base' })
+      }
+      if (comparison === 0) {
+        comparison = a.asset.name.localeCompare(b.asset.name, undefined, { sensitivity: 'base' })
+      }
+      return assetLibrarySortDirection === 'desc' ? comparison * -1 : comparison
+    })
+
+    const matchedAssetIds = new Set(
+      entries.filter((entry) => matchesFilter(entry)).map((entry) => entry.asset.id)
+    )
+
+    for (const entry of entries) {
+      if (!matchesFilter(entry) || !entry.parentStyleAssetId) {
+        continue
+      }
+      matchedAssetIds.add(entry.parentStyleAssetId)
+    }
+
+    const childEntriesByParentId = new Map<string, AssetLibraryEntry[]>()
+    for (const entry of entries) {
+      if (!entry.parentStyleAssetId || !matchedAssetIds.has(entry.asset.id)) {
+        continue
+      }
+      const siblings = childEntriesByParentId.get(entry.parentStyleAssetId)
+      if (siblings) {
+        siblings.push(entry)
+      } else {
+        childEntriesByParentId.set(entry.parentStyleAssetId, [entry])
+      }
+    }
+
+    const ordered: AssetLibraryEntry[] = []
+    for (const entry of entries) {
+      if (entry.parentStyleAssetId) {
+        continue
+      }
+      if (!matchedAssetIds.has(entry.asset.id)) {
+        continue
+      }
+      ordered.push(entry)
+      const children = childEntriesByParentId.get(entry.asset.id)
+      if (children) {
+        ordered.push(...children)
+      }
+    }
+
+    return ordered
+  }, [assetLibraryEntries, assetLibraryFilter, assetLibrarySearch, assetLibrarySort, assetLibrarySortDirection])
+  const selectedObjects = useMemo(
+    () =>
+      selectedObjectIds
+        .map((id) => objectById.get(id))
+        .filter((entry): entry is CanvasObject => Boolean(entry)),
+    [objectById, selectedObjectIds]
+  )
+  const selectedUnlockedObjects = useMemo(
+    () =>
+      selectedObjects.filter(
+        (object) => !object.locked && !hasLockedAncestor(object, objectById)
+      ),
+    [objectById, selectedObjects]
+  )
+  const hasMultiSelection = selectedObjectIds.length > 1
+  const selectedShapeObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'shape_rect' | 'shape_circle' }> =>
+          object.type === 'shape_rect' || object.type === 'shape_circle'
+      ),
+    [selectedUnlockedObjects]
+  )
+  const selectedTextboxObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'textbox' }> => object.type === 'textbox'
+      ),
+    [selectedUnlockedObjects]
+  )
+  const selectedImageObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'image' }> => object.type === 'image'
+      ),
+    [selectedUnlockedObjects]
+  )
+  const selectedVideoObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'video' }> => object.type === 'video'
+      ),
+    [selectedUnlockedObjects]
+  )
+  const selectedSoundObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'sound' }> => object.type === 'sound'
+      ),
+    [selectedUnlockedObjects]
+  )
+  const selectedScalableObjects = useMemo(
+    () =>
+      selectedUnlockedObjects.filter(
+        (object): object is ScalableCanvasObject =>
+          object.type === 'shape_rect' ||
+          object.type === 'shape_circle' ||
+          object.type === 'textbox' ||
+          object.type === 'image' ||
+          object.type === 'video' ||
+          object.type === 'sound' ||
+          object.type === 'template_placeholder'
+      ),
+    [selectedUnlockedObjects]
+  )
   const selectedShapeObject =
     selectedObject &&
-      (selectedObject.type === 'shape_rect' ||
-        selectedObject.type === 'shape_circle' ||
-        selectedObject.type === 'shape_arrow')
+      (selectedObject.type === 'shape_rect' || selectedObject.type === 'shape_circle')
       ? selectedObject
       : null
+  const selectedShapeSupportsRadius = Boolean(
+    selectedShapeObject &&
+    selectedShapeObject.type !== 'shape_circle' &&
+    shapeSupportsRadius(normalizeShapeKind(selectedShapeObject.shapeData.kind))
+  )
   const selectedTextboxObject =
     selectedObject && selectedObject.type === 'textbox' ? selectedObject : null
   const selectedImageObject =
     selectedObject && selectedObject.type === 'image' ? selectedObject : null
+  const selectedVideoObject =
+    selectedObject && selectedObject.type === 'video' ? selectedObject : null
+  const selectedSoundObject =
+    selectedObject && selectedObject.type === 'sound' ? selectedObject : null
+  const selectedObjectSupportsStyleRole = Boolean(
+    selectedShapeObject ||
+    selectedTextboxObject ||
+    selectedImageObject ||
+    selectedVideoObject ||
+    selectedSoundObject
+  )
+  const selectedObjectStyleRoleId = useMemo(
+    () => inferObjectStyleRoleIdForObject(selectedObject, effectiveStylePreset),
+    [effectiveStylePreset, selectedObject]
+  )
+  const selectedTemplatePlaceholderObject =
+    selectedObject && selectedObject.type === 'template_placeholder' ? selectedObject : null
+  const selectedScalableObject =
+    selectedShapeObject ??
+    selectedTextboxObject ??
+    selectedImageObject ??
+    selectedVideoObject ??
+    selectedSoundObject ??
+    selectedTemplatePlaceholderObject
   const selectedGroupObject =
     selectedObject && selectedObject.type === 'group' ? selectedObject : null
   const selectedObjectLockedByAncestor = selectedObject
@@ -1618,13 +3337,34 @@ function App() {
   const selectedObjectTransformLocked = Boolean(
     selectedObject && (selectedObject.locked || selectedObjectLockedByAncestor)
   )
+  const isSelectedObjectAspectRatioLockForced = selectedObject?.type === 'shape_circle'
+  const isSelectedObjectAspectRatioLocked = isObjectAspectRatioLocked(selectedObject)
+  const canScaleSelectedObject = Boolean(selectedScalableObject)
+  const canScaleMultiSelection =
+    selectedObjectIds.length > 1 &&
+    selectedScalableObjects.length > 0 &&
+    selectedScalableObjects.length === selectedUnlockedObjects.length
+  const multiSelectionScaleKey = useMemo(
+    () => selectedScalableObjects.map((object) => object.id).sort().join('|'),
+    [selectedScalableObjects]
+  )
+  const multiSelectedShapeFillReference = selectedShapeObjects[0] ?? null
+  const multiSelectedTextboxFillReference = selectedTextboxObjects[0] ?? null
+  const hasMultiSelectedFillTargets = selectedShapeObjects.length > 0 || selectedTextboxObjects.length > 0
+  const multiSelectedFillMode =
+    multiSelectedShapeFillReference?.shapeData.fillMode ??
+    multiSelectedTextboxFillReference?.textboxData.fillMode ??
+    'solid'
   const isObjectGradientEditorVisible = Boolean(
     isFillEditorOpen &&
     fillEditorTarget === 'object' &&
-    ((selectedShapeObject &&
-      selectedShapeObject.shapeData.fillMode === 'linearGradient') ||
+    (
+      (selectedShapeObject &&
+        selectedShapeObject.shapeData.fillMode === 'linearGradient') ||
       (selectedTextboxObject &&
-        (selectedTextboxObject.textboxData.fillMode ?? 'solid') === 'linearGradient'))
+        (selectedTextboxObject.textboxData.fillMode ?? 'solid') === 'linearGradient') ||
+      (selectedObjectIds.length > 1 && multiSelectedFillMode === 'linearGradient')
+    )
   )
   const canvasBackgroundGradient = useMemo(
     () => parseCanvasBackgroundGradient(document.canvas.background),
@@ -1645,6 +3385,9 @@ function App() {
       gradient: normalizeFillGradient(null, solidColor, '#0f1523'),
     }
   }, [canvasBackgroundGradient, document.canvas.background])
+  const showObjectParameters = selectedObjectIds.length > 0
+  const showCanvasParameters = selectedObjectIds.length === 0 && selectedSlide === null
+  const showContextParameters = showObjectParameters || showCanvasParameters
   const isCanvasGradientEditorVisible = Boolean(
     isFillEditorOpen &&
     fillEditorTarget === 'canvas' &&
@@ -1652,20 +3395,39 @@ function App() {
     canvasBackgroundControl.fillMode === 'linearGradient'
   )
   const isGradientEditorVisible = isObjectGradientEditorVisible || isCanvasGradientEditorVisible
-  const gradientEditorLocked = isCanvasGradientEditorVisible ? false : selectedObjectTransformLocked
+  const gradientEditorLocked = isCanvasGradientEditorVisible
+    ? false
+    : selectedObjectIds.length > 1
+      ? (hasMultiSelection && selectedUnlockedObjects.length === 0)
+      : selectedObjectTransformLocked
   const selectedTextboxFillMode = selectedTextboxObject?.textboxData.fillMode ?? 'solid'
+  const multiSelectedGradientBaseColor = multiSelectedShapeFillReference
+    ? multiSelectedShapeFillReference.shapeData.fillColor !== 'transparent'
+      ? asHexColor(multiSelectedShapeFillReference.shapeData.fillColor, '#244a80')
+      : '#244a80'
+    : multiSelectedTextboxFillReference
+      ? multiSelectedTextboxFillReference.textboxData.backgroundColor !== 'transparent'
+        ? asHexColor(multiSelectedTextboxFillReference.textboxData.backgroundColor, DEFAULT_TEXTBOX_BACKGROUND)
+        : DEFAULT_TEXTBOX_BACKGROUND
+      : '#244a80'
   const selectedGradientBaseColor =
     isCanvasGradientEditorVisible
       ? canvasBackgroundControl.gradient.colorA
-      : selectedShapeObject && selectedShapeObject.shapeData.fillColor !== 'transparent'
-        ? selectedShapeObject.shapeData.fillColor
-        : selectedTextboxObject && selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
-          ? selectedTextboxObject.textboxData.backgroundColor
-          : '#244a80'
+      : selectedObjectIds.length > 1
+        ? multiSelectedGradientBaseColor
+        : selectedShapeObject && selectedShapeObject.shapeData.fillColor !== 'transparent'
+          ? selectedShapeObject.shapeData.fillColor
+          : selectedTextboxObject && selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
+            ? selectedTextboxObject.textboxData.backgroundColor
+            : '#244a80'
   const selectedGradient = normalizeFillGradient(
     isCanvasGradientEditorVisible
       ? canvasBackgroundControl.gradient
-      : selectedShapeObject?.shapeData.fillGradient ?? selectedTextboxObject?.textboxData.fillGradient ?? null,
+      : selectedObjectIds.length > 1
+        ? multiSelectedShapeFillReference?.shapeData.fillGradient ??
+        multiSelectedTextboxFillReference?.textboxData.fillGradient ??
+        null
+        : selectedShapeObject?.shapeData.fillGradient ?? selectedTextboxObject?.textboxData.fillGradient ?? null,
     selectedGradientBaseColor,
     '#ffffff'
   )
@@ -1742,41 +3504,235 @@ function App() {
       ? Math.max(0, Math.min(100, toFiniteNumber(selectedTextboxObject.textboxData.opacityPercent, 100)))
       : selectedImageObject
         ? Math.max(0, Math.min(100, toFiniteNumber(selectedImageObject.imageData.opacityPercent, 100)))
-        : 100
+        : selectedVideoObject
+          ? Math.max(0, Math.min(100, toFiniteNumber(selectedVideoObject.videoData.opacityPercent, 100)))
+          : selectedSoundObject
+            ? Math.max(0, Math.min(100, toFiniteNumber(selectedSoundObject.soundData.opacityPercent, 100)))
+            : 100
   const selectedObjectRadiusPercent = selectedShapeObject
     ? radiusPxToPercent(
       Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedShapeObject.shapeData.radius, 0))),
       selectedShapeObject.w,
       selectedShapeObject.h
     )
-    : selectedImageObject
+    : selectedTextboxObject
       ? radiusPxToPercent(
-        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedImageObject.imageData.radius, 0))),
-        selectedImageObject.w,
-        selectedImageObject.h
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedTextboxObject.textboxData.radius, 0))),
+        selectedTextboxObject.w,
+        selectedTextboxObject.h
       )
-      : 0
+      : selectedImageObject
+        ? radiusPxToPercent(
+          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedImageObject.imageData.radius, 0))),
+          selectedImageObject.w,
+          selectedImageObject.h
+        )
+        : selectedVideoObject
+          ? radiusPxToPercent(
+            Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedVideoObject.videoData.radius, 0))),
+            selectedVideoObject.w,
+            selectedVideoObject.h
+          )
+          : selectedSoundObject
+            ? radiusPxToPercent(
+              Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(selectedSoundObject.soundData.radius, 0))),
+              selectedSoundObject.w,
+              selectedSoundObject.h
+            )
+            : 0
   const selectedObjectShadowBlurPx = selectedShapeObject
     ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedShapeObject.shapeData.shadowBlurPx, 0)))
     : selectedTextboxObject
       ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedTextboxObject.textboxData.shadowBlurPx, 0)))
       : selectedImageObject
         ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedImageObject.imageData.shadowBlurPx, 0)))
-        : 0
+        : selectedVideoObject
+          ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedVideoObject.videoData.shadowBlurPx, 0)))
+          : selectedSoundObject
+            ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(selectedSoundObject.soundData.shadowBlurPx, 0)))
+            : 0
   const selectedObjectShadowAngleDeg = selectedShapeObject
     ? normalizeShadowAngleDeg(toFiniteNumber(selectedShapeObject.shapeData.shadowAngleDeg, 45))
     : selectedTextboxObject
       ? normalizeShadowAngleDeg(toFiniteNumber(selectedTextboxObject.textboxData.shadowAngleDeg, 45))
       : selectedImageObject
         ? normalizeShadowAngleDeg(toFiniteNumber(selectedImageObject.imageData.shadowAngleDeg, 45))
-        : 45
+        : selectedVideoObject
+          ? normalizeShadowAngleDeg(toFiniteNumber(selectedVideoObject.videoData.shadowAngleDeg, 45))
+          : selectedSoundObject
+            ? normalizeShadowAngleDeg(toFiniteNumber(selectedSoundObject.soundData.shadowAngleDeg, 45))
+            : 45
   const selectedObjectShadowColor = selectedShapeObject
     ? asHexColor(selectedShapeObject.shapeData.shadowColor, '#000000')
     : selectedTextboxObject
       ? asHexColor(selectedTextboxObject.textboxData.shadowColor, '#000000')
       : selectedImageObject
         ? asHexColor(selectedImageObject.imageData.shadowColor, '#000000')
-        : '#000000'
+        : selectedVideoObject
+          ? asHexColor(selectedVideoObject.videoData.shadowColor, '#000000')
+          : selectedSoundObject
+            ? asHexColor(selectedSoundObject.soundData.shadowColor, '#000000')
+            : '#000000'
+  const multiEditReferenceObject = selectedUnlockedObjects.find(
+    (
+      object
+    ): object is Extract<
+      CanvasObject,
+      { type: 'shape_rect' | 'shape_circle' | 'textbox' | 'image' | 'video' | 'sound' }
+    > =>
+      object.type === 'shape_rect' ||
+      object.type === 'shape_circle' ||
+      object.type === 'textbox' ||
+      object.type === 'image' ||
+      object.type === 'video' ||
+      object.type === 'sound'
+  ) ?? null
+  const multiEditTransformLocked = hasMultiSelection && selectedUnlockedObjects.length === 0
+  const multiEditOpacityPercent = multiEditReferenceObject
+    ? multiEditReferenceObject.type === 'textbox'
+      ? Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.textboxData.opacityPercent, 100)))
+      : multiEditReferenceObject.type === 'image'
+        ? Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.imageData.opacityPercent, 100)))
+        : multiEditReferenceObject.type === 'video'
+          ? Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.videoData.opacityPercent, 100)))
+          : multiEditReferenceObject.type === 'sound'
+            ? Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.soundData.opacityPercent, 100)))
+            : Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.shapeData.opacityPercent, 100)))
+    : 100
+  const multiEditRadiusReference = (
+    [
+      ...selectedShapeObjects.filter(
+        (object): object is Extract<CanvasObject, { type: 'shape_rect' }> =>
+          object.type !== 'shape_circle' && shapeSupportsRadius(normalizeShapeKind(object.shapeData.kind))
+      ),
+      ...selectedTextboxObjects,
+      ...selectedImageObjects,
+      ...selectedVideoObjects,
+      ...selectedSoundObjects,
+    ] as Array<Extract<CanvasObject, { type: 'shape_rect' | 'textbox' | 'image' | 'video' | 'sound' }>>
+  )[0] ?? null
+  const multiEditRadiusPercent = (() => {
+    if (!multiEditRadiusReference) {
+      return 0
+    }
+    if (multiEditRadiusReference.type === 'textbox') {
+      return radiusPxToPercent(
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(multiEditRadiusReference.textboxData.radius, 0))),
+        multiEditRadiusReference.w,
+        multiEditRadiusReference.h
+      )
+    }
+    if (multiEditRadiusReference.type === 'image') {
+      return radiusPxToPercent(
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(multiEditRadiusReference.imageData.radius, 0))),
+        multiEditRadiusReference.w,
+        multiEditRadiusReference.h
+      )
+    }
+    if (multiEditRadiusReference.type === 'video') {
+      return radiusPxToPercent(
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(multiEditRadiusReference.videoData.radius, 0))),
+        multiEditRadiusReference.w,
+        multiEditRadiusReference.h
+      )
+    }
+    if (multiEditRadiusReference.type === 'sound') {
+      return radiusPxToPercent(
+        Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(multiEditRadiusReference.soundData.radius, 0))),
+        multiEditRadiusReference.w,
+        multiEditRadiusReference.h
+      )
+    }
+    return radiusPxToPercent(
+      Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(multiEditRadiusReference.shapeData.radius, 0))),
+      multiEditRadiusReference.w,
+      multiEditRadiusReference.h
+    )
+  })()
+  const multiEditShadowBlurPx = multiEditReferenceObject
+    ? multiEditReferenceObject.type === 'textbox'
+      ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(multiEditReferenceObject.textboxData.shadowBlurPx, 0)))
+      : multiEditReferenceObject.type === 'image'
+        ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(multiEditReferenceObject.imageData.shadowBlurPx, 0)))
+        : multiEditReferenceObject.type === 'video'
+          ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(multiEditReferenceObject.videoData.shadowBlurPx, 0)))
+          : multiEditReferenceObject.type === 'sound'
+            ? Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(multiEditReferenceObject.soundData.shadowBlurPx, 0)))
+            : Math.max(0, Math.min(MAX_SHADOW_BLUR_PX, toFiniteNumber(multiEditReferenceObject.shapeData.shadowBlurPx, 0)))
+    : 0
+  const multiEditShadowAngleDeg = multiEditReferenceObject
+    ? multiEditReferenceObject.type === 'textbox'
+      ? normalizeShadowAngleDeg(toFiniteNumber(multiEditReferenceObject.textboxData.shadowAngleDeg, 45))
+      : multiEditReferenceObject.type === 'image'
+        ? normalizeShadowAngleDeg(toFiniteNumber(multiEditReferenceObject.imageData.shadowAngleDeg, 45))
+        : multiEditReferenceObject.type === 'video'
+          ? normalizeShadowAngleDeg(toFiniteNumber(multiEditReferenceObject.videoData.shadowAngleDeg, 45))
+          : multiEditReferenceObject.type === 'sound'
+            ? normalizeShadowAngleDeg(toFiniteNumber(multiEditReferenceObject.soundData.shadowAngleDeg, 45))
+            : normalizeShadowAngleDeg(toFiniteNumber(multiEditReferenceObject.shapeData.shadowAngleDeg, 45))
+    : 45
+  const multiEditShadowColor = multiEditReferenceObject
+    ? multiEditReferenceObject.type === 'textbox'
+      ? asHexColor(multiEditReferenceObject.textboxData.shadowColor, '#000000')
+      : multiEditReferenceObject.type === 'image'
+        ? asHexColor(multiEditReferenceObject.imageData.shadowColor, '#000000')
+        : multiEditReferenceObject.type === 'video'
+          ? asHexColor(multiEditReferenceObject.videoData.shadowColor, '#000000')
+          : multiEditReferenceObject.type === 'sound'
+            ? asHexColor(multiEditReferenceObject.soundData.shadowColor, '#000000')
+            : asHexColor(multiEditReferenceObject.shapeData.shadowColor, '#000000')
+    : '#000000'
+  const multiEditFillColor =
+    selectedShapeObjects[0] && selectedShapeObjects[0].shapeData.fillColor !== 'transparent'
+      ? asHexColor(selectedShapeObjects[0].shapeData.fillColor, '#244a80')
+      : selectedTextboxObjects[0] &&
+        selectedTextboxObjects[0].textboxData.backgroundColor !== 'transparent'
+        ? asHexColor(selectedTextboxObjects[0].textboxData.backgroundColor, DEFAULT_TEXTBOX_BACKGROUND)
+        : '#244a80'
+  const multiSelectedFillIsTransparent = multiSelectedShapeFillReference
+    ? multiSelectedShapeFillReference.shapeData.fillColor === 'transparent'
+    : multiSelectedTextboxFillReference
+      ? multiSelectedTextboxFillReference.textboxData.backgroundColor === 'transparent'
+      : false
+  const multiEditFillGradientCss = multiSelectedShapeFillReference
+    ? getShapeBackground(multiSelectedShapeFillReference.shapeData)
+    : multiSelectedTextboxFillReference
+      ? getTextboxBackground(multiSelectedTextboxFillReference.textboxData)
+      : selectedGradientCss
+  const multiEditBorderReference = multiEditReferenceObject
+  const multiEditBorderWidth = multiEditBorderReference
+    ? multiEditBorderReference.type === 'textbox'
+      ? multiEditBorderReference.textboxData.borderWidth
+      : multiEditBorderReference.type === 'image'
+        ? multiEditBorderReference.imageData.borderWidth
+        : multiEditBorderReference.type === 'video'
+          ? multiEditBorderReference.videoData.borderWidth
+          : multiEditBorderReference.type === 'sound'
+            ? multiEditBorderReference.soundData.borderWidth
+            : multiEditBorderReference.shapeData.borderWidth
+    : 0
+  const multiEditBorderType = multiEditBorderReference
+    ? multiEditBorderReference.type === 'textbox'
+      ? multiEditBorderReference.textboxData.borderType
+      : multiEditBorderReference.type === 'image'
+        ? multiEditBorderReference.imageData.borderType
+        : multiEditBorderReference.type === 'video'
+          ? multiEditBorderReference.videoData.borderType
+          : multiEditBorderReference.type === 'sound'
+            ? multiEditBorderReference.soundData.borderType
+            : multiEditBorderReference.shapeData.borderType
+    : 'solid'
+  const multiEditBorderColor = multiEditBorderReference
+    ? multiEditBorderReference.type === 'textbox'
+      ? asHexColor(multiEditBorderReference.textboxData.borderColor, DEFAULT_TEXTBOX_BORDER_COLOR)
+      : multiEditBorderReference.type === 'image'
+        ? asHexColor(multiEditBorderReference.imageData.borderColor, DEFAULT_TEXTBOX_BORDER_COLOR)
+        : multiEditBorderReference.type === 'video'
+          ? asHexColor(multiEditBorderReference.videoData.borderColor, DEFAULT_TEXTBOX_BORDER_COLOR)
+          : multiEditBorderReference.type === 'sound'
+            ? asHexColor(multiEditBorderReference.soundData.borderColor, DEFAULT_TEXTBOX_BORDER_COLOR)
+            : asHexColor(multiEditBorderReference.shapeData.borderColor, '#9db5de')
+    : DEFAULT_TEXTBOX_BORDER_COLOR
   const backgroundColorValue = canvasBackgroundControl.solidColor
   const canvasGradientCss = buildGradientCss(
     canvasBackgroundControl.gradient,
@@ -1784,6 +3740,55 @@ function App() {
     canvasBackgroundControl.gradient.colorB
   )
   const activeSlideIndex = activeSlide ? orderedSlides.findIndex((slide) => slide.id === activeSlide.id) : -1
+  const zoomCompensatedScalePercent = getZoomAdjustedObjectScalePercent(camera.zoom)
+
+  useEffect(() => {
+    const styleElement = window.document.createElement('style')
+    styleElement.setAttribute('data-infiniprez-font-assets', 'true')
+    styleElement.textContent = assetFontFaceCss
+    window.document.head.appendChild(styleElement)
+    return () => {
+      styleElement.remove()
+    }
+  }, [assetFontFaceCss])
+
+  useEffect(() => {
+    setSelectedObjectScalePercent(selectedScalableObject?.scalePercent ?? zoomCompensatedScalePercent)
+    selectedObjectScaleBaselineRef.current = selectedScalableObject
+      ? createObjectScaleBaseline(selectedScalableObject)
+      : null
+  }, [selectedScalableObject?.id, selectedScalableObject?.scalePercent, zoomCompensatedScalePercent])
+
+  useEffect(() => {
+    setMultiSelectionScalePercent(selectedScalableObjects[0]?.scalePercent ?? zoomCompensatedScalePercent)
+    if (!canScaleMultiSelection || multiSelectionScaleKey.length === 0) {
+      multiSelectionScaleBaselineRef.current = null
+      return
+    }
+
+    const bounds = selectedScalableObjects.reduce(
+      (acc, object) => ({
+        minX: Math.min(acc.minX, object.x - object.w / 2),
+        minY: Math.min(acc.minY, object.y - object.h / 2),
+        maxX: Math.max(acc.maxX, object.x + object.w / 2),
+        maxY: Math.max(acc.maxY, object.y + object.h / 2),
+      }),
+      {
+        minX: Number.POSITIVE_INFINITY,
+        minY: Number.POSITIVE_INFINITY,
+        maxX: Number.NEGATIVE_INFINITY,
+        maxY: Number.NEGATIVE_INFINITY,
+      }
+    )
+
+    multiSelectionScaleBaselineRef.current = {
+      selectionKey: multiSelectionScaleKey,
+      centerX: (bounds.minX + bounds.maxX) / 2,
+      centerY: (bounds.minY + bounds.maxY) / 2,
+      objects: selectedScalableObjects.map(createObjectScaleBaseline),
+    }
+  }, [canScaleMultiSelection, multiSelectionScaleKey, selectedScalableObjects, zoomCompensatedScalePercent])
+
   const slideDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 4 },
@@ -1843,12 +3848,17 @@ function App() {
   const objectTools = [
     { label: 'Textbox', icon: faPenToSquare },
     { label: 'Image', icon: faImage },
-    { label: 'Rectangle', icon: faSquare },
-    { label: 'Circle', icon: faCircle },
-    { label: 'Arrow', icon: faArrowsUpDownLeftRight },
+    { label: 'Video', icon: faVideo },
+    { label: 'Sound', icon: faVolumeHigh },
     { label: 'Group', icon: faLayerGroup },
     { label: 'Ungroup', icon: faObjectUngroup },
   ]
+  const objectInsertTools = objectTools.filter(
+    (tool) => tool.label !== 'Group' && tool.label !== 'Ungroup'
+  )
+  const objectGroupTools = objectTools.filter(
+    (tool) => tool.label === 'Group' || tool.label === 'Ungroup'
+  )
 
   function createId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -1857,19 +3867,113 @@ function App() {
     return `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`
   }
 
+  function buildLibraryAssetFromDefinition(definition: LibraryAssetDefinition): Asset | null {
+    const kind = resolveLibraryAssetKind({ mimeType: definition.mimeType, name: definition.name })
+    if (!kind || kind === 'style') {
+      return null
+    }
+
+    const intrinsicWidth =
+      kind === 'image'
+        ? (definition.intrinsicWidth ?? 1200)
+        : kind === 'video'
+          ? (definition.intrinsicWidth ?? 1280)
+          : null
+    const intrinsicHeight =
+      kind === 'image'
+        ? (definition.intrinsicHeight ?? 800)
+        : kind === 'video'
+          ? (definition.intrinsicHeight ?? 720)
+          : null
+    const durationSec =
+      kind === 'video' || kind === 'audio' ? (definition.durationSec ?? null) : null
+
+    return {
+      id: createId(),
+      name: definition.name,
+      mimeType: definition.mimeType,
+      dataBase64: definition.dataBase64,
+      intrinsicWidth,
+      intrinsicHeight,
+      durationSec,
+    }
+  }
+
+  function importLibraryAssetDefinitions(definitions: LibraryAssetDefinition[]) {
+    let added = 0
+    let duplicates = 0
+    let rejected = 0
+
+    for (const definition of definitions) {
+      const candidate = buildLibraryAssetFromDefinition(definition)
+      if (!candidate) {
+        rejected += 1
+        continue
+      }
+      if (findMatchingLibraryAsset(useEditorStore.getState().document.assets, candidate)) {
+        duplicates += 1
+        continue
+      }
+      createAsset(candidate)
+      added += 1
+    }
+
+    return { added, duplicates, rejected }
+  }
+
   function getNextZIndex() {
     const maxZ = document.objects.reduce((max, entry) => Math.max(max, entry.zIndex), 0)
     return maxZ + 1
   }
 
-  function getDefaultShapeData(): ShapeData {
+  function getDefaultShapeData(kind: ShapeKind = 'rect'): ShapeData {
+    const foregroundStyle = resolvePresetObjectRole(currentStylePreset, 'foreground-item', availableStylePresets)
     return {
-      borderColor: '#9db5de',
+      kind,
+      adjustmentPercent: getDefaultShapeAdjustment(kind),
+      borderColor: foregroundStyle?.borderColor ?? currentStylePreset?.shapeBorder ?? '#9db5de',
       borderType: 'solid',
-      borderWidth: 2,
+      borderWidth: foregroundStyle?.borderWidth ?? 2,
       fillMode: 'solid',
-      fillColor: '#244a80',
+      fillColor: foregroundStyle?.fillColor ?? currentStylePreset?.shapeFill ?? '#244a80',
       fillGradient: null,
+      radius: kind === 'roundedRect' ? 30 : 0,
+      opacityPercent: foregroundStyle?.opacityPercent ?? 100,
+      shadowColor: '#000000',
+      shadowBlurPx: 0,
+      shadowAngleDeg: 45,
+    }
+  }
+
+  function getDefaultTextboxData(): TextboxData {
+    const textStyle = resolvePresetTextRole(currentStylePreset, 'text', availableStylePresets)
+    const backgroundStyle = resolvePresetObjectRole(currentStylePreset, 'background-item', availableStylePresets)
+    const textColor = textStyle?.color ?? currentStylePreset?.textColor ?? '#f0f3fc'
+    const fontFamily = textStyle?.fontFamily ?? currentStylePreset?.fontFamily ?? 'Arial'
+    const fontSize = textStyle?.fontSize ?? 28
+    return {
+      runs: [
+        {
+          text: 'New text',
+          bold: false,
+          italic: false,
+          underline: false,
+          color: textColor,
+          fontSize,
+        },
+      ],
+      richTextHtml: `<p><span style="color: ${textColor}; font-size: ${fontSize}px; font-family: ${fontFamily};">New text</span></p>`,
+      fontFamily,
+      alignment: 'left',
+      verticalAlignment: 'top',
+      listType: 'none',
+      autoHeight: true,
+      fillMode: 'solid',
+      backgroundColor: backgroundStyle?.fillColor ?? currentStylePreset?.textboxBackground ?? DEFAULT_TEXTBOX_BACKGROUND,
+      fillGradient: null,
+      borderColor: backgroundStyle?.borderColor ?? currentStylePreset?.textboxBorder ?? DEFAULT_TEXTBOX_BORDER_COLOR,
+      borderType: 'solid',
+      borderWidth: backgroundStyle?.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH,
       radius: 0,
       opacityPercent: 100,
       shadowColor: '#000000',
@@ -1878,92 +3982,230 @@ function App() {
     }
   }
 
+  function clearCreationTool() {
+    setActiveCreationTool(null)
+    setPendingImagePlacements([])
+    setIsShapeMenuOpen(false)
+  }
+
+  function handleAssetDragStart(
+    event: ReactDragEvent<HTMLElement>,
+    assetEntry: AssetLibraryEntry
+  ) {
+    const payload: AssetLibraryDragPayload = {
+      assetId: assetEntry.asset.id,
+      intrinsicWidth: assetEntry.intrinsicWidth,
+      intrinsicHeight: assetEntry.intrinsicHeight,
+      kind:
+        assetEntry.kind === 'video'
+          ? 'video'
+          : assetEntry.kind === 'audio'
+            ? 'audio'
+            : 'image',
+    }
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(ASSET_LIBRARY_DRAG_MIME, JSON.stringify(payload))
+    event.dataTransfer.setData('text/plain', assetEntry.asset.name)
+  }
+
+  async function addFilesToAssetLibrary(files: File[]) {
+    const supportedFiles = files.filter(isSupportedLibraryAssetFile)
+    if (supportedFiles.length === 0) {
+      return
+    }
+
+    const validFiles: File[] = []
+    const rejectedMessages: string[] = []
+    supportedFiles.forEach((file) => {
+      const validationError = validateLibraryAssetFile(file)
+      if (validationError) {
+        rejectedMessages.push(validationError)
+        return
+      }
+      validFiles.push(file)
+    })
+
+    if (validFiles.length === 0) {
+      if (rejectedMessages.length > 0) {
+        window.alert(rejectedMessages.join('\n'))
+      }
+      return
+    }
+
+    let importedStyleCount = 0
+    let importedTemplateCount = 0
+    let importedStyleTemplateDuplicatesCount = 0
+    let importedEmbeddedAssetCount = 0
+    let importedEmbeddedAssetDuplicatesCount = 0
+    let importedEmbeddedAssetRejectedCount = 0
+    const styleImportMessages: string[] = []
+
+    beginCommandBatch(
+      validFiles.length === 1 ? 'Add asset to library' : 'Add assets to library'
+    )
+    try {
+      for (const file of validFiles) {
+        const kind = resolveLibraryAssetKind({ mimeType: file.type, name: file.name })
+        const candidateAsset = await buildLibraryAsset(file, createId())
+        const existingAsset = findMatchingLibraryAsset(useEditorStore.getState().document.assets, candidateAsset)
+        const sourceAssetId = existingAsset?.id ?? candidateAsset.id
+
+        if (!existingAsset) {
+          createAsset(candidateAsset)
+        }
+
+        if (kind === 'style') {
+          try {
+            const parsed = JSON.parse(await file.text()) as unknown
+            const result = registerDesignAssetDefinitionsFromPayload(parsed, file.name, sourceAssetId)
+            importedStyleCount += result.styleAdded
+            importedTemplateCount += result.templateAdded
+            importedStyleTemplateDuplicatesCount += result.styleDuplicates + result.templateDuplicates
+
+            const embeddedAssetResult = importLibraryAssetDefinitions(
+              extractLibraryAssetDefinitionsFromUnknown(parsed)
+            )
+            importedEmbeddedAssetCount += embeddedAssetResult.added
+            importedEmbeddedAssetDuplicatesCount += embeddedAssetResult.duplicates
+            importedEmbeddedAssetRejectedCount += embeddedAssetResult.rejected
+
+            const discoveredCount =
+              result.styleAdded +
+              result.styleDuplicates +
+              result.styleRejected +
+              result.templateAdded +
+              result.templateDuplicates +
+              result.templateRejected +
+              embeddedAssetResult.added +
+              embeddedAssetResult.duplicates +
+              embeddedAssetResult.rejected
+            if (discoveredCount === 0) {
+              styleImportMessages.push(`${file.name}: no style, template, or asset definitions found.`)
+            }
+          } catch {
+            styleImportMessages.push(`${file.name}: invalid JSON payload.`)
+          }
+        }
+      }
+    } finally {
+      commitCommandBatch()
+    }
+
+    if (importedStyleCount > 0 || importedTemplateCount > 0) {
+      setDesignAssetRevision((current) => current + 1)
+    }
+    if (
+      importedStyleCount > 0 ||
+      importedTemplateCount > 0 ||
+      importedEmbeddedAssetCount > 0 ||
+      importedStyleTemplateDuplicatesCount > 0 ||
+      importedEmbeddedAssetDuplicatesCount > 0 ||
+      importedEmbeddedAssetRejectedCount > 0
+    ) {
+      styleImportMessages.push(
+        `Imported from JSON assets: ${importedStyleCount} style(s), ${importedTemplateCount} template(s), ${importedEmbeddedAssetCount} embedded asset(s), ${importedStyleTemplateDuplicatesCount + importedEmbeddedAssetDuplicatesCount} duplicate(s), ${importedEmbeddedAssetRejectedCount} rejected asset(s).`
+      )
+    }
+
+    if (styleImportMessages.length > 0) {
+      rejectedMessages.push(...styleImportMessages)
+    }
+
+    if (rejectedMessages.length > 0) {
+      window.alert(rejectedMessages.join('\n'))
+    }
+  }
+
+  function openAssetLibraryDialog() {
+    assetLibraryInputRef.current?.click()
+  }
+
+  async function handleAssetLibraryFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    await addFilesToAssetLibrary(files)
+  }
+
+  function handleAssetSortChange(nextSort: AssetLibrarySort) {
+    if (assetLibrarySort === nextSort) {
+      setAssetLibrarySortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setAssetLibrarySort(nextSort)
+    setAssetLibrarySortDirection('asc')
+  }
+
+  function handleStyleCatalogNameSortToggle() {
+    setStyleCatalogSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+  }
+
+  function handleTemplateCatalogNameSortToggle() {
+    setTemplateCatalogSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+  }
+
+  async function handleAssetLibraryDrop(event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault()
+    setIsAssetLibraryDragOver(false)
+    setActiveDesignTab('assets')
+    await addFilesToAssetLibrary(Array.from(event.dataTransfer.files ?? []))
+  }
+
+  function handleAssetLibraryDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (Array.from(event.dataTransfer.types).includes('Files')) {
+      event.preventDefault()
+      setIsAssetLibraryDragOver(true)
+    }
+  }
+
+  function handleAssetLibraryDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setIsAssetLibraryDragOver(false)
+    }
+  }
+
+  function handleDeleteAsset(assetId: string) {
+    deleteAsset(assetId)
+  }
+
+  function ensureLibraryAsset(asset: Asset): Asset {
+    const existing = findMatchingLibraryAsset(useEditorStore.getState().document.assets, asset)
+    if (existing) {
+      return existing
+    }
+    createAsset(asset)
+    return asset
+  }
+
+  function handleShapePresetSelection(shapePresetId: ShapeCreationPresetId) {
+    setPendingImagePlacements([])
+    setActiveShapePresetId(shapePresetId)
+    setActiveCreationTool(shapePresetId === 'circle' ? 'shape_circle' : 'shape_rect')
+    setIsShapeMenuOpen(false)
+  }
+
   function handleObjectTool(label: string) {
-    const safeZoom = Math.max(camera.zoom, 0.001)
-    const creationScale = 1 / safeZoom
-
-    const base = {
-      id: createId(),
-      x: camera.x,
-      y: camera.y,
-      w: 260 * creationScale,
-      h: 160 * creationScale,
-      rotation: -camera.rotation,
-      locked: false,
-      zIndex: getNextZIndex(),
-      parentGroupId: null,
-    } satisfies Pick<
-      CanvasObject,
-      'id' | 'x' | 'y' | 'w' | 'h' | 'rotation' | 'locked' | 'zIndex' | 'parentGroupId'
-    >
-
     switch (label) {
       case 'Textbox':
-        createObject({
-          ...base,
-          type: 'textbox',
-          textboxData: {
-            runs: [
-              {
-                text: 'New text',
-                bold: false,
-                italic: false,
-                underline: false,
-                color: '#f0f3fc',
-                fontSize: 28,
-              },
-            ],
-            richTextHtml: '<p><span style="color: #f0f3fc; font-size: 28px;">New text</span></p>',
-            fontFamily: 'Space Grotesk',
-            alignment: 'left',
-            listType: 'none',
-            autoHeight: true,
-            fillMode: 'solid',
-            backgroundColor: DEFAULT_TEXTBOX_BACKGROUND,
-            fillGradient: null,
-            borderColor: DEFAULT_TEXTBOX_BORDER_COLOR,
-            borderType: 'solid',
-            borderWidth: DEFAULT_TEXTBOX_BORDER_WIDTH,
-            opacityPercent: 100,
-            shadowColor: '#000000',
-            shadowBlurPx: 0,
-            shadowAngleDeg: 45,
-          },
-        })
+        setPendingImagePlacements([])
+        setIsShapeMenuOpen(false)
+        setActiveCreationTool((current) => (current === 'textbox' ? null : 'textbox'))
         break
       case 'Image':
-        pendingImagePlacementCameraRef.current = camera
+        setIsShapeMenuOpen(false)
+        setActiveCreationTool('image')
         imageInputRef.current?.click()
         break
-      case 'Rectangle':
-        createObject({
-          ...base,
-          type: 'shape_rect',
-          shapeData: getDefaultShapeData(),
-        })
+      case 'Video':
+        setPendingImagePlacements([])
+        setIsShapeMenuOpen(false)
+        setActiveCreationTool(null)
+        videoInputRef.current?.click()
         break
-      case 'Circle': {
-        const circleSize = Math.min(base.w, base.h)
-        createObject({
-          ...base,
-          w: circleSize,
-          h: circleSize,
-          type: 'shape_circle',
-          shapeData: getDefaultShapeData(),
-        })
-        break
-      }
-      case 'Arrow':
-        createObject({
-          ...base,
-          w: 320 * creationScale,
-          h: 60 * creationScale,
-          type: 'shape_arrow',
-          shapeData: {
-            ...getDefaultShapeData(),
-            fillColor: 'transparent',
-          },
-        })
+      case 'Sound':
+        setPendingImagePlacements([])
+        setIsShapeMenuOpen(false)
+        setActiveCreationTool(null)
+        soundInputRef.current?.click()
         break
       default:
         break
@@ -1972,82 +4214,233 @@ function App() {
 
   async function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []).filter(isSupportedImageFile)
-    const placementCamera = pendingImagePlacementCameraRef.current ?? camera
-    pendingImagePlacementCameraRef.current = null
     event.target.value = ''
 
     if (files.length === 0) {
+      if (activeCreationTool === 'image') {
+        clearCreationTool()
+      }
       return
     }
 
-    const safeZoom = Math.max(placementCamera.zoom, 0.001)
-    const creationScale = 1 / safeZoom
-    const zIndexStart = document.objects.reduce((max, entry) => Math.max(max, entry.zIndex), 0) + 1
-    const createdIds: string[] = []
-
-    beginCommandBatch('Import images')
     try {
+      const nextPendingImages: PendingImagePlacement[] = []
       for (const [index, file] of files.entries()) {
         const dataUrl = await readFileAsDataUrl(file)
         const dimensions = await getImageDimensions(dataUrl).catch(() => ({
           width: 1200,
           height: 800,
         }))
-        const assetId = createId()
-        createAsset({
-          id: assetId,
+        nextPendingImages.push({
           name: file.name || `image-${index + 1}`,
           mimeType: file.type,
           dataBase64: toAssetBase64(dataUrl),
+          intrinsicWidth: dimensions.width,
+          intrinsicHeight: dimensions.height,
         })
+      }
+      setPendingImagePlacements(nextPendingImages)
+      setActiveCreationTool('image')
+    } catch {
+      clearCreationTool()
+      window.alert('Failed to load image file.')
+    }
+  }
 
-        const aspectRatio = Math.max(0.0001, dimensions.width / Math.max(1, dimensions.height))
-        const width = 260 * creationScale
-        const height = Math.max(40 * creationScale, width / aspectRatio)
+  async function handleVideoFile(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter(
+      (file) => resolveLibraryAssetKind({ mimeType: file.type, name: file.name }) === 'video'
+    )
+    event.target.value = ''
+
+    if (files.length === 0) {
+      return
+    }
+
+    beginCommandBatch(files.length === 1 ? 'Add video' : 'Add videos')
+    try {
+      const createdIds: string[] = []
+      const nextZIndex = getNextZIndex()
+      for (const [index, file] of files.entries()) {
+        const asset = ensureLibraryAsset(await buildLibraryAsset(file, createId()))
+        const intrinsicWidth = Math.max(1, asset.intrinsicWidth ?? 1280)
+        const intrinsicHeight = Math.max(1, asset.intrinsicHeight ?? 720)
+        const frame = getDefaultPlacedMediaSize('video', intrinsicWidth, intrinsicHeight, camera.zoom)
         const objectId = createId()
         createObject({
           id: objectId,
-          type: 'image',
-          x: placementCamera.x + index * 20 * creationScale,
-          y: placementCamera.y + index * 20 * creationScale,
-          w: width,
-          h: height,
-          rotation: -placementCamera.rotation,
+          type: 'video',
+          x: camera.x + (index - (files.length - 1) / 2) * (36 / Math.max(camera.zoom, 0.001)),
+          y: camera.y + (index - (files.length - 1) / 2) * (24 / Math.max(camera.zoom, 0.001)),
+          w: frame.w,
+          h: frame.h,
+          rotation: -camera.rotation,
+          scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+          keepAspectRatio: true,
           locked: false,
-          zIndex: zIndexStart + index,
+          zIndex: nextZIndex + index,
           parentGroupId: activeGroupId,
-          imageData: {
-            assetId,
-            intrinsicWidth: dimensions.width,
-            intrinsicHeight: dimensions.height,
-            keepAspectRatio: false,
-            borderColor: '#b2c6ee',
-            borderType: 'solid',
-            borderWidth: 0,
-            radius: 0,
-            opacityPercent: 100,
-            cropEnabled: false,
-            cropLeftPercent: 0,
-            cropTopPercent: 0,
-            cropRightPercent: 0,
-            cropBottomPercent: 0,
-            effectsEnabled: false,
-            filterPreset: 'none',
-            shadowColor: '#000000',
-            shadowBlurPx: 0,
-            shadowAngleDeg: 45,
-          },
+          videoData: createDefaultVideoData(
+            asset.id,
+            intrinsicWidth,
+            intrinsicHeight,
+            currentStylePreset?.assetStyle.videoBorder ?? currentStylePreset?.imageBorder
+          ),
         })
         createdIds.push(objectId)
       }
-      commitCommandBatch()
-      if (createdIds.length > 0) {
-        selectObjects(createdIds)
-      }
+      selectObjects(createdIds)
     } catch {
+      window.alert('Failed to load video file.')
+    } finally {
       commitCommandBatch()
-      window.alert('Failed to load image file.')
     }
+  }
+
+  async function handleSoundFile(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter(
+      (file) => resolveLibraryAssetKind({ mimeType: file.type, name: file.name }) === 'audio'
+    )
+    event.target.value = ''
+
+    if (files.length === 0) {
+      return
+    }
+
+    beginCommandBatch(files.length === 1 ? 'Add sound' : 'Add sounds')
+    try {
+      const createdIds: string[] = []
+      const nextZIndex = getNextZIndex()
+      for (const [index, file] of files.entries()) {
+        const asset = ensureLibraryAsset(await buildLibraryAsset(file, createId()))
+        const objectId = createId()
+        const frame = getDefaultPlacedMediaSize('sound', 1, 1, camera.zoom)
+        createObject({
+          id: objectId,
+          type: 'sound',
+          x: camera.x + (index - (files.length - 1) / 2) * (28 / Math.max(camera.zoom, 0.001)),
+          y: camera.y + (index - (files.length - 1) / 2) * (18 / Math.max(camera.zoom, 0.001)),
+          w: frame.w,
+          h: frame.h,
+          rotation: -camera.rotation,
+          scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+          keepAspectRatio: false,
+          locked: false,
+          zIndex: nextZIndex + index,
+          parentGroupId: activeGroupId,
+          soundData: createDefaultSoundData(
+            asset.id,
+            currentStylePreset?.assetStyle.audioBorder ?? currentStylePreset?.imageBorder,
+            frame.h / 2
+          ),
+        })
+        createdIds.push(objectId)
+      }
+      selectObjects(createdIds)
+    } catch {
+      window.alert('Failed to load sound file.')
+    } finally {
+      commitCommandBatch()
+    }
+  }
+
+  function handleCreateObjectFromTool(
+    tool: CreationToolType,
+    frame: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+  ) {
+    const objectId = createId()
+    const initialScalePercent = getZoomAdjustedObjectScalePercent(camera.zoom)
+
+    if (tool === 'textbox') {
+      createObject({
+        id: objectId,
+        type: 'textbox',
+        ...frame,
+        scalePercent: initialScalePercent,
+        keepAspectRatio: false,
+        locked: false,
+        zIndex: getNextZIndex(),
+        parentGroupId: activeGroupId,
+        textboxData: getDefaultTextboxData(),
+      })
+      selectObjects([objectId])
+      setActiveCreationTool(null)
+      return
+    }
+
+    if (tool === 'shape_rect' || tool === 'shape_circle') {
+      const shapeKind = tool === 'shape_rect' ? normalizeShapeKind(activeShapePresetId) : 'rect'
+      createObject({
+        id: objectId,
+        type: tool,
+        ...frame,
+        scalePercent: initialScalePercent,
+        keepAspectRatio: tool === 'shape_circle',
+        locked: false,
+        zIndex: getNextZIndex(),
+        parentGroupId: activeGroupId,
+        shapeData: getDefaultShapeData(shapeKind),
+      })
+      selectObjects([objectId])
+      setActiveCreationTool(null)
+      return
+    }
+
+    const pendingImage = pendingImagePlacements[0]
+    if (!pendingImage) {
+      clearCreationTool()
+      return
+    }
+
+    if (!pendingImage.assetId) {
+      beginCommandBatch('Place image')
+    }
+    const resolvedAsset =
+      pendingImage.assetId
+        ? document.assets.find((asset) => asset.id === pendingImage.assetId) ?? null
+        : ensureLibraryAsset({
+          id: createId(),
+          name: pendingImage.name,
+          mimeType: pendingImage.mimeType,
+          dataBase64: pendingImage.dataBase64,
+          intrinsicWidth: pendingImage.intrinsicWidth,
+          intrinsicHeight: pendingImage.intrinsicHeight,
+          durationSec: null,
+        })
+    const assetId = resolvedAsset?.id ?? pendingImage.assetId ?? createId()
+    createObject({
+      id: objectId,
+      type: 'image',
+      ...frame,
+      scalePercent: initialScalePercent,
+      keepAspectRatio: true,
+      locked: false,
+      zIndex: getNextZIndex(),
+      parentGroupId: activeGroupId,
+      imageData: {
+        ...createDefaultImageData(
+          assetId,
+          pendingImage.intrinsicWidth,
+          pendingImage.intrinsicHeight,
+          currentStylePreset?.assetStyle.imageBorder ?? currentStylePreset?.imageBorder
+        ),
+      },
+    })
+    if (!pendingImage.assetId) {
+      commitCommandBatch()
+    }
+    selectObjects([objectId])
+    if (pendingImage.persistAfterPlace) {
+      setActiveCreationTool('image')
+      return
+    }
+    setPendingImagePlacements((current) => {
+      const next = current.slice(1)
+      if (next.length === 0) {
+        setActiveCreationTool(null)
+      }
+      return next
+    })
   }
 
   function handleNewDocument() {
@@ -2058,6 +4451,8 @@ function App() {
       return
     }
     resetDocument()
+    setActiveStylePresetId(null)
+    clearCreationTool()
     latestDocumentSnapshotRef.current = ''
     latestAutosavedSnapshotRef.current = ''
     try {
@@ -2068,6 +4463,83 @@ function App() {
     }
   }
 
+  function applyStylePreset(preset: StylePreset) {
+    const foregroundStyle = getObjectStyleRole(preset, 'foreground-item')
+    const backgroundStyle = getObjectStyleRole(preset, 'background-item')
+    const textStyle = getTextStyleRole(preset, 'text')
+    const baseFontFamily = textStyle?.fontFamily ?? preset.fontFamily
+    const baseTextColor = textStyle?.color ?? preset.textColor
+    const imageBorder = preset.assetStyle.imageBorder ?? preset.imageBorder
+    const videoBorder = preset.assetStyle.videoBorder ?? imageBorder
+    const audioBorder = preset.assetStyle.audioBorder ?? imageBorder
+
+    beginCommandBatch(`Apply style preset: ${preset.name}`)
+    setCanvasBackground(preset.canvasBackground)
+
+    for (const object of document.objects) {
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        setShapeData(object.id, {
+          ...object.shapeData,
+          fillMode: 'solid',
+          fillGradient: null,
+          fillColor: foregroundStyle?.fillColor ?? preset.shapeFill,
+          borderColor: foregroundStyle?.borderColor ?? preset.shapeBorder,
+          borderWidth: foregroundStyle?.borderWidth ?? object.shapeData.borderWidth,
+          opacityPercent: foregroundStyle?.opacityPercent ?? object.shapeData.opacityPercent,
+        })
+        continue
+      }
+
+      if (object.type === 'textbox') {
+        setTextboxData(object.id, {
+          ...object.textboxData,
+          fontFamily: baseFontFamily,
+          fillMode: 'solid',
+          fillGradient: null,
+          backgroundColor: backgroundStyle?.fillColor ?? preset.textboxBackground,
+          borderColor: backgroundStyle?.borderColor ?? preset.textboxBorder,
+          borderWidth: backgroundStyle?.borderWidth ?? object.textboxData.borderWidth,
+          runs: object.textboxData.runs.map((run) => ({
+            ...run,
+            color: baseTextColor,
+          })),
+          richTextHtml: applyTextboxThemeRichHtml(resolveTextboxRichHtml(object.textboxData), {
+            fontFamily: baseFontFamily,
+            textColor: baseTextColor,
+          }),
+        })
+        continue
+      }
+
+      if (object.type === 'image') {
+        setImageData(object.id, {
+          ...object.imageData,
+          borderColor: imageBorder,
+        })
+        continue
+      }
+
+      if (object.type === 'video') {
+        setVideoData(object.id, {
+          ...object.videoData,
+          borderColor: videoBorder,
+        })
+        continue
+      }
+
+      if (object.type === 'sound') {
+        setSoundData(object.id, {
+          ...object.soundData,
+          borderColor: audioBorder,
+        })
+        continue
+      }
+    }
+
+    commitCommandBatch()
+    setActiveStylePresetId(preset.id)
+  }
+
   function handleShapeOpacityChange(objectId: string, value: string) {
     const parsed = Number(value)
     if (!Number.isFinite(parsed)) {
@@ -2076,61 +4548,50 @@ function App() {
     setShapeOpacity(objectId, parsed)
   }
 
-  function updateSelectedTextboxData(patch: Partial<TextboxData>) {
-    if (
-      !selectedTextboxObject ||
-      selectedTextboxObject.locked ||
-      selectedObjectLockedByAncestor
-    ) {
-      return
-    }
-
+  function normalizeTextboxData(
+    textboxData: TextboxData,
+    patch: Partial<TextboxData>
+  ): TextboxData {
     let nextTextboxData: TextboxData = {
-      ...selectedTextboxObject.textboxData,
+      ...textboxData,
       ...patch,
-      fillMode: (patch.fillMode ?? selectedTextboxObject.textboxData.fillMode ?? 'solid') as TextboxData['fillMode'],
-      backgroundColor: patch.backgroundColor ?? selectedTextboxObject.textboxData.backgroundColor ?? DEFAULT_TEXTBOX_BACKGROUND,
+      fillMode: (patch.fillMode ?? textboxData.fillMode ?? 'solid') as TextboxData['fillMode'],
+      backgroundColor: patch.backgroundColor ?? textboxData.backgroundColor ?? DEFAULT_TEXTBOX_BACKGROUND,
       borderWidth: Math.max(
         0,
         Math.min(
           20,
           Math.round(
             toFiniteNumber(
-              patch.borderWidth ?? selectedTextboxObject.textboxData.borderWidth,
+              patch.borderWidth ?? textboxData.borderWidth,
               DEFAULT_TEXTBOX_BORDER_WIDTH
             )
           )
         )
       ),
+      radius: Math.max(
+        0,
+        Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(patch.radius ?? textboxData.radius, 0))
+      ),
       opacityPercent: Math.max(
         0,
         Math.min(
           100,
-          Math.round(
-            toFiniteNumber(
-              patch.opacityPercent ?? selectedTextboxObject.textboxData.opacityPercent,
-              100
-            )
-          )
+          Math.round(toFiniteNumber(patch.opacityPercent ?? textboxData.opacityPercent, 100))
         )
       ),
       shadowBlurPx: Math.max(
         0,
         Math.min(
           MAX_SHADOW_BLUR_PX,
-          Math.round(
-            toFiniteNumber(
-              patch.shadowBlurPx ?? selectedTextboxObject.textboxData.shadowBlurPx,
-              0
-            )
-          )
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? textboxData.shadowBlurPx, 0))
         )
       ),
       shadowAngleDeg: normalizeShadowAngleDeg(
-        toFiniteNumber(patch.shadowAngleDeg ?? selectedTextboxObject.textboxData.shadowAngleDeg, 45)
+        toFiniteNumber(patch.shadowAngleDeg ?? textboxData.shadowAngleDeg, 45)
       ),
       shadowColor: asHexColor(
-        patch.shadowColor ?? selectedTextboxObject.textboxData.shadowColor,
+        patch.shadowColor ?? textboxData.shadowColor,
         '#000000'
       ),
     }
@@ -2145,13 +4606,285 @@ function App() {
         ...nextTextboxData,
         fillGradient: normalizeFillGradient(
           null,
-          selectedTextboxObject.textboxData.backgroundColor,
+          textboxData.backgroundColor,
           '#ffffff'
         ),
       }
     }
 
-    setTextboxData(selectedTextboxObject.id, nextTextboxData)
+    return nextTextboxData
+  }
+
+  function normalizeShapeData(
+    shapeData: ShapeData,
+    patch: Partial<ShapeData>
+  ): ShapeData {
+    let nextShapeData: ShapeData = {
+      ...shapeData,
+      ...patch,
+      kind: normalizeShapeKind(patch.kind ?? shapeData.kind),
+      adjustmentPercent: clampShapeAdjustment(
+        normalizeShapeKind(patch.kind ?? shapeData.kind),
+        toFiniteNumber(patch.adjustmentPercent ?? shapeData.adjustmentPercent, getDefaultShapeAdjustment(normalizeShapeKind(patch.kind ?? shapeData.kind)))
+      ),
+      radius: Math.max(
+        0,
+        Math.min(
+          MAX_SHAPE_RADIUS,
+          toFiniteNumber(patch.radius ?? shapeData.radius, 0)
+        )
+      ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? shapeData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? shapeData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? shapeData.shadowColor,
+        '#000000'
+      ),
+    }
+
+    if (nextShapeData.fillMode === 'solid') {
+      nextShapeData = {
+        ...nextShapeData,
+        fillGradient: null,
+      }
+    } else if (nextShapeData.fillGradient === null) {
+      nextShapeData = {
+        ...nextShapeData,
+        fillGradient: normalizeFillGradient(null, shapeData.fillColor, '#ffffff'),
+      }
+    }
+
+    return nextShapeData
+  }
+
+  function normalizeImageData(
+    imageData: ImageData,
+    patch: Partial<ImageData>
+  ): ImageData {
+    return {
+      ...imageData,
+      ...patch,
+      borderWidth: Math.max(
+        0,
+        Math.min(
+          20,
+          Math.round(toFiniteNumber(patch.borderWidth ?? imageData.borderWidth, 0))
+        )
+      ),
+      radius: Math.max(
+        0,
+        Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(patch.radius ?? imageData.radius, 0))
+      ),
+      opacityPercent: Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(toFiniteNumber(patch.opacityPercent ?? imageData.opacityPercent, 100))
+        )
+      ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? imageData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? imageData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? imageData.shadowColor,
+        '#000000'
+      ),
+    }
+  }
+
+  function normalizeVideoData(
+    videoData: VideoData,
+    patch: Partial<VideoData>
+  ): VideoData {
+    return {
+      ...videoData,
+      ...patch,
+      borderWidth: Math.max(
+        0,
+        Math.min(
+          20,
+          Math.round(toFiniteNumber(patch.borderWidth ?? videoData.borderWidth, 0))
+        )
+      ),
+      radius: Math.max(
+        0,
+        Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(patch.radius ?? videoData.radius, 0))
+      ),
+      opacityPercent: Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(toFiniteNumber(patch.opacityPercent ?? videoData.opacityPercent, 100))
+        )
+      ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? videoData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? videoData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? videoData.shadowColor,
+        '#000000'
+      ),
+    }
+  }
+
+  function normalizeSoundData(
+    soundData: SoundData,
+    patch: Partial<SoundData>
+  ): SoundData {
+    return {
+      ...soundData,
+      ...patch,
+      borderWidth: Math.max(
+        0,
+        Math.min(
+          20,
+          Math.round(toFiniteNumber(patch.borderWidth ?? soundData.borderWidth, 0))
+        )
+      ),
+      radius: Math.max(
+        0,
+        Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(patch.radius ?? soundData.radius, 0))
+      ),
+      opacityPercent: Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(toFiniteNumber(patch.opacityPercent ?? soundData.opacityPercent, 100))
+        )
+      ),
+      shadowBlurPx: Math.max(
+        0,
+        Math.min(
+          MAX_SHADOW_BLUR_PX,
+          Math.round(toFiniteNumber(patch.shadowBlurPx ?? soundData.shadowBlurPx, 0))
+        )
+      ),
+      shadowAngleDeg: normalizeShadowAngleDeg(
+        toFiniteNumber(patch.shadowAngleDeg ?? soundData.shadowAngleDeg, 45)
+      ),
+      shadowColor: asHexColor(
+        patch.shadowColor ?? soundData.shadowColor,
+        '#000000'
+      ),
+    }
+  }
+
+  function applyToUnlockedSelection(
+    label: string,
+    apply: (object: CanvasObject) => void
+  ) {
+    if (selectedUnlockedObjects.length === 0) {
+      return
+    }
+    beginCommandBatch(label)
+    selectedUnlockedObjects.forEach((object) => {
+      apply(object)
+    })
+    commitCommandBatch()
+  }
+
+  function updateSelectedTextboxData(patch: Partial<TextboxData>) {
+    if (
+      !selectedTextboxObject ||
+      selectedTextboxObject.locked ||
+      selectedObjectLockedByAncestor
+    ) {
+      return
+    }
+
+    setTextboxData(
+      selectedTextboxObject.id,
+      normalizeTextboxData(selectedTextboxObject.textboxData, patch)
+    )
+  }
+
+  function applyScaleBaselineEntry(
+    baseline: ObjectScaleBaseline,
+    factor: number,
+    centerOverride?: { x: number; y: number }
+  ) {
+    const target = objectById.get(baseline.id)
+    if (!target) {
+      return
+    }
+
+    const centerX = centerOverride?.x ?? baseline.x
+    const centerY = centerOverride?.y ?? baseline.y
+    const nextW = Math.max(1, baseline.w * factor)
+    const nextH = Math.max(1, baseline.h * factor)
+
+    moveObject(baseline.id, {
+      x: centerX + (baseline.x - centerX) * factor,
+      y: centerY + (baseline.y - centerY) * factor,
+      w: nextW,
+      h: nextH,
+      rotation: baseline.rotation,
+      scalePercent: clampObjectScalePercent(baseline.scalePercent * factor),
+    })
+
+  }
+
+  function updateSelectedObjectScale(scalePercent: number) {
+    if (!selectedScalableObject || selectedObjectTransformLocked) {
+      return
+    }
+
+    const nextScalePercent = clampObjectScalePercent(scalePercent)
+    const baseline =
+      selectedObjectScaleBaselineRef.current ?? createObjectScaleBaseline(selectedScalableObject)
+    const baselineScalePercent = Math.max(OBJECT_SCALE_MIN_PERCENT, baseline.scalePercent)
+    beginCommandBatch('Scale object')
+    applyScaleBaselineEntry(baseline, nextScalePercent / baselineScalePercent)
+    commitCommandBatch()
+    setSelectedObjectScalePercent(nextScalePercent)
+  }
+
+  function updateMultiSelectedObjectScale(scalePercent: number) {
+    if (!canScaleMultiSelection || multiEditTransformLocked) {
+      return
+    }
+
+    const nextScalePercent = clampObjectScalePercent(scalePercent)
+    const baseline = multiSelectionScaleBaselineRef.current
+    if (!baseline || baseline.objects.length === 0) {
+      return
+    }
+
+    const referenceScalePercent = Math.max(
+      OBJECT_SCALE_MIN_PERCENT,
+      baseline.objects[0]?.scalePercent ?? zoomCompensatedScalePercent
+    )
+    beginCommandBatch('Scale selected objects')
+    baseline.objects.forEach((entry) => {
+      applyScaleBaselineEntry(entry, nextScalePercent / referenceScalePercent, {
+        x: baseline.centerX,
+        y: baseline.centerY,
+      })
+    })
+    commitCommandBatch()
+    setMultiSelectionScalePercent(nextScalePercent)
   }
 
   function updateSelectedObjectTransform(
@@ -2163,6 +4896,16 @@ function App() {
 
     let nextWidth = Math.max(1, patch.w ?? selectedObject.w)
     let nextHeight = Math.max(1, patch.h ?? selectedObject.h)
+    const shouldKeepAspectRatio = isSelectedObjectAspectRatioLocked
+    const aspectRatio = Math.max(0.0001, selectedObject.w / Math.max(1, selectedObject.h))
+
+    if (shouldKeepAspectRatio && selectedObject.type !== 'shape_circle') {
+      if (patch.w !== undefined && patch.h === undefined) {
+        nextHeight = Math.max(1, nextWidth / aspectRatio)
+      } else if (patch.h !== undefined && patch.w === undefined) {
+        nextWidth = Math.max(1, nextHeight * aspectRatio)
+      }
+    }
 
     if (selectedObject.type === 'shape_circle' && (patch.w !== undefined || patch.h !== undefined)) {
       const enforcedSize =
@@ -2184,6 +4927,16 @@ function App() {
     })
   }
 
+  function toggleSelectedObjectAspectRatioLock() {
+    if (!selectedObject || selectedObjectTransformLocked || isSelectedObjectAspectRatioLockForced) {
+      return
+    }
+    const nextLocked = !isSelectedObjectAspectRatioLocked
+    beginCommandBatch(nextLocked ? 'Lock aspect ratio' : 'Unlock aspect ratio')
+    setObjectKeepAspectRatio(selectedObject.id, nextLocked)
+    commitCommandBatch()
+  }
+
   function updateSelectedShapeData(patch: Partial<ShapeData>) {
     if (
       !selectedShapeObject ||
@@ -2193,45 +4946,10 @@ function App() {
       return
     }
 
-    let nextShapeData: ShapeData = {
-      ...selectedShapeObject.shapeData,
-      ...patch,
-      radius: Math.max(
-        0,
-        Math.min(
-          MAX_SHAPE_RADIUS,
-          toFiniteNumber(patch.radius ?? selectedShapeObject.shapeData.radius, 0)
-        )
-      ),
-      shadowBlurPx: Math.max(
-        0,
-        Math.min(
-          MAX_SHADOW_BLUR_PX,
-          Math.round(toFiniteNumber(patch.shadowBlurPx ?? selectedShapeObject.shapeData.shadowBlurPx, 0))
-        )
-      ),
-      shadowAngleDeg: normalizeShadowAngleDeg(
-        toFiniteNumber(patch.shadowAngleDeg ?? selectedShapeObject.shapeData.shadowAngleDeg, 45)
-      ),
-      shadowColor: asHexColor(
-        patch.shadowColor ?? selectedShapeObject.shapeData.shadowColor,
-        '#000000'
-      ),
-    }
-
-    if (nextShapeData.fillMode === 'solid') {
-      nextShapeData = {
-        ...nextShapeData,
-        fillGradient: null,
-      }
-    } else if (nextShapeData.fillGradient === null) {
-      nextShapeData = {
-        ...nextShapeData,
-        fillGradient: normalizeFillGradient(null, selectedShapeObject.shapeData.fillColor, '#ffffff'),
-      }
-    }
-
-    setShapeData(selectedShapeObject.id, nextShapeData)
+    setShapeData(
+      selectedShapeObject.id,
+      normalizeShapeData(selectedShapeObject.shapeData, patch)
+    )
   }
 
   function updateSelectedImageData(patch: Partial<ImageData>) {
@@ -2243,44 +4961,122 @@ function App() {
       return
     }
 
-    const nextImageData: ImageData = {
-      ...selectedImageObject.imageData,
-      ...patch,
-      borderWidth: Math.max(
-        0,
-        Math.min(
-          20,
-          Math.round(toFiniteNumber(patch.borderWidth ?? selectedImageObject.imageData.borderWidth, 0))
-        )
-      ),
-      radius: Math.max(
-        0,
-        Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(patch.radius ?? selectedImageObject.imageData.radius, 0))
-      ),
-      opacityPercent: Math.max(
-        0,
-        Math.min(
-          100,
-          Math.round(toFiniteNumber(patch.opacityPercent ?? selectedImageObject.imageData.opacityPercent, 100))
-        )
-      ),
-      shadowBlurPx: Math.max(
-        0,
-        Math.min(
-          MAX_SHADOW_BLUR_PX,
-          Math.round(toFiniteNumber(patch.shadowBlurPx ?? selectedImageObject.imageData.shadowBlurPx, 0))
-        )
-      ),
-      shadowAngleDeg: normalizeShadowAngleDeg(
-        toFiniteNumber(patch.shadowAngleDeg ?? selectedImageObject.imageData.shadowAngleDeg, 45)
-      ),
-      shadowColor: asHexColor(
-        patch.shadowColor ?? selectedImageObject.imageData.shadowColor,
-        '#000000'
-      ),
+    setImageData(
+      selectedImageObject.id,
+      normalizeImageData(selectedImageObject.imageData, patch)
+    )
+  }
+
+  function updateSelectedVideoData(patch: Partial<VideoData>) {
+    if (
+      !selectedVideoObject ||
+      selectedVideoObject.locked ||
+      selectedObjectLockedByAncestor
+    ) {
+      return
     }
 
-    setImageData(selectedImageObject.id, nextImageData)
+    setVideoData(
+      selectedVideoObject.id,
+      normalizeVideoData(selectedVideoObject.videoData, patch)
+    )
+  }
+
+  function updateSelectedSoundData(patch: Partial<SoundData>) {
+    if (
+      !selectedSoundObject ||
+      selectedSoundObject.locked ||
+      selectedObjectLockedByAncestor
+    ) {
+      return
+    }
+
+    setSoundData(
+      selectedSoundObject.id,
+      normalizeSoundData(selectedSoundObject.soundData, patch)
+    )
+  }
+
+  function applySelectedObjectStyleRole(roleId: string) {
+    if (
+      !selectedObject ||
+      !effectiveStylePreset ||
+      selectedObject.locked ||
+      selectedObjectLockedByAncestor
+    ) {
+      return
+    }
+
+    const role = effectiveStylePreset.objectStyles.find((entry) => entry.id === roleId)
+    if (!role) {
+      return
+    }
+
+    beginCommandBatch(`Apply object style: ${role.label}`)
+    if (selectedShapeObject) {
+      setShapeData(
+        selectedShapeObject.id,
+        normalizeShapeData(selectedShapeObject.shapeData, {
+          fillMode: 'solid',
+          fillGradient: null,
+          fillColor: role.fillColor,
+          borderColor: role.borderColor,
+          borderWidth: role.borderWidth,
+          opacityPercent: role.opacityPercent,
+        })
+      )
+    } else if (selectedTextboxObject) {
+      const textRole = resolvePresetTextRole(effectiveStylePreset, 'text', availableStylePresets)
+      const textColor = role.textColor || textRole?.color || effectiveStylePreset.textColor
+      const fontFamily = textRole?.fontFamily ?? effectiveStylePreset.fontFamily
+      setTextboxData(
+        selectedTextboxObject.id,
+        normalizeTextboxData(selectedTextboxObject.textboxData, {
+          fillMode: 'solid',
+          fillGradient: null,
+          backgroundColor: role.fillColor,
+          borderColor: role.borderColor,
+          borderWidth: role.borderWidth,
+          opacityPercent: role.opacityPercent,
+          runs: selectedTextboxObject.textboxData.runs.map((run) => ({
+            ...run,
+            color: textColor,
+          })),
+          richTextHtml: applyTextboxThemeRichHtml(
+            resolveTextboxRichHtml(selectedTextboxObject.textboxData),
+            {
+              fontFamily,
+              textColor,
+            }
+          ),
+        })
+      )
+    } else if (selectedImageObject) {
+      setImageData(
+        selectedImageObject.id,
+        normalizeImageData(selectedImageObject.imageData, {
+          borderColor: role.borderColor,
+          opacityPercent: role.opacityPercent,
+        })
+      )
+    } else if (selectedVideoObject) {
+      setVideoData(
+        selectedVideoObject.id,
+        normalizeVideoData(selectedVideoObject.videoData, {
+          borderColor: role.borderColor,
+          opacityPercent: role.opacityPercent,
+        })
+      )
+    } else if (selectedSoundObject) {
+      setSoundData(
+        selectedSoundObject.id,
+        normalizeSoundData(selectedSoundObject.soundData, {
+          borderColor: role.borderColor,
+          opacityPercent: role.opacityPercent,
+        })
+      )
+    }
+    commitCommandBatch()
   }
 
   function updateSelectedObjectShadow(
@@ -2296,7 +5092,162 @@ function App() {
     }
     if (selectedImageObject) {
       updateSelectedImageData(patch)
+      return
     }
+    if (selectedVideoObject) {
+      updateSelectedVideoData(patch)
+      return
+    }
+    if (selectedSoundObject) {
+      updateSelectedSoundData(patch)
+    }
+  }
+
+  function updateMultiSelectedOpacity(opacityPercent: number) {
+    applyToUnlockedSelection('Update selected opacity', (object) => {
+      if (object.type === 'textbox') {
+        setTextboxData(object.id, normalizeTextboxData(object.textboxData, { opacityPercent }))
+        return
+      }
+      if (object.type === 'image') {
+        setImageData(object.id, normalizeImageData(object.imageData, { opacityPercent }))
+        return
+      }
+      if (object.type === 'video') {
+        setVideoData(object.id, normalizeVideoData(object.videoData, { opacityPercent }))
+        return
+      }
+      if (object.type === 'sound') {
+        setSoundData(object.id, normalizeSoundData(object.soundData, { opacityPercent }))
+        return
+      }
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        setShapeData(object.id, normalizeShapeData(object.shapeData, { opacityPercent }))
+      }
+    })
+  }
+
+  function updateMultiSelectedRadius(radiusPercent: number) {
+    applyToUnlockedSelection('Update selected radius', (object) => {
+      const radius = radiusPercentToPx(radiusPercent, object.w, object.h)
+      if (object.type === 'textbox') {
+        setTextboxData(object.id, normalizeTextboxData(object.textboxData, { radius }))
+        return
+      }
+      if (object.type === 'image') {
+        setImageData(object.id, normalizeImageData(object.imageData, { radius }))
+        return
+      }
+      if (object.type === 'video') {
+        setVideoData(object.id, normalizeVideoData(object.videoData, { radius }))
+        return
+      }
+      if (object.type === 'sound') {
+        setSoundData(object.id, normalizeSoundData(object.soundData, { radius }))
+        return
+      }
+      if (
+        object.type === 'shape_rect' &&
+        shapeSupportsRadius(normalizeShapeKind(object.shapeData.kind))
+      ) {
+        setShapeData(object.id, normalizeShapeData(object.shapeData, { radius }))
+      }
+    })
+  }
+
+  function updateMultiSelectedShadow(
+    patch: Partial<Pick<ShapeData, 'shadowColor' | 'shadowBlurPx' | 'shadowAngleDeg'>>
+  ) {
+    applyToUnlockedSelection('Update selected shadow', (object) => {
+      if (object.type === 'textbox') {
+        setTextboxData(object.id, normalizeTextboxData(object.textboxData, patch))
+        return
+      }
+      if (object.type === 'image') {
+        setImageData(object.id, normalizeImageData(object.imageData, patch))
+        return
+      }
+      if (object.type === 'video') {
+        setVideoData(object.id, normalizeVideoData(object.videoData, patch))
+        return
+      }
+      if (object.type === 'sound') {
+        setSoundData(object.id, normalizeSoundData(object.soundData, patch))
+        return
+      }
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        setShapeData(object.id, normalizeShapeData(object.shapeData, patch))
+      }
+    })
+  }
+
+  function updateMultiSelectedBackground(options: {
+    fillMode: TextboxData['fillMode']
+    color?: string
+    gradient?: FillGradient | null
+    closeEditor?: boolean
+  }) {
+    const nextGradient = normalizeFillGradient(options.gradient ?? null, multiEditFillColor, '#ffffff')
+    applyToUnlockedSelection('Update selected backgrounds', (object) => {
+      if (object.type === 'textbox') {
+        setTextboxData(
+          object.id,
+          normalizeTextboxData(object.textboxData, {
+            fillMode: options.fillMode,
+            fillGradient: options.fillMode === 'linearGradient' ? nextGradient : null,
+            backgroundColor:
+              options.fillMode === 'solid'
+                ? options.color ?? object.textboxData.backgroundColor
+                : object.textboxData.backgroundColor,
+          })
+        )
+        return
+      }
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        setShapeData(
+          object.id,
+          normalizeShapeData(object.shapeData, {
+            fillMode: options.fillMode,
+            fillGradient: options.fillMode === 'linearGradient' ? nextGradient : null,
+            fillColor:
+              options.fillMode === 'solid'
+                ? options.color ?? object.shapeData.fillColor
+                : object.shapeData.fillColor,
+          })
+        )
+      }
+    })
+    if (options.closeEditor ?? true) {
+      closeFillEditor()
+    }
+  }
+
+  function updateMultiSelectedBorder(
+    patch: Partial<
+      Pick<ShapeData, 'borderWidth' | 'borderType' | 'borderColor'>
+    >
+  ) {
+    applyToUnlockedSelection('Update selected borders', (object) => {
+      if (object.type === 'textbox') {
+        setTextboxData(object.id, normalizeTextboxData(object.textboxData, patch))
+        return
+      }
+      if (object.type === 'image') {
+        setImageData(object.id, normalizeImageData(object.imageData, patch))
+        return
+      }
+      if (object.type === 'video') {
+        setVideoData(object.id, normalizeVideoData(object.videoData, patch))
+        return
+      }
+      if (object.type === 'sound') {
+        setSoundData(object.id, normalizeSoundData(object.soundData, patch))
+        return
+      }
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+        setShapeData(object.id, normalizeShapeData(object.shapeData, patch))
+      }
+    })
   }
 
   function updateSelectedGradient(
@@ -2322,6 +5273,30 @@ function App() {
     }
     if (selectedTextboxObject) {
       updateSelectedTextboxData({ fillGradient: nextGradient })
+      return
+    }
+    if (selectedObjectIds.length > 1 && (selectedShapeObjects.length > 0 || selectedTextboxObjects.length > 0)) {
+      applyToUnlockedSelection('Update selected gradients', (object) => {
+        if (object.type === 'textbox') {
+          setTextboxData(
+            object.id,
+            normalizeTextboxData(object.textboxData, {
+              fillMode: 'linearGradient',
+              fillGradient: nextGradient,
+            })
+          )
+          return
+        }
+        if (object.type === 'shape_rect' || object.type === 'shape_circle') {
+          setShapeData(
+            object.id,
+            normalizeShapeData(object.shapeData, {
+              fillMode: 'linearGradient',
+              fillGradient: nextGradient,
+            })
+          )
+        }
+      })
       return
     }
     if (fillEditorTarget === 'canvas') {
@@ -2673,6 +5648,20 @@ function App() {
     toggleObjectLock(selectedObject.id)
   }
 
+  function setMultiSelectedProtected(nextProtected: boolean) {
+    const targets = selectedObjects.filter(
+      (object) => !hasLockedAncestor(object, objectById) && object.locked !== nextProtected
+    )
+    if (targets.length === 0) {
+      return
+    }
+    beginCommandBatch(nextProtected ? 'Protect selected objects' : 'Unprotect selected objects')
+    targets.forEach((object) => {
+      toggleObjectLock(object.id)
+    })
+    commitCommandBatch()
+  }
+
   function closeFillEditor() {
     setIsFillEditorOpen(false)
     setFillEditorTarget(null)
@@ -2729,6 +5718,7 @@ function App() {
     if (!target) {
       return
     }
+    selectObjects([])
     selectSlide(slideId)
     if (mode !== 'present') {
       focusCameraOnSlide(target)
@@ -2836,8 +5826,79 @@ function App() {
       transitionDurationMs: 2000,
       orderIndex: orderedSlides.length,
     }
+
     createSlide(slide)
     selectSlide(slide.id)
+    selectObjects([])
+  }
+
+  function handleCreateSlideFromTemplate(templateId: SlideTemplate['id']) {
+    const template = availableSlideTemplates.find((entry) => entry.id === templateId)
+    if (!template) {
+      return
+    }
+
+    const centerX = camera.x
+    const centerY = camera.y
+    const referenceZoom = camera.zoom
+    const referenceRotation = camera.rotation
+    const targetTemplateWidth = Math.max(1, templateTargetDisplayFrame.width)
+    const targetTemplateHeight = Math.max(1, templateTargetDisplayFrame.height)
+    const slideId = createId()
+    const { slide, objects } = buildSlideTemplateInstance(template, {
+      slideId,
+      orderIndex: orderedSlides.length,
+      centerX,
+      centerY,
+      zoom: referenceZoom,
+      rotation: referenceRotation,
+      frameWidth: targetTemplateWidth,
+      frameHeight: targetTemplateHeight,
+      scalePercent: getZoomAdjustedObjectScalePercent(referenceZoom),
+      createId,
+      zIndexStart: getNextZIndex(),
+      stylePreset: effectiveStylePreset,
+    })
+    const templateGroupId = createId()
+    const templateFrame = getSlideTemplateFrameSize(
+      referenceZoom,
+      targetTemplateWidth,
+      targetTemplateHeight
+    )
+    const groupedObjects = objects.map((object) => ({
+      ...object,
+      parentGroupId: templateGroupId,
+    }))
+    const templateGroup: CanvasObject = {
+      id: templateGroupId,
+      type: 'group',
+      x: slide.x,
+      y: slide.y,
+      w: templateFrame.width,
+      h: templateFrame.height,
+      rotation: slide.rotation,
+      scalePercent: 100,
+      keepAspectRatio: false,
+      locked: false,
+      zIndex: getNextZIndex() + objects.length,
+      parentGroupId: null,
+      groupData: {
+        childIds: objects.map((object) => object.id),
+      },
+    }
+
+    beginCommandBatch(`Create ${template.name} template slide`)
+    createSlide(slide)
+    createObject(templateGroup)
+    groupedObjects.forEach((object) => {
+      createObject(object)
+    })
+    commitCommandBatch()
+    selectSlide(slide.id)
+    selectObjects([])
+    if (mode !== 'present') {
+      focusCameraOnSlide(slide)
+    }
   }
 
   function handleUpdateSlideFromCamera() {
@@ -2893,6 +5954,11 @@ function App() {
     return parsed
   }
 
+  function setNativeInputValue(input: HTMLInputElement, value: string) {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+    descriptor?.set?.call(input, value)
+  }
+
   function handleRangeWheel(event: WheelEvent<HTMLInputElement>) {
     const input = event.currentTarget
     if (input.disabled) {
@@ -2912,18 +5978,98 @@ function App() {
     const current = Number.isFinite(rawCurrent) ? rawCurrent : Number.isFinite(min) ? min : 0
     const next = Math.min(max, Math.max(min, current + direction * step * multiplier))
     const precision = String(step).includes('.') ? String(step).split('.')[1]?.length ?? 0 : 0
-    input.value = next.toFixed(precision)
+    setNativeInputValue(input, next.toFixed(precision))
     input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
   }
 
   useEffect(() => {
     if (
-      (fillEditorTarget === 'object' && !selectedShapeObject && !selectedTextboxObject) ||
-      (fillEditorTarget === 'canvas' && selectedObjectIds.length > 0)
+      (
+        fillEditorTarget === 'object' &&
+        !selectedShapeObject &&
+        !selectedTextboxObject &&
+        !hasMultiSelectedFillTargets
+      ) ||
+      (fillEditorTarget === 'canvas' && !showCanvasParameters)
     ) {
       closeFillEditor()
     }
-  }, [fillEditorTarget, selectedObjectIds.length, selectedShapeObject, selectedTextboxObject])
+  }, [
+    fillEditorTarget,
+    hasMultiSelectedFillTargets,
+    selectedShapeObject,
+    selectedTextboxObject,
+    showCanvasParameters,
+  ])
+
+  useEffect(() => {
+    if (!isShapeMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (shapeMenuRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setIsShapeMenuOpen(false)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    return () => window.removeEventListener('pointerdown', handlePointerDown)
+  }, [isShapeMenuOpen])
+
+  useEffect(() => {
+    if (!designAssetContextMenu) {
+      return
+    }
+
+    const closeMenu = () => setDesignAssetContextMenu(null)
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest('.design-asset-context-menu')) {
+        return
+      }
+      closeMenu()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu()
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [designAssetContextMenu])
+
+  useEffect(() => {
+    let importedCount = 0
+    for (const asset of document.assets) {
+      if (resolveLibraryAssetKind(asset) !== 'style') {
+        continue
+      }
+      try {
+        const parsed = JSON.parse(decodeAssetBase64ToText(asset.dataBase64)) as unknown
+        const result = registerDesignAssetDefinitionsFromPayload(parsed, asset.name, asset.id)
+        const embeddedAssetResult = importLibraryAssetDefinitions(
+          extractLibraryAssetDefinitionsFromUnknown(parsed)
+        )
+        importedCount += result.styleAdded + result.templateAdded
+        importedCount += embeddedAssetResult.added
+      } catch {
+        // Ignore invalid JSON assets already stored in the library.
+      }
+    }
+    if (importedCount > 0) {
+      setDesignAssetRevision((current) => current + 1)
+    }
+  }, [document.assets])
 
   useEffect(() => {
     if (selectedSlideId !== null && !selectedSlide) {
@@ -3002,10 +6148,7 @@ function App() {
       }
       return
     }
-    if (!activeSlide || activeSlide.triggerMode !== 'timed') {
-      return
-    }
-    if (activeSlideIndex < 0 || activeSlideIndex >= orderedSlides.length - 1) {
+    if (!shouldAutoAdvanceSlide(activeSlide, activeSlideIndex, orderedSlides.length)) {
       return
     }
 
@@ -3031,29 +6174,53 @@ function App() {
   ])
 
   useEffect(() => {
+    if (mode !== 'edit') {
+      return
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextInputTarget(event.target) || !(event.metaKey || event.ctrlKey)) {
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      if (key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          if (canRedo) {
+            redo()
+          }
+        } else if (canUndo) {
+          undo()
+        }
+        return
+      }
+
+      if (key === 'y') {
+        if (canRedo) {
+          event.preventDefault()
+          redo()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canRedo, canUndo, mode, redo, undo])
+
+  useEffect(() => {
     if (mode !== 'present') {
       return
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key === 'Right' ||
-        event.key === 'ArrowRight' ||
-        event.key === 'ArrowDown' ||
-        event.key === 'PageDown' ||
-        event.key === ' '
-      ) {
+      if (isForwardPresentationKey(event.key)) {
         event.preventDefault()
         goToNextSlide()
         return
       }
 
-      if (
-        event.key === 'Left' ||
-        event.key === 'ArrowLeft' ||
-        event.key === 'ArrowUp' ||
-        event.key === 'PageUp'
-      ) {
+      if (isBackwardPresentationKey(event.key)) {
         event.preventDefault()
         goToPreviousSlide()
         return
@@ -3079,23 +6246,22 @@ function App() {
     }
   }, [])
 
-  function handleSaveDocument() {
-    const serialized = JSON.stringify(
-      {
-        document: JSON.parse(serializeDocument(document)),
-        camera,
-      },
-      null,
-      2
-    )
+  function downloadJsonFile(fileName: string, payload: unknown) {
+    const serialized = JSON.stringify(payload, null, 2)
     const blob = new Blob([serialized], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
-
     const downloadLink = window.document.createElement('a')
     downloadLink.href = url
-    downloadLink.download = 'infiniprez-document.json'
+    downloadLink.download = fileName
     downloadLink.click()
     URL.revokeObjectURL(url)
+  }
+
+  function handleSaveDocument() {
+    downloadJsonFile('infiniprez-document.json', {
+      document: JSON.parse(serializeDocument(document)),
+      camera,
+    })
   }
 
   function handleExportHtml() {
@@ -3113,21 +6279,97 @@ function App() {
     loadInputRef.current?.click()
   }
 
+  function handleOpenDesignAssetContextMenu(
+    kind: DesignAssetContextMenu['kind'],
+    id: string,
+    event: ReactMouseEvent
+  ) {
+    event.preventDefault()
+    setDesignAssetContextMenu({
+      kind,
+      id,
+      x: event.clientX,
+      y: event.clientY,
+    })
+  }
+
+  function handleDownloadStylePresetJson(id: string) {
+    const definition = getStylePresetDefinitionById(id)
+    if (!definition) {
+      return
+    }
+    downloadJsonFile(`${id}.style-preset.json`, definition)
+  }
+
+  function handleDownloadTemplateJson(id: string) {
+    const definition = getSlideTemplateDefinitionById(id)
+    if (!definition) {
+      return
+    }
+    downloadJsonFile(`${id}.slide-template.json`, definition)
+  }
+
+  function handleDownloadDesignAssetFromContextMenu() {
+    if (!designAssetContextMenu) {
+      return
+    }
+    if (designAssetContextMenu.kind === 'style') {
+      handleDownloadStylePresetJson(designAssetContextMenu.id)
+    } else {
+      handleDownloadTemplateJson(designAssetContextMenu.id)
+    }
+    setDesignAssetContextMenu(null)
+  }
+
   async function handleLoadFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) {
       return
     }
 
+    let payload = ''
     try {
-      const payload = await file.text()
+      payload = await file.text()
       const loaded = parseStoredFile(payload)
       replaceDocument(loaded.document)
+      setActiveStylePresetId(null)
+      clearCreationTool()
       if (loaded.camera) {
         setCamera(loaded.camera)
       }
     } catch {
-      window.alert('Failed to load file. Use a valid Infiniprez JSON document.')
+      try {
+        const parsed = JSON.parse(payload) as unknown
+        const result = registerDesignAssetDefinitionsFromPayload(parsed, file.name)
+        const embeddedAssetResult = importLibraryAssetDefinitions(
+          extractLibraryAssetDefinitionsFromUnknown(parsed)
+        )
+        const discoveredCount =
+          result.styleAdded +
+          result.styleDuplicates +
+          result.styleRejected +
+          result.templateAdded +
+          result.templateDuplicates +
+          result.templateRejected +
+          embeddedAssetResult.added +
+          embeddedAssetResult.duplicates +
+          embeddedAssetResult.rejected
+
+        if (discoveredCount > 0) {
+          if (result.styleAdded > 0 || result.templateAdded > 0) {
+            setDesignAssetRevision((current) => current + 1)
+          }
+          window.alert(
+            `Loaded design assets: ${result.styleAdded} style(s), ${result.templateAdded} template(s), ${embeddedAssetResult.added} embedded asset(s), ${result.styleDuplicates + result.templateDuplicates + embeddedAssetResult.duplicates} duplicate(s), ${embeddedAssetResult.rejected} rejected asset(s).`
+          )
+          return
+        }
+      } catch {
+        // Ignore and show the generic error below.
+      }
+      window.alert(
+        'Failed to load file. Use a valid Infiniprez JSON document or style/template/asset bundle JSON.'
+      )
     } finally {
       event.target.value = ''
     }
@@ -3159,16 +6401,46 @@ function App() {
     },
   ]
 
+  const designAssetContextMenuStyle: CSSProperties | undefined = designAssetContextMenu
+    ? {
+      left:
+        typeof window === 'undefined'
+          ? designAssetContextMenu.x
+          : Math.max(12, Math.min(designAssetContextMenu.x, window.innerWidth - 220)),
+      top:
+        typeof window === 'undefined'
+          ? designAssetContextMenu.y
+          : Math.max(12, Math.min(designAssetContextMenu.y, window.innerHeight - 120)),
+    }
+    : undefined
+
   return (
     <div
-      className={`app-shell ${mode === 'present' ? 'present-mode' : ''}`}
+      className={`app-shell ${mode === 'present' ? 'present-mode' : 'has-context-sidebar'}`}
       onPointerDownCapture={handlePresentShellPointerDownCapture}
       onWheelCapture={handlePresentShellWheelCapture}
       onContextMenuCapture={handlePresentShellContextMenuCapture}
     >
-      <aside className="sidebar">
+      {isAssetBundlerOpen && createPortal(
+        <div className="asset-bundler-modal fullscreen">
+          <div className="asset-bundler-header">
+            <span className="asset-bundler-title">Asset Bundler</span>
+            <button
+              type="button"
+              className="asset-bundler-close-btn"
+              onClick={closeAssetBundlerModal}
+              aria-label="Close asset bundler"
+            >
+              <FontAwesomeIcon icon={faXmark} />
+            </button>
+          </div>
+          <div className="asset-bundler-body">
+            {/* TODO: List styles, templates, assets with checkboxes */}
+          </div>
+        </div>, document.body)}
+      <aside className="sidebar sidebar-left">
         <section className="panel">
-          <h2>Project Name</h2>
+          <h2>Infiniprez</h2>
           <div className="action-grid project-action-grid">
             {projectActions.map((action) => (
               <button
@@ -3233,11 +6505,12 @@ function App() {
           ) : (
             <p className="panel-empty">No slides yet.</p>
           )}
+          <div ref={setSlidesTargetDisplayPortalNode} className="slides-target-display-slot" />
         </section>
 
-        <section className="panel">
-          <h2>Slide Parameters</h2>
-          {activeSlide ? (
+        {selectedSlide && selectedObjectIds.length === 0 ? (
+          <section className="panel">
+            <h2>Slide Parameters</h2>
             <div className="slide-params-panel" aria-label="Slide parameters">
               <label className="slide-param-field">
                 <span>Name</span>
@@ -3421,20 +6694,73 @@ function App() {
                 </label>
               )}
             </div>
-          ) : (
-            <p className="panel-empty">Create or select a slide to edit parameters.</p>
-          )}
-        </section>
+          </section>
+        ) : null}
+
+        <div
+          ref={setLeftObjectParamsPortalNode}
+          className="sidebar-portal-slot"
+        />
 
         <section className="panel">
           <h2>Object Tools</h2>
           <div className="action-grid">
-            {objectTools.map((tool) => (
+            <div ref={shapeMenuRef} className="shape-tool-dropdown">
+              <button
+                type="button"
+                className={`tool-btn shape-tool-trigger ${activeCreationTool === 'shape_rect' || activeCreationTool === 'shape_circle' ? 'active' : ''
+                  }`}
+                onClick={() => {
+                  setPendingImagePlacements([])
+                  setIsShapeMenuOpen((current) => !current)
+                }}
+                aria-haspopup="menu"
+                aria-expanded={isShapeMenuOpen}
+                aria-label="Shapes"
+                title="Shapes"
+              >
+                <FontAwesomeIcon icon={faShapes} />
+                <span className="shape-tool-trigger-caret" aria-hidden="true">▼</span>
+              </button>
+              {isShapeMenuOpen ? (
+                <div className="shape-tool-menu" role="menu" aria-label="Shape presets">
+                  {SHAPE_KIND_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`shape-tool-option ${activeShapePresetId === option.id ? 'active' : ''}`}
+                      onClick={() => handleShapePresetSelection(option.id)}
+                      role="menuitem"
+                      aria-label={option.label}
+                      title={option.label}
+                    >
+                      <span
+                        className={`shape-tool-option-preview ${option.id === 'circle' ? 'circle' : ''}`}
+                        style={{
+                          clipPath: option.id === 'circle' ? undefined : option.clipPath,
+                          borderRadius:
+                            option.id === 'circle'
+                              ? '999px'
+                              : option.id === 'roundedRect'
+                                ? '0.45rem'
+                                : '0.12rem',
+                        }}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {objectInsertTools.map((tool) => (
               <button
                 key={tool.label}
                 type="button"
-                className="tool-btn icon-btn"
-                disabled={tool.label === 'Group' || tool.label === 'Ungroup'}
+                className={`tool-btn icon-btn ${(tool.label === 'Textbox' && activeCreationTool === 'textbox') ||
+                  (tool.label === 'Image' && activeCreationTool === 'image')
+                  ? 'active'
+                  : ''
+                  }`}
                 onClick={() => handleObjectTool(tool.label)}
                 aria-label={tool.label}
                 title={tool.label}
@@ -3442,913 +6768,2059 @@ function App() {
                 <FontAwesomeIcon icon={tool.icon} />
               </button>
             ))}
+            <div className="object-tools-group-actions">
+              {objectGroupTools.map((tool) => (
+                <button
+                  key={tool.label}
+                  type="button"
+                  className="tool-btn icon-btn"
+                  disabled
+                  onClick={() => handleObjectTool(tool.label)}
+                  aria-label={tool.label}
+                  title={tool.label}
+                >
+                  <FontAwesomeIcon icon={tool.icon} />
+                </button>
+              ))}
+            </div>
           </div>
         </section>
 
-        <section className="panel">
-          {!isGradientEditorVisible && <h2>Object Parameters</h2>}
-          {isGradientEditorVisible ? (
-            <div className="object-gradient-editor">
-              <div className="object-gradient-editor-header">
-                <h3>{isCanvasGradientEditorVisible ? 'Canvas Gradient' : 'Gradient'}</h3>
-                <div className="object-gradient-editor-actions">
+      </aside>
+
+      <aside
+        className={`sidebar sidebar-right ${isAssetLibraryDragOver ? 'asset-drop-target' : ''}`}
+        onDragOver={handleAssetLibraryDragOver}
+        onDragLeave={handleAssetLibraryDragLeave}
+        onDrop={handleAssetLibraryDrop}
+      >
+        {isAssetLibraryDragOver ? (
+          <div className="sidebar-drop-overlay" aria-hidden="true">
+            <AssetDropHint />
+          </div>
+        ) : null}
+        <section className="sidebar-tabbed-pane">
+          <div className="panel-tab-switch" role="tablist" aria-label="Design panel sections">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeDesignTab === 'styles'}
+              className={activeDesignTab === 'styles' ? 'active' : ''}
+              onClick={() => setActiveDesignTab('styles')}
+            >
+              Styles
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeDesignTab === 'templates'}
+              className={activeDesignTab === 'templates' ? 'active' : ''}
+              onClick={() => setActiveDesignTab('templates')}
+            >
+              Templates
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeDesignTab === 'assets'}
+              className={activeDesignTab === 'assets' ? 'active' : ''}
+              onClick={() => setActiveDesignTab('assets')}
+            >
+              Assets
+            </button>
+          </div>
+
+          {activeDesignTab === 'styles' ? (
+            <div className="sidebar-tab-panel">
+              <div className="asset-library-toolbar">
+                <div className="asset-library-toolbar-row">
+                  <input
+                    type="search"
+                    className="asset-library-search"
+                    value={styleCatalogSearch}
+                    onChange={(event) => setStyleCatalogSearch(event.target.value)}
+                    placeholder="Search styles"
+                    aria-label="Search styles"
+                  />
                   <button
                     type="button"
-                    className="object-param-secondary-btn icon-btn"
-                    disabled={gradientEditorLocked}
-                    onClick={randomizeSelectedGradient}
-                    aria-label="Randomize gradient"
-                    title="Randomize gradient"
+                    className="asset-library-order-btn"
+                    onClick={handleStyleCatalogNameSortToggle}
+                    title={`Order by name ${styleCatalogSortDirection === 'desc' ? '(descending)' : '(ascending)'}`}
+                    aria-label={`Order styles by name ${styleCatalogSortDirection === 'desc' ? 'descending' : 'ascending'}`}
                   >
-                    <FontAwesomeIcon icon={faDice} />
-                  </button>
-                  <button
-                    type="button"
-                    className="object-param-secondary-btn"
-                    onClick={closeFillEditor}
-                  >
-                    Back
+                    <FontAwesomeIcon icon={styleCatalogSortDirection === 'desc' ? faArrowUpZA : faArrowDownAZ} />
                   </button>
                 </div>
               </div>
-
-              <div
-                ref={gradientPreviewRef}
-                className={`object-gradient-preview ${selectedGradient.gradientType === 'circles' ? 'circles-mode' : ''
-                  }`}
-                style={{ background: selectedGradientCss }}
-                onPointerMove={
-                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerMove : undefined
-                }
-                onPointerUp={
-                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
-                }
-                onPointerCancel={
-                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
-                }
-                onDoubleClick={
-                  selectedGradient.gradientType === 'circles' ? handleGradientPreviewDoubleClick : undefined
-                }
-              >
-                {selectedGradient.gradientType === 'circles' &&
-                  selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
-                    <button
-                      key={`${uiId}-point`}
-                      type="button"
-                      className="object-gradient-circle-point"
-                      style={{
-                        left: `${Math.max(0, Math.min(100, toFiniteNumber(stop.xPercent ?? 50, 50)))}%`,
-                        top: `${Math.max(0, Math.min(100, toFiniteNumber(stop.yPercent ?? 50, 50)))}%`,
-                        background: stop.color,
-                      }}
-                      disabled={gradientEditorLocked}
-                      onPointerDown={(event) => handleGradientPreviewPointerDown(event, index)}
-                      onDoubleClick={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        removeSelectedGradientStop(index)
-                      }}
-                      aria-label={`Circle point ${index + 1}`}
-                      title="Drag to position circle, double-click to remove"
-                    />
-                  ))}
-                <div className="object-gradient-preview-meta">
-                  <span>
-                    {selectedGradient.gradientType === 'radial'
-                      ? 'Radial'
-                      : selectedGradient.gradientType === 'circles'
-                        ? 'Circles'
-                        : 'Linear'}
-                  </span>
-                  <span>
-                    {selectedGradient.gradientType === 'linear'
-                      ? `${selectedGradient.angleDeg}deg`
-                      : selectedGradient.gradientType === 'circles'
-                        ? `${selectedGradient.stops.length} circles`
-                        : `${selectedGradient.stops.length} stops`}
-                  </span>
-                  <span>{selectedGradient.stops.length} colors</span>
-                </div>
-              </div>
-
-              {selectedGradient.gradientType !== 'circles' && (
-                <div
-                  ref={gradientTrackRef}
-                  className="object-gradient-stop-track"
-                  style={{ background: selectedGradientTrackCss }}
-                  onPointerMove={handleGradientTrackPointerMove}
-                  onPointerUp={handleGradientTrackPointerUp}
-                  onPointerCancel={handleGradientTrackPointerUp}
-                  onDoubleClick={handleGradientTrackDoubleClick}
-                >
-                  {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
-                    <span
-                      key={uiId}
-                      className="object-gradient-stop"
-                      data-gradient-stop-index={index}
-                      style={{
-                        left: `${stop.positionPercent}%`,
-                        background: stop.color,
-                      }}
-                      onPointerDown={(event) => handleGradientStopPointerDown(event, index)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="slide-param-switch switch-3 object-gradient-type-switch" role="group" aria-label="Gradient type">
-                <button
-                  type="button"
-                  className={selectedGradient.gradientType === 'linear' ? 'active' : ''}
-                  disabled={gradientEditorLocked}
-                  onClick={() => updateSelectedGradient({ gradientType: 'linear' })}
-                >
-                  Linear
-                </button>
-                <button
-                  type="button"
-                  className={selectedGradient.gradientType === 'radial' ? 'active' : ''}
-                  disabled={gradientEditorLocked}
-                  onClick={() => updateSelectedGradient({ gradientType: 'radial' })}
-                >
-                  Radial
-                </button>
-                <button
-                  type="button"
-                  className={selectedGradient.gradientType === 'circles' ? 'active' : ''}
-                  disabled={gradientEditorLocked}
-                  onClick={() => updateSelectedGradient({ gradientType: 'circles' })}
-                >
-                  Circles
-                </button>
-              </div>
-
-              <DndContext
-                sensors={gradientStopDnDSensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleGradientStopDragEnd}
-              >
-                <SortableContext
-                  items={selectedGradientStopsWithUiIds.map((entry) => entry.uiId)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="object-gradient-stop-list">
-                    {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => {
-                      const previousStop = selectedGradient.stops[index - 1]
-                      const nextStop = selectedGradient.stops[index + 1]
-                      const minPosition = previousStop ? previousStop.positionPercent + 1 : 0
-                      const maxPosition = nextStop ? nextStop.positionPercent - 1 : 100
+              {filteredBuiltinStylePresets.length > 0 ? (
+                <>
+                  <div className="slide-template-section-title">System styles</div>
+                  <div className="style-preset-grid" aria-label="Document style presets">
+                    {filteredBuiltinStylePresets.map((preset) => {
+                      const isActive = currentStylePreset?.id === preset.id
                       return (
-                        <SortableGradientStopItem
-                          key={uiId}
-                          sortableId={uiId}
-                          stop={stop}
-                          index={index}
-                          minPosition={minPosition}
-                          maxPosition={maxPosition}
-                          canRemove={selectedGradient.stops.length > 2}
-                          disabled={gradientEditorLocked}
-                          onWheel={handleRangeWheel}
-                          onChangeColor={(stopIndex, color) =>
-                            updateSelectedGradientStop(stopIndex, { color })
-                          }
-                          onChangePosition={(stopIndex, positionPercent) =>
-                            updateSelectedGradientStop(stopIndex, { positionPercent })
-                          }
-                          onRemove={removeSelectedGradientStop}
-                        />
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`style-preset-card ${isActive ? 'active' : ''}`}
+                          onClick={() => applyStylePreset(preset)}
+                          onContextMenu={(event) => handleOpenDesignAssetContextMenu('style', preset.id, event)}
+                          title={`${preset.name}: ${preset.inspiration}`}
+                        >
+                          <span
+                            className="style-preset-preview"
+                            style={{ background: preset.canvasBackground }}
+                            aria-hidden="true"
+                          >
+                            <span
+                              className="style-preset-preview-shape"
+                              style={{
+                                background: preset.shapeFill,
+                                borderColor: preset.shapeBorder,
+                              }}
+                            />
+                            <span
+                              className="style-preset-preview-textbox"
+                              style={{
+                                background: preset.textboxBackground,
+                                borderColor: preset.textboxBorder,
+                                color: preset.textColor,
+                                fontFamily: preset.fontFamily,
+                              }}
+                            >
+                              Ag
+                            </span>
+                          </span>
+                          <span className="style-preset-name">{preset.name}</span>
+                          <span className="style-preset-meta">{preset.inspiration}</span>
+                          <span className="style-preset-swatches" aria-hidden="true">
+                            <span style={{ background: preset.shapeFill }} />
+                            <span style={{ background: preset.textboxBackground }} />
+                            <span style={{ background: preset.textColor }} />
+                          </span>
+                        </button>
                       )
                     })}
                   </div>
-                </SortableContext>
-              </DndContext>
-
-              {selectedGradient.stops.length < MAX_GRADIENT_STOPS && (
-                <button
-                  type="button"
-                  className="object-param-secondary-btn object-gradient-add-stop-btn"
-                  disabled={gradientEditorLocked}
-                  onClick={() => addSelectedGradientStop()}
-                  title="Add color stop"
-                  aria-label="Add color stop"
-                >
-                  <FontAwesomeIcon icon={faPlus} />
-                </button>
-              )}
-
-              {selectedGradient.gradientType === 'linear' && (
-                <div className="object-gradient-angle-row">
-                  <div className="object-gradient-angle-compass" aria-hidden="true">
-                    <span
-                      className="object-gradient-angle-compass-indicator"
-                      style={{ transform: `translateX(-50%) rotate(${selectedGradient.angleDeg}deg)` }}
-                    />
+                </>
+              ) : null}
+              {filteredImportedStylePresetSections.map((section) => (
+                <div key={`style-section-${section.fileName}`}>
+                  <hr className="slide-template-divider" />
+                  <div className="slide-template-section-title">{section.fileName}</div>
+                  <div className="style-preset-grid" aria-label={`Imported styles from ${section.fileName}`}>
+                    {section.presets.map((preset) => {
+                      const isActive = currentStylePreset?.id === preset.id
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`style-preset-card ${isActive ? 'active' : ''}`}
+                          onClick={() => applyStylePreset(preset)}
+                          onContextMenu={(event) => handleOpenDesignAssetContextMenu('style', preset.id, event)}
+                          title={`${preset.name}: ${preset.inspiration}`}
+                        >
+                          <span
+                            className="style-preset-preview"
+                            style={{ background: preset.canvasBackground }}
+                            aria-hidden="true"
+                          >
+                            <span
+                              className="style-preset-preview-shape"
+                              style={{
+                                background: preset.shapeFill,
+                                borderColor: preset.shapeBorder,
+                              }}
+                            />
+                            <span
+                              className="style-preset-preview-textbox"
+                              style={{
+                                background: preset.textboxBackground,
+                                borderColor: preset.textboxBorder,
+                                color: preset.textColor,
+                                fontFamily: preset.fontFamily,
+                              }}
+                            >
+                              Ag
+                            </span>
+                          </span>
+                          <span className="style-preset-name">{preset.name}</span>
+                          <span className="style-preset-meta">{preset.inspiration}</span>
+                          <span className="style-preset-swatches" aria-hidden="true">
+                            <span style={{ background: preset.shapeFill }} />
+                            <span style={{ background: preset.textboxBackground }} />
+                            <span style={{ background: preset.textColor }} />
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
-                  <div
-                    className="object-gradient-angle-presets"
-                    role="group"
-                    aria-label="Gradient direction presets"
+                </div>
+              ))}
+              {filteredBuiltinStylePresets.length === 0 && filteredImportedStylePresetSections.length === 0 ? (
+                <div className="sidebar-tab-empty">No matching styles.</div>
+              ) : null}
+            </div>
+          ) : activeDesignTab === 'templates' ? (
+            <div className="sidebar-tab-panel">
+              <div className="asset-library-toolbar">
+                <div className="asset-library-toolbar-row">
+                  <input
+                    type="search"
+                    className="asset-library-search"
+                    value={templateCatalogSearch}
+                    onChange={(event) => setTemplateCatalogSearch(event.target.value)}
+                    placeholder="Search templates"
+                    aria-label="Search templates"
+                  />
+                  <button
+                    type="button"
+                    className="asset-library-order-btn"
+                    onClick={handleTemplateCatalogNameSortToggle}
+                    title={`Order by name ${templateCatalogSortDirection === 'desc' ? '(descending)' : '(ascending)'}`}
+                    aria-label={`Order templates by name ${templateCatalogSortDirection === 'desc' ? 'descending' : 'ascending'}`}
                   >
-                    {GRADIENT_ANGLE_PRESETS.map((preset) => (
-                      <button
-                        key={`${preset.angleDeg}-${preset.label}`}
-                        type="button"
-                        className={selectedGradient.angleDeg === preset.angleDeg ? 'active' : ''}
-                        disabled={gradientEditorLocked}
-                        onClick={() => updateSelectedGradient({ angleDeg: preset.angleDeg })}
-                        title={`${preset.angleDeg}°`}
+                    <FontAwesomeIcon
+                      icon={templateCatalogSortDirection === 'desc' ? faArrowUpZA : faArrowDownAZ}
+                    />
+                  </button>
+                </div>
+              </div>
+              <div className="slide-template-section-title">System templates</div>
+              <div className="slide-template-grid" aria-label="Generic slide templates">
+                {filteredGenericSlideTemplates.map((template) => {
+                  const preview = slideTemplatePreviews.get(template.id)
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className="slide-template-card"
+                      onClick={() => handleCreateSlideFromTemplate(template.id)}
+                      onContextMenu={(event) =>
+                        handleOpenDesignAssetContextMenu('template', template.id, event)
+                      }
+                      title={`${template.name}: ${template.description}`}
+                    >
+                      <span
+                        className="slide-template-preview"
+                        style={{ background: slideTemplateTheme.frame }}
+                        aria-hidden="true"
                       >
-                        {preset.label}
+                        {preview ? (
+                          <SlideTemplatePreview
+                            objects={preview.objects}
+                            frameWidth={preview.frameWidth}
+                            frameHeight={preview.frameHeight}
+                          />
+                        ) : null}
+                      </span>
+                      <span className="slide-template-name">{template.name}</span>
+                      <span className="slide-template-description">{template.description}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              {filteredImportedTemplateSections.map((section) => (
+                <div key={`template-section-${section.fileName}`}>
+                  <hr className="slide-template-divider" />
+                  <div className="slide-template-section-title">{section.fileName}</div>
+                  <div className="slide-template-grid" aria-label={`Templates from ${section.fileName}`}>
+                    {section.templates.map((template) => {
+                      const preview = slideTemplatePreviews.get(template.id)
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className="slide-template-card"
+                          onClick={() => handleCreateSlideFromTemplate(template.id)}
+                          onContextMenu={(event) =>
+                            handleOpenDesignAssetContextMenu('template', template.id, event)
+                          }
+                          title={`${template.name}: ${template.description}`}
+                        >
+                          <span
+                            className="slide-template-preview"
+                            style={{ background: slideTemplateTheme.frame }}
+                            aria-hidden="true"
+                          >
+                            {preview ? (
+                              <SlideTemplatePreview
+                                objects={preview.objects}
+                                frameWidth={preview.frameWidth}
+                                frameHeight={preview.frameHeight}
+                              />
+                            ) : null}
+                          </span>
+                          <span className="slide-template-name">{template.name}</span>
+                          <span className="slide-template-description">{template.description}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              {filteredGenericSlideTemplates.length === 0 && filteredImportedTemplateSections.length === 0 ? (
+                <div className="sidebar-tab-empty">No matching templates.</div>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              className={`sidebar-tab-panel asset-library-panel ${assetLibraryEntries.length > 0 ? 'with-add-btn' : ''} ${isAssetLibraryDragOver ? 'drag-over' : ''}`}
+            >
+              {assetLibraryEntries.length > 0 ? (
+                <div className="asset-library-toolbar">
+                  <div className="asset-library-toolbar-row">
+                    <input
+                      type="search"
+                      className="asset-library-search"
+                      value={assetLibrarySearch}
+                      onChange={(event) => setAssetLibrarySearch(event.target.value)}
+                      placeholder="Search assets"
+                      aria-label="Search assets"
+                    />
+                    <button
+                      type="button"
+                      className={`asset-library-order-btn ${assetLibrarySort === 'name' ? 'active' : ''}`}
+                      onClick={() => handleAssetSortChange('name')}
+                      title={`Order by name ${assetLibrarySort === 'name' && assetLibrarySortDirection === 'desc' ? '(descending)' : '(ascending)'}`}
+                      aria-label={`Order assets by name ${assetLibrarySort === 'name' && assetLibrarySortDirection === 'desc' ? 'descending' : 'ascending'}`}
+                    >
+                      <FontAwesomeIcon
+                        icon={
+                          assetLibrarySort === 'name' && assetLibrarySortDirection === 'desc'
+                            ? faArrowUpZA
+                            : faArrowDownAZ
+                        }
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className={`asset-library-order-btn ${assetLibrarySort === 'size' ? 'active' : ''}`}
+                      onClick={() => handleAssetSortChange('size')}
+                      title={`Order by size ${assetLibrarySort === 'size' && assetLibrarySortDirection === 'desc' ? '(descending)' : '(ascending)'}`}
+                      aria-label={`Order assets by size ${assetLibrarySort === 'size' && assetLibrarySortDirection === 'desc' ? 'descending' : 'ascending'}`}
+                    >
+                      <FontAwesomeIcon
+                        icon={
+                          assetLibrarySort === 'size' && assetLibrarySortDirection === 'desc'
+                            ? faArrowUpShortWide
+                            : faArrowDownWideShort
+                        }
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className="asset-bundler-btn"
+                      onClick={openAssetBundlerModal}
+                      title="Open asset bundler"
+                      aria-label="Open asset bundler"
+                    >
+                      <FontAwesomeIcon icon={faBoxArchive} />
+                      <span>Bundle</span>
+                    </button>
+                  </div>
+                  <div className="asset-library-filter-row" role="group" aria-label="Filter assets by type">
+                    {(['image', 'video', 'audio', 'font', 'style'] as const).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className={assetLibraryFilter === kind ? 'active' : ''}
+                        onClick={() =>
+                          setAssetLibraryFilter((current) => (current === kind ? null : kind))
+                        }
+                        title={getAssetTypeLabel(kind)}
+                        aria-label={getAssetTypeLabel(kind)}
+                      >
+                        <FontAwesomeIcon icon={getAssetTypeIcon(kind)} />
                       </button>
                     ))}
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              {selectedGradient.gradientType === 'linear' && (
-                <label className="object-param-slider">
-                  <span>Angle</span>
-                  <div className="object-param-slider-control object-gradient-angle-slider-control">
-                    <input
-                      type="range"
-                      min={-180}
-                      max={180}
-                      step={1}
-                      value={selectedGradient.angleDeg}
-                      disabled={gradientEditorLocked}
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedGradient({ angleDeg: parsed })
+              <div className="asset-library-content">
+                {filteredAssetLibraryEntries.length > 0 ? (
+                  <div className={`asset-library-grid ${isAssetLibraryDragOver ? 'drag-over' : ''}`} aria-label="Asset library">
+                    {filteredAssetLibraryEntries.map((entry) => (
+                      <div
+                        key={entry.asset.id}
+                        className={`asset-library-card ${entry.parentStyleAssetId ? 'child' : ''}`}
+                        onPointerEnter={() => setHoveredAssetId(entry.asset.id)}
+                        onPointerLeave={() => setHoveredAssetId((current) => (current === entry.asset.id ? null : current))}
+                        onDragStart={
+                          entry.kind === 'image' ||
+                            entry.kind === 'video' ||
+                            entry.kind === 'audio'
+                            ? (event) => handleAssetDragStart(event, entry)
+                            : undefined
                         }
-                      }}
-                    />
-                    <input
-                      type="number"
-                      className="object-gradient-angle-input"
-                      min={-180}
-                      max={180}
-                      step={1}
-                      value={selectedGradient.angleDeg}
-                      disabled={gradientEditorLocked}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedGradient({ angleDeg: parsed })
+                        draggable={
+                          entry.kind === 'image' ||
+                          entry.kind === 'video' ||
+                          entry.kind === 'audio'
                         }
-                      }}
-                      aria-label="Gradient angle in degrees"
-                    />
-                    <strong>{selectedGradient.angleDeg}°</strong>
-                  </div>
-                </label>
-              )}
-            </div>
-          ) : selectedObject ? (
-            <div className="object-params-panel">
-              <div className="object-param-row">
-                <span>X, Y</span>
-                <div className="object-param-inputs">
-                  <input
-                    type="number"
-                    step={0.1}
-                    value={selectedObject.x.toFixed(1)}
-                    disabled={selectedObjectTransformLocked}
-                    onChange={(event) => {
-                      const parsed = parseNumberInput(event.target.value)
-                      if (parsed !== null) {
-                        updateSelectedObjectTransform({ x: parsed })
-                      }
-                    }}
-                  />
-                  <input
-                    type="number"
-                    step={0.1}
-                    value={selectedObject.y.toFixed(1)}
-                    disabled={selectedObjectTransformLocked}
-                    onChange={(event) => {
-                      const parsed = parseNumberInput(event.target.value)
-                      if (parsed !== null) {
-                        updateSelectedObjectTransform({ y: parsed })
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="object-param-row">
-                <span>W, H</span>
-                <div className="object-param-inputs">
-                  <input
-                    type="number"
-                    min={1}
-                    step={0.1}
-                    value={selectedObject.w.toFixed(1)}
-                    disabled={selectedObjectTransformLocked}
-                    onChange={(event) => {
-                      const parsed = parseNumberInput(event.target.value)
-                      if (parsed !== null) {
-                        updateSelectedObjectTransform({ w: parsed })
-                      }
-                    }}
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    step={0.1}
-                    value={selectedObject.h.toFixed(1)}
-                    disabled={selectedObjectTransformLocked}
-                    onChange={(event) => {
-                      const parsed = parseNumberInput(event.target.value)
-                      if (parsed !== null) {
-                        updateSelectedObjectTransform({ h: parsed })
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-
-              <label className="object-param-slider">
-                <span>Rotation</span>
-                <div className="object-param-slider-control">
-                  <input
-                    type="range"
-                    min={-180}
-                    max={180}
-                    step={1}
-                    value={selectedObjectRotationDeg}
-                    disabled={selectedObjectTransformLocked}
-                    onWheel={handleRangeWheel}
-                    onDoubleClick={() => {
-                      updateSelectedObjectTransform({ rotation: 0 })
-                    }}
-                    onChange={(event) => {
-                      const parsed = parseNumberInput(event.target.value)
-                      if (parsed !== null) {
-                        updateSelectedObjectTransform({ rotation: (parsed * Math.PI) / 180 })
-                      }
-                    }}
-                  />
-                  <strong>{selectedObjectRotationDeg.toFixed(0)}°</strong>
-                </div>
-              </label>
-
-              <label className="object-param-slider">
-                <span>Opacity</span>
-                <div className="object-param-slider-control">
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={selectedObjectOpacityPercent}
-                    disabled={
-                      (!selectedShapeObject && !selectedTextboxObject && !selectedImageObject) ||
-                      selectedObjectTransformLocked
-                    }
-                    onWheel={handleRangeWheel}
-                    onChange={(event) => {
-                      if (selectedShapeObject) {
-                        handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
-                      } else if (selectedTextboxObject) {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedTextboxData({ opacityPercent: parsed })
+                        title={
+                          entry.kind === 'image' ||
+                            entry.kind === 'video' ||
+                            entry.kind === 'audio'
+                            ? `${entry.asset.name} · Drag onto canvas`
+                            : entry.asset.name
                         }
-                      } else if (selectedImageObject) {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedImageData({ opacityPercent: parsed })
-                        }
-                      }
-                    }}
-                  />
-                  <strong>
-                    {selectedShapeObject || selectedTextboxObject || selectedImageObject
-                      ? `${Math.round(selectedObjectOpacityPercent)}%`
-                      : 'N/A'}
-                  </strong>
-                </div>
-              </label>
-
-              {((selectedShapeObject && selectedShapeObject.type !== 'shape_circle') || selectedImageObject) && (
-                <label className="object-param-slider">
-                  <span>Radius</span>
-                  <div className="object-param-slider-control">
-                    <input
-                      type="range"
-                      min={0}
-                      max={MAX_RADIUS_PERCENT}
-                      step={1}
-                      value={selectedObjectRadiusPercent}
-                      disabled={selectedObjectTransformLocked}
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null && selectedShapeObject) {
-                          updateSelectedShapeData({
-                            radius: radiusPercentToPx(parsed, selectedShapeObject.w, selectedShapeObject.h),
-                          })
-                        } else if (parsed !== null && selectedImageObject) {
-                          updateSelectedImageData({
-                            radius: radiusPercentToPx(parsed, selectedImageObject.w, selectedImageObject.h),
-                          })
-                        }
-                      }}
-                    />
-                    <strong>
-                      {`${Math.round(selectedObjectRadiusPercent)}%`}
-                    </strong>
-                  </div>
-                </label>
-              )}
-
-              {(selectedShapeObject || selectedTextboxObject || selectedImageObject) && (
-                <div className="object-param-row">
-                  <span>Shadow</span>
-                  <div className="object-param-shadow-controls">
-                    <input
-                      type="range"
-                      min={-180}
-                      max={180}
-                      step={1}
-                      value={selectedObjectShadowAngleDeg}
-                      disabled={selectedObjectTransformLocked}
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectShadow({ shadowAngleDeg: parsed })
-                        }
-                      }}
-                      aria-label="Shadow angle"
-                      title="Shadow angle"
-                    />
-                    <strong>{Math.round(selectedObjectShadowAngleDeg)}°</strong>
-                    <input
-                      type="range"
-                      min={0}
-                      max={MAX_SHADOW_BLUR_PX}
-                      step={1}
-                      value={selectedObjectShadowBlurPx}
-                      disabled={selectedObjectTransformLocked}
-                      onWheel={handleRangeWheel}
-                      onChange={(event) => {
-                        const parsed = parseNumberInput(event.target.value)
-                        if (parsed !== null) {
-                          updateSelectedObjectShadow({ shadowBlurPx: parsed })
-                        }
-                      }}
-                      aria-label="Shadow blur"
-                      title="Shadow blur"
-                    />
-                    <strong>{Math.round(selectedObjectShadowBlurPx)}px</strong>
-                    <ColorPickerChip
-                      value={selectedObjectShadowColor}
-                      fallback="#000000"
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(nextColor) => updateSelectedObjectShadow({ shadowColor: nextColor })}
-                      ariaLabel="Shadow color"
-                      title="Shadow color"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {(selectedShapeObject || selectedTextboxObject) && (
-                <div className="object-param-row">
-                  <span>Background</span>
-                  {selectedShapeObject ? (
-                    <div className="object-param-fill-controls">
-                      <div className="slide-param-switch switch-3" role="group" aria-label="Shape fill mode">
-                        <button
-                          type="button"
-                          className={
-                            selectedShapeObject.shapeData.fillMode === 'solid' &&
-                              selectedShapeObject.shapeData.fillColor !== 'transparent'
-                              ? 'active'
-                              : ''
-                          }
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedShapeData({
-                              fillMode: 'solid',
-                              fillGradient: null,
-                              fillColor:
-                                selectedShapeObject.shapeData.fillColor === 'transparent'
-                                  ? '#244a80'
-                                  : selectedShapeObject.shapeData.fillColor,
-                            })
-                            closeFillEditor()
-                          }}
-                        >
-                          Solid
-                        </button>
-                        <button
-                          type="button"
-                          className={selectedShapeObject.shapeData.fillMode === 'linearGradient' ? 'active' : ''}
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedShapeData({
-                              fillMode: 'linearGradient',
-                              fillGradient:
-                                selectedShapeObject.shapeData.fillGradient ??
-                                normalizeFillGradient(
-                                  null,
-                                  selectedShapeObject.shapeData.fillColor === 'transparent'
-                                    ? '#244a80'
-                                    : selectedShapeObject.shapeData.fillColor,
-                                  '#ffffff'
-                                ),
-                            })
-                          }}
-                        >
-                          Gradient
-                        </button>
-                        <button
-                          type="button"
-                          className={
-                            selectedShapeObject.shapeData.fillMode === 'solid' &&
-                              selectedShapeObject.shapeData.fillColor === 'transparent'
-                              ? 'active'
-                              : ''
-                          }
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedShapeData({
-                              fillMode: 'solid',
-                              fillGradient: null,
-                              fillColor: 'transparent',
-                            })
-                            closeFillEditor()
-                          }}
-                        >
-                          None
-                        </button>
+                      >
+                        <span className={`asset-library-thumb ${entry.kind}`} aria-hidden="true">
+                          {entry.kind === 'image' ? (
+                            <img src={entry.src} alt="" draggable={false} />
+                          ) : entry.kind === 'video' ? (
+                            <AssetVideoPreview src={entry.src} />
+                          ) : entry.kind === 'font' ? (
+                            <span
+                              className="asset-library-font-preview"
+                              style={{ fontFamily: resolveAssetFontFamily(entry.asset) }}
+                            >
+                              <span>Lorem ipsum dolor</span>
+                              <span>sit amet consectetur</span>
+                              <span>adipiscing elit sed</span>
+                              <span>do eiusmod tempor</span>
+                              <span>incididunt ut labore</span>
+                            </span>
+                          ) : entry.kind === 'audio' ? (
+                            <span className="asset-library-thumb-label media">
+                              <FontAwesomeIcon icon={faVolumeHigh} />
+                            </span>
+                          ) : entry.kind === 'style' ? (
+                            <span className="asset-library-thumb-label media">
+                              <FontAwesomeIcon icon={faFileImport} />
+                            </span>
+                          ) : (
+                            <span className="asset-library-thumb-label">
+                              Aa
+                            </span>
+                          )}
+                        </span>
+                        <span className="asset-library-meta">
+                          <span className="asset-library-name">{entry.asset.name}</span>
+                          <span className="asset-library-info">
+                            <span className={`asset-library-badge ${entry.kind}`}>
+                              <FontAwesomeIcon icon={getAssetTypeIcon(entry.kind)} />
+                            </span>
+                            {entry.kind === 'style' ? (
+                              <>
+                                {entry.linkedStylePresetNames.length > 0 ? (
+                                  <span
+                                    className="asset-library-design-pill"
+                                    title={entry.linkedStylePresetNames.join('\n')}
+                                  >
+                                    {entry.linkedStylePresetNames.length === 1
+                                      ? '1 style'
+                                      : `${entry.linkedStylePresetNames.length} styles`}
+                                  </span>
+                                ) : null}
+                                {entry.linkedSlideTemplateNames.length > 0 ? (
+                                  <span
+                                    className="asset-library-design-pill"
+                                    title={entry.linkedSlideTemplateNames.join('\n')}
+                                  >
+                                    {entry.linkedSlideTemplateNames.length === 1
+                                      ? '1 template'
+                                      : `${entry.linkedSlideTemplateNames.length} templates`}
+                                  </span>
+                                ) : null}
+                                {entry.embeddedChildAssetCount > 0 ? (
+                                  <span
+                                    className="asset-library-design-pill"
+                                    title={entry.embeddedChildAssetNames.join('\n')}
+                                  >
+                                    {entry.embeddedChildAssetCount === 1
+                                      ? '1 asset'
+                                      : `${entry.embeddedChildAssetCount} assets`}
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <>
+                                {entry.parentStyleAssetName ? (
+                                  <span
+                                    className="asset-library-design-pill asset-library-parent-pill"
+                                    title={`Embedded in ${entry.parentStyleAssetName}`}
+                                  >
+                                    {entry.parentStyleAssetName}
+                                  </span>
+                                ) : null}
+                                <span className="asset-library-usage">
+                                  {entry.usageCount === 1 ? '1 use' : `${entry.usageCount} uses`}
+                                </span>
+                              </>
+                            )}
+                            {entry.kind === 'video' || entry.kind === 'audio' ? (
+                              <span className="asset-library-duration">
+                                {formatAssetDuration(entry.durationSec) ?? '0:00'}
+                              </span>
+                            ) : null}
+                            <span className="asset-library-size">
+                              {formatBase64PayloadSize(entry.base64Size)}
+                            </span>
+                          </span>
+                        </span>
+                        {entry.usageCount === 0 ? (
+                          <button
+                            type="button"
+                            className="asset-library-delete-btn"
+                            onClick={() => handleDeleteAsset(entry.asset.id)}
+                            aria-label={`Delete asset ${entry.asset.name}`}
+                            title="Delete unused asset"
+                          >
+                            <FontAwesomeIcon icon={faTrashCan} />
+                          </button>
+                        ) : null}
                       </div>
-
-                      {selectedShapeObject.shapeData.fillMode === 'solid' &&
-                        selectedShapeObject.shapeData.fillColor !== 'transparent' ? (
-                        <ColorPickerChip
-                          className="object-param-color-chip"
-                          value={asHexColor(selectedShapeObject.shapeData.fillColor, '#244a80')}
-                          fallback="#244a80"
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextColor) => {
-                            updateSelectedShapeData({ fillColor: nextColor })
-                          }}
-                          ariaLabel="Shape background color"
-                          title="Shape background color"
-                        />
-                      ) : selectedShapeObject.shapeData.fillMode === 'linearGradient' ? (
-                        <button
-                          type="button"
-                          className="object-param-color-chip object-param-gradient-chip"
-                          style={{ background: getShapeBackground(selectedShapeObject.shapeData) }}
-                          disabled={selectedObjectTransformLocked}
-                          onClick={openObjectFillEditor}
-                          aria-label="Edit gradient"
-                          title="Edit gradient"
-                        />
-                      ) : null}
-                    </div>
-                  ) : selectedTextboxObject ? (
-                    <div className="object-param-fill-controls">
-                      <div className="slide-param-switch switch-3" role="group" aria-label="Textbox fill mode">
-                        <button
-                          type="button"
-                          className={
-                            selectedTextboxFillMode === 'solid' &&
-                              selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
-                              ? 'active'
-                              : ''
-                          }
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedTextboxData({
-                              fillMode: 'solid',
-                              fillGradient: null,
-                              backgroundColor:
-                                selectedTextboxObject.textboxData.backgroundColor === 'transparent'
-                                  ? DEFAULT_TEXTBOX_BACKGROUND
-                                  : selectedTextboxObject.textboxData.backgroundColor,
-                            })
-                            closeFillEditor()
-                          }}
-                        >
-                          Solid
-                        </button>
-                        <button
-                          type="button"
-                          className={selectedTextboxFillMode === 'linearGradient' ? 'active' : ''}
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedTextboxData({
-                              fillMode: 'linearGradient',
-                              fillGradient:
-                                selectedTextboxObject.textboxData.fillGradient ??
-                                normalizeFillGradient(
-                                  null,
-                                  selectedTextboxObject.textboxData.backgroundColor === 'transparent'
-                                    ? DEFAULT_TEXTBOX_BACKGROUND
-                                    : selectedTextboxObject.textboxData.backgroundColor,
-                                  '#ffffff'
-                                ),
-                            })
-                          }}
-                        >
-                          Gradient
-                        </button>
-                        <button
-                          type="button"
-                          className={
-                            selectedTextboxFillMode === 'solid' &&
-                              selectedTextboxObject.textboxData.backgroundColor === 'transparent'
-                              ? 'active'
-                              : ''
-                          }
-                          disabled={selectedObjectTransformLocked}
-                          onClick={() => {
-                            updateSelectedTextboxData({
-                              fillMode: 'solid',
-                              fillGradient: null,
-                              backgroundColor: 'transparent',
-                            })
-                            closeFillEditor()
-                          }}
-                        >
-                          None
-                        </button>
-                      </div>
-
-                      {selectedTextboxFillMode === 'solid' &&
-                        selectedTextboxObject.textboxData.backgroundColor !== 'transparent' ? (
-                        <ColorPickerChip
-                          className="object-param-color-chip"
-                          value={asHexColor(
-                            selectedTextboxObject.textboxData.backgroundColor,
-                            DEFAULT_TEXTBOX_BACKGROUND
-                          )}
-                          fallback={DEFAULT_TEXTBOX_BACKGROUND}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextColor) => {
-                            updateSelectedTextboxData({ backgroundColor: nextColor })
-                          }}
-                          ariaLabel="Textbox background color"
-                          title="Textbox background color"
-                        />
-                      ) : selectedTextboxFillMode === 'linearGradient' ? (
-                        <button
-                          type="button"
-                          className="object-param-color-chip object-param-gradient-chip"
-                          style={{ background: getTextboxBackground(selectedTextboxObject.textboxData) }}
-                          disabled={selectedObjectTransformLocked}
-                          onClick={openObjectFillEditor}
-                          aria-label="Edit textbox gradient"
-                          title="Edit textbox gradient"
-                        />
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              <div className="object-param-row">
-                <span>Border</span>
-                {selectedShapeObject ? (
-                  <div
-                    className={`object-param-border-controls ${selectedShapeObject.shapeData.borderWidth <= 0 ? 'border-none' : ''
-                      }`}
-                  >
-                    <BorderWidthDropdown
-                      value={selectedShapeObject.shapeData.borderWidth}
-                      borderColor={selectedShapeObject.shapeData.borderColor}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(nextValue) => {
-                        updateSelectedShapeData({
-                          borderWidth: Math.max(0, Math.min(20, Math.round(nextValue))),
-                        })
-                      }}
-                    />
-                    {selectedShapeObject.shapeData.borderWidth > 0 && (
-                      <>
-                        <BorderStyleDropdown
-                          value={selectedShapeObject.shapeData.borderType}
-                          borderColor={selectedShapeObject.shapeData.borderColor}
-                          borderWidth={selectedShapeObject.shapeData.borderWidth}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextValue) =>
-                            updateSelectedShapeData({
-                              borderType: nextValue,
-                            })
-                          }
-                        />
-                        <ColorPickerChip
-                          value={asHexColor(selectedShapeObject.shapeData.borderColor, '#9db5de')}
-                          fallback="#9db5de"
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextColor) => {
-                            updateSelectedShapeData({ borderColor: nextColor })
-                          }}
-                          ariaLabel="Shape border color"
-                          title="Shape border color"
-                        />
-                      </>
-                    )}
-                  </div>
-                ) : selectedTextboxObject ? (
-                  <div
-                    className={`object-param-border-controls ${selectedTextboxObject.textboxData.borderWidth <= 0 ? 'border-none' : ''
-                      }`}
-                  >
-                    <BorderWidthDropdown
-                      value={selectedTextboxObject.textboxData.borderWidth}
-                      borderColor={selectedTextboxObject.textboxData.borderColor}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(nextValue) => {
-                        updateSelectedTextboxData({
-                          borderWidth: nextValue,
-                        })
-                      }}
-                    />
-                    {selectedTextboxObject.textboxData.borderWidth > 0 && (
-                      <>
-                        <BorderStyleDropdown
-                          value={selectedTextboxObject.textboxData.borderType}
-                          borderColor={selectedTextboxObject.textboxData.borderColor}
-                          borderWidth={selectedTextboxObject.textboxData.borderWidth}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextValue) => {
-                            updateSelectedTextboxData({
-                              borderType: nextValue,
-                            })
-                          }}
-                        />
-                        <ColorPickerChip
-                          value={asHexColor(
-                            selectedTextboxObject.textboxData.borderColor,
-                            DEFAULT_TEXTBOX_BORDER_COLOR
-                          )}
-                          fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextColor) => {
-                            updateSelectedTextboxData({ borderColor: nextColor })
-                          }}
-                          ariaLabel="Textbox border color"
-                          title="Textbox border color"
-                        />
-                      </>
-                    )}
-                  </div>
-                ) : selectedImageObject ? (
-                  <div
-                    className={`object-param-border-controls ${selectedImageObject.imageData.borderWidth <= 0 ? 'border-none' : ''
-                      }`}
-                  >
-                    <BorderWidthDropdown
-                      value={selectedImageObject.imageData.borderWidth}
-                      borderColor={selectedImageObject.imageData.borderColor}
-                      disabled={selectedObjectTransformLocked}
-                      onChange={(nextValue) => {
-                        updateSelectedImageData({
-                          borderWidth: nextValue,
-                        })
-                      }}
-                    />
-                    {selectedImageObject.imageData.borderWidth > 0 && (
-                      <>
-                        <BorderStyleDropdown
-                          value={selectedImageObject.imageData.borderType}
-                          borderColor={selectedImageObject.imageData.borderColor}
-                          borderWidth={selectedImageObject.imageData.borderWidth}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextValue) => {
-                            updateSelectedImageData({
-                              borderType: nextValue,
-                            })
-                          }}
-                        />
-                        <ColorPickerChip
-                          value={asHexColor(
-                            selectedImageObject.imageData.borderColor,
-                            DEFAULT_TEXTBOX_BORDER_COLOR
-                          )}
-                          fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
-                          disabled={selectedObjectTransformLocked}
-                          onChange={(nextColor) => {
-                            updateSelectedImageData({ borderColor: nextColor })
-                          }}
-                          ariaLabel="Image border color"
-                          title="Image border color"
-                        />
-                      </>
-                    )}
+                    ))}
                   </div>
                 ) : (
-                  <div className="object-param-muted">Border controls are available for shapes, textboxes and images.</div>
+                  <div className={`sidebar-tab-empty asset-library-empty ${isAssetLibraryDragOver ? 'drag-over' : ''}`}>
+                    {assetLibraryEntries.length === 0 ? (
+                      <AssetDropHint onClick={openAssetLibraryDialog} />
+                    ) : (
+                      'No matching assets.'
+                    )}
+                  </div>
                 )}
               </div>
-
-              <div className="object-param-row">
-                <span>Protected</span>
-                <div className="slide-param-switch" role="group" aria-label="Object protection">
-                  <button
-                    type="button"
-                    className={selectedObject.locked ? 'active' : ''}
-                    disabled={selectedObjectLockedByAncestor}
-                    onClick={() => setSelectedObjectProtected(true)}
-                  >
-                    <FontAwesomeIcon icon={faLock} /> On
-                  </button>
-                  <button
-                    type="button"
-                    className={!selectedObject.locked ? 'active' : ''}
-                    disabled={selectedObjectLockedByAncestor}
-                    onClick={() => setSelectedObjectProtected(false)}
-                  >
-                    <FontAwesomeIcon icon={faLockOpen} /> Off
-                  </button>
-                </div>
-              </div>
-
-              {canToggleGroupFromSelection && (
-                <div className="object-param-row">
-                  <span>Group</span>
-                  <button
-                    type="button"
-                    className="object-param-secondary-btn"
-                    onClick={() => {
-                      if (selectedGroupObject) {
-                        enterGroup(selectedGroupObject.id)
-                      }
-                    }}
-                    aria-label="Enter group"
-                    title="Enter group"
-                  >
-                    <FontAwesomeIcon icon={faLayerGroup} /> Enter
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : selectedObjectIds.length > 1 ? (
-            <p className="panel-empty">
-              Numeric transform fields are available only for a single selected object.
-            </p>
-          ) : (
-            <div className="background-params object-params-panel">
-              <div className="object-param-row">
-                <span>Background</span>
-                <div className="object-param-fill-controls">
-                  <div className="slide-param-switch switch-2" role="group" aria-label="Canvas background mode">
-                    <button
-                      type="button"
-                      className={canvasBackgroundControl.fillMode === 'solid' ? 'active' : ''}
-                      onClick={() => {
-                        setCanvasBackground(backgroundColorValue)
-                        closeFillEditor()
-                      }}
-                    >
-                      Solid
-                    </button>
-                    <button
-                      type="button"
-                      className={canvasBackgroundControl.fillMode === 'linearGradient' ? 'active' : ''}
-                      onClick={() => {
-                        setCanvasBackground(canvasGradientCss)
-                      }}
-                    >
-                      Gradient
-                    </button>
-                  </div>
-                  {canvasBackgroundControl.fillMode === 'solid' ? (
-                    <ColorPickerChip
-                      className="object-param-color-chip"
-                      value={backgroundColorValue}
-                      fallback="#1f365a"
-                      disabled={false}
-                      onChange={(nextColor) => {
-                        setCanvasBackground(nextColor)
-                        closeFillEditor()
-                      }}
-                      ariaLabel="Canvas background color"
-                      title="Canvas background color"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      className="object-param-color-chip object-param-gradient-chip"
-                      style={{ background: canvasGradientCss }}
-                      onClick={openCanvasFillEditor}
-                      aria-label="Edit canvas gradient"
-                      title="Edit canvas gradient"
-                    />
-                  )}
-                </div>
-              </div>
+              {assetLibraryEntries.length > 0 ? (
+                <button
+                  type="button"
+                  className="asset-library-add-btn"
+                  onClick={openAssetLibraryDialog}
+                  title="Add assets from your computer"
+                >
+                  <FontAwesomeIcon icon={faPlus} />
+                  <span>Add Asset</span>
+                </button>
+              ) : null}
             </div>
           )}
         </section>
+
+        {(() => {
+          if (!showContextParameters) {
+            return null
+          }
+
+          const objectParametersSection = (
+            <section className="panel">
+              {!isGradientEditorVisible && (
+                <h2>{showObjectParameters ? 'Object Parameters' : 'Canvas Parameters'}</h2>
+              )}
+              {isGradientEditorVisible ? (
+                <div className="object-gradient-editor">
+                  <div className="object-gradient-editor-header">
+                    <h3>{isCanvasGradientEditorVisible ? 'Canvas Gradient' : 'Gradient'}</h3>
+                    <div className="object-gradient-editor-actions">
+                      <button
+                        type="button"
+                        className="object-param-secondary-btn icon-btn"
+                        disabled={gradientEditorLocked}
+                        onClick={randomizeSelectedGradient}
+                        aria-label="Randomize gradient"
+                        title="Randomize gradient"
+                      >
+                        <FontAwesomeIcon icon={faDice} />
+                      </button>
+                      <button
+                        type="button"
+                        className="object-param-secondary-btn"
+                        onClick={closeFillEditor}
+                      >
+                        Back
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    ref={gradientPreviewRef}
+                    className={`object-gradient-preview ${selectedGradient.gradientType === 'circles' ? 'circles-mode' : ''
+                      }`}
+                    style={{ background: selectedGradientCss }}
+                    onPointerMove={
+                      selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerMove : undefined
+                    }
+                    onPointerUp={
+                      selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
+                    }
+                    onPointerCancel={
+                      selectedGradient.gradientType === 'circles' ? handleGradientPreviewPointerUp : undefined
+                    }
+                    onDoubleClick={
+                      selectedGradient.gradientType === 'circles' ? handleGradientPreviewDoubleClick : undefined
+                    }
+                  >
+                    {selectedGradient.gradientType === 'circles' &&
+                      selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
+                        <button
+                          key={`${uiId}-point`}
+                          type="button"
+                          className="object-gradient-circle-point"
+                          style={{
+                            left: `${Math.max(0, Math.min(100, toFiniteNumber(stop.xPercent ?? 50, 50)))}%`,
+                            top: `${Math.max(0, Math.min(100, toFiniteNumber(stop.yPercent ?? 50, 50)))}%`,
+                            background: stop.color,
+                          }}
+                          disabled={gradientEditorLocked}
+                          onPointerDown={(event) => handleGradientPreviewPointerDown(event, index)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            removeSelectedGradientStop(index)
+                          }}
+                          aria-label={`Circle point ${index + 1}`}
+                          title="Drag to position circle, double-click to remove"
+                        />
+                      ))}
+                    <div className="object-gradient-preview-meta">
+                      <span>
+                        {selectedGradient.gradientType === 'radial'
+                          ? 'Radial'
+                          : selectedGradient.gradientType === 'circles'
+                            ? 'Circles'
+                            : 'Linear'}
+                      </span>
+                      <span>
+                        {selectedGradient.gradientType === 'linear'
+                          ? `${selectedGradient.angleDeg}deg`
+                          : selectedGradient.gradientType === 'circles'
+                            ? `${selectedGradient.stops.length} circles`
+                            : `${selectedGradient.stops.length} stops`}
+                      </span>
+                      <span>{selectedGradient.stops.length} colors</span>
+                    </div>
+                  </div>
+
+                  {selectedGradient.gradientType !== 'circles' && (
+                    <div
+                      ref={gradientTrackRef}
+                      className="object-gradient-stop-track"
+                      style={{ background: selectedGradientTrackCss }}
+                      onPointerMove={handleGradientTrackPointerMove}
+                      onPointerUp={handleGradientTrackPointerUp}
+                      onPointerCancel={handleGradientTrackPointerUp}
+                      onDoubleClick={handleGradientTrackDoubleClick}
+                    >
+                      {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => (
+                        <span
+                          key={uiId}
+                          className="object-gradient-stop"
+                          data-gradient-stop-index={index}
+                          style={{
+                            left: `${stop.positionPercent}%`,
+                            background: stop.color,
+                          }}
+                          onPointerDown={(event) => handleGradientStopPointerDown(event, index)}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="slide-param-switch switch-3 object-gradient-type-switch" role="group" aria-label="Gradient type">
+                    <button
+                      type="button"
+                      className={selectedGradient.gradientType === 'linear' ? 'active' : ''}
+                      disabled={gradientEditorLocked}
+                      onClick={() => updateSelectedGradient({ gradientType: 'linear' })}
+                    >
+                      Linear
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedGradient.gradientType === 'radial' ? 'active' : ''}
+                      disabled={gradientEditorLocked}
+                      onClick={() => updateSelectedGradient({ gradientType: 'radial' })}
+                    >
+                      Radial
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedGradient.gradientType === 'circles' ? 'active' : ''}
+                      disabled={gradientEditorLocked}
+                      onClick={() => updateSelectedGradient({ gradientType: 'circles' })}
+                    >
+                      Circles
+                    </button>
+                  </div>
+
+                  <DndContext
+                    sensors={gradientStopDnDSensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleGradientStopDragEnd}
+                  >
+                    <SortableContext
+                      items={selectedGradientStopsWithUiIds.map((entry) => entry.uiId)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="object-gradient-stop-list">
+                        {selectedGradientStopsWithUiIds.map(({ uiId, stop }, index) => {
+                          const previousStop = selectedGradient.stops[index - 1]
+                          const nextStop = selectedGradient.stops[index + 1]
+                          const minPosition = previousStop ? previousStop.positionPercent + 1 : 0
+                          const maxPosition = nextStop ? nextStop.positionPercent - 1 : 100
+                          return (
+                            <SortableGradientStopItem
+                              key={uiId}
+                              sortableId={uiId}
+                              stop={stop}
+                              index={index}
+                              minPosition={minPosition}
+                              maxPosition={maxPosition}
+                              canRemove={selectedGradient.stops.length > 2}
+                              disabled={gradientEditorLocked}
+                              onWheel={handleRangeWheel}
+                              onChangeColor={(stopIndex, color) =>
+                                updateSelectedGradientStop(stopIndex, { color })
+                              }
+                              onChangePosition={(stopIndex, positionPercent) =>
+                                updateSelectedGradientStop(stopIndex, { positionPercent })
+                              }
+                              onRemove={removeSelectedGradientStop}
+                            />
+                          )
+                        })}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+
+                  {selectedGradient.stops.length < MAX_GRADIENT_STOPS && (
+                    <button
+                      type="button"
+                      className="object-param-secondary-btn object-gradient-add-stop-btn"
+                      disabled={gradientEditorLocked}
+                      onClick={() => addSelectedGradientStop()}
+                      title="Add color stop"
+                      aria-label="Add color stop"
+                    >
+                      <FontAwesomeIcon icon={faPlus} />
+                    </button>
+                  )}
+
+                  {selectedGradient.gradientType === 'linear' && (
+                    <div className="object-gradient-angle-row">
+                      <div className="object-gradient-angle-compass" aria-hidden="true">
+                        <span
+                          className="object-gradient-angle-compass-indicator"
+                          style={{ transform: `translateX(-50%) rotate(${selectedGradient.angleDeg}deg)` }}
+                        />
+                      </div>
+                      <div
+                        className="object-gradient-angle-presets"
+                        role="group"
+                        aria-label="Gradient direction presets"
+                      >
+                        {GRADIENT_ANGLE_PRESETS.map((preset) => (
+                          <button
+                            key={`${preset.angleDeg}-${preset.label}`}
+                            type="button"
+                            className={selectedGradient.angleDeg === preset.angleDeg ? 'active' : ''}
+                            disabled={gradientEditorLocked}
+                            onClick={() => updateSelectedGradient({ angleDeg: preset.angleDeg })}
+                            title={`${preset.angleDeg}°`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedGradient.gradientType === 'linear' && (
+                    <label className="object-param-slider">
+                      <span>Angle</span>
+                      <div className="object-param-slider-control object-gradient-angle-slider-control">
+                        <input
+                          type="range"
+                          min={-180}
+                          max={180}
+                          step={1}
+                          value={selectedGradient.angleDeg}
+                          disabled={gradientEditorLocked}
+                          onWheel={handleRangeWheel}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateSelectedGradient({ angleDeg: parsed })
+                            }
+                          }}
+                        />
+                        <input
+                          type="number"
+                          className="object-gradient-angle-input"
+                          min={-180}
+                          max={180}
+                          step={1}
+                          value={selectedGradient.angleDeg}
+                          disabled={gradientEditorLocked}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateSelectedGradient({ angleDeg: parsed })
+                            }
+                          }}
+                          aria-label="Gradient angle in degrees"
+                        />
+                        <strong>{selectedGradient.angleDeg}°</strong>
+                      </div>
+                    </label>
+                  )}
+                </div>
+              ) : selectedObject ? (
+                <div className="object-params-panel">
+                  <div className="object-param-row">
+                    <span>X, Y</span>
+                    <div className="object-param-inputs">
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={selectedObject.x.toFixed(1)}
+                        disabled={selectedObjectTransformLocked}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            updateSelectedObjectTransform({ x: parsed })
+                          }
+                        }}
+                      />
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={selectedObject.y.toFixed(1)}
+                        disabled={selectedObjectTransformLocked}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            updateSelectedObjectTransform({ y: parsed })
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {selectedObjectSupportsStyleRole && effectiveStylePreset ? (
+                    <div className="object-param-row">
+                      <span>Object Style</span>
+                      <div className="object-param-inputs-single">
+                        <select
+                          value={selectedObjectStyleRoleId ?? '__custom'}
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(event) => {
+                            if (event.target.value === '__custom') {
+                              return
+                            }
+                            applySelectedObjectStyleRole(event.target.value)
+                          }}
+                          aria-label="Object style"
+                          title="Apply object style"
+                        >
+                          <option value="__custom">Custom</option>
+                          {effectiveStylePreset.objectStyles.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="object-param-row">
+                    <span>W, H</span>
+                    <div className="object-param-inputs object-param-inputs-with-toggle">
+                      <input
+                        type="number"
+                        min={1}
+                        step={0.1}
+                        value={selectedObject.w.toFixed(1)}
+                        disabled={selectedObjectTransformLocked}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            updateSelectedObjectTransform({ w: parsed })
+                          }
+                        }}
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        step={0.1}
+                        value={selectedObject.h.toFixed(1)}
+                        disabled={selectedObjectTransformLocked}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            updateSelectedObjectTransform({ h: parsed })
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={`object-param-lock-btn ${isSelectedObjectAspectRatioLocked ? 'active' : ''}`}
+                        disabled={selectedObjectTransformLocked || isSelectedObjectAspectRatioLockForced}
+                        onClick={toggleSelectedObjectAspectRatioLock}
+                        aria-label={
+                          isSelectedObjectAspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'
+                        }
+                        aria-pressed={isSelectedObjectAspectRatioLocked}
+                        title={
+                          isSelectedObjectAspectRatioLockForced
+                            ? 'Aspect ratio is fixed for circles'
+                            : isSelectedObjectAspectRatioLocked
+                              ? 'Unlock aspect ratio'
+                              : 'Lock aspect ratio'
+                        }
+                      >
+                        <FontAwesomeIcon
+                          icon={isSelectedObjectAspectRatioLocked ? faLock : faLockOpen}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {(selectedShapeObject ||
+                    selectedTextboxObject ||
+                    selectedImageObject ||
+                    selectedVideoObject ||
+                    selectedSoundObject) && (
+                      <label className="object-param-slider">
+                        <span>Rotation</span>
+                        <div className="object-param-slider-control">
+                          <input
+                            type="range"
+                            min={-180}
+                            max={180}
+                            step={1}
+                            value={selectedObjectRotationDeg}
+                            disabled={selectedObjectTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onDoubleClick={() => {
+                              updateSelectedObjectTransform({ rotation: 0 })
+                            }}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateSelectedObjectTransform({ rotation: (parsed * Math.PI) / 180 })
+                              }
+                            }}
+                          />
+                          <strong>{selectedObjectRotationDeg.toFixed(0)}°</strong>
+                        </div>
+                      </label>
+                    )}
+
+                  {canScaleSelectedObject && (
+                    <label className="object-param-slider">
+                      <span>Scale</span>
+                      <div className="object-param-slider-control">
+                        <input
+                          type="range"
+                          min={OBJECT_SCALE_MIN_PERCENT}
+                          max={OBJECT_SCALE_MAX_PERCENT}
+                          step={1}
+                          value={selectedObjectScalePercent}
+                          disabled={selectedObjectTransformLocked}
+                          onWheel={handleRangeWheel}
+                          onDoubleClick={() => {
+                            updateSelectedObjectScale(zoomCompensatedScalePercent)
+                          }}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateSelectedObjectScale(parsed)
+                            }
+                          }}
+                        />
+                        <strong>{selectedObjectScalePercent}%</strong>
+                      </div>
+                    </label>
+                  )}
+
+                  {(selectedShapeObject ||
+                    selectedTextboxObject ||
+                    selectedImageObject ||
+                    selectedVideoObject ||
+                    selectedSoundObject) && (
+                      <label className="object-param-slider">
+                        <span>Opacity</span>
+                        <div className="object-param-slider-control">
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={selectedObjectOpacityPercent}
+                            disabled={selectedObjectTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              if (selectedShapeObject) {
+                                handleShapeOpacityChange(selectedShapeObject.id, event.target.value)
+                              } else if (selectedTextboxObject) {
+                                const parsed = parseNumberInput(event.target.value)
+                                if (parsed !== null) {
+                                  updateSelectedTextboxData({ opacityPercent: parsed })
+                                }
+                              } else if (selectedImageObject) {
+                                const parsed = parseNumberInput(event.target.value)
+                                if (parsed !== null) {
+                                  updateSelectedImageData({ opacityPercent: parsed })
+                                }
+                              } else if (selectedVideoObject) {
+                                const parsed = parseNumberInput(event.target.value)
+                                if (parsed !== null) {
+                                  updateSelectedVideoData({ opacityPercent: parsed })
+                                }
+                              } else if (selectedSoundObject) {
+                                const parsed = parseNumberInput(event.target.value)
+                                if (parsed !== null) {
+                                  updateSelectedSoundData({ opacityPercent: parsed })
+                                }
+                              }
+                            }}
+                          />
+                          <strong>{`${Math.round(selectedObjectOpacityPercent)}%`}</strong>
+                        </div>
+                      </label>
+                    )}
+
+                  {(selectedShapeSupportsRadius || selectedTextboxObject || selectedImageObject || selectedVideoObject || selectedSoundObject) && (
+                    <label className="object-param-slider">
+                      <span>Radius</span>
+                      <div className="object-param-slider-control">
+                        <input
+                          type="range"
+                          min={0}
+                          max={MAX_RADIUS_PERCENT}
+                          step={1}
+                          value={selectedObjectRadiusPercent}
+                          disabled={selectedObjectTransformLocked}
+                          onWheel={handleRangeWheel}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null && selectedShapeObject) {
+                              updateSelectedShapeData({
+                                radius: radiusPercentToPx(parsed, selectedShapeObject.w, selectedShapeObject.h),
+                              })
+                            } else if (parsed !== null && selectedTextboxObject) {
+                              updateSelectedTextboxData({
+                                radius: radiusPercentToPx(parsed, selectedTextboxObject.w, selectedTextboxObject.h),
+                              })
+                            } else if (parsed !== null && selectedImageObject) {
+                              updateSelectedImageData({
+                                radius: radiusPercentToPx(parsed, selectedImageObject.w, selectedImageObject.h),
+                              })
+                            } else if (parsed !== null && selectedVideoObject) {
+                              updateSelectedVideoData({
+                                radius: radiusPercentToPx(parsed, selectedVideoObject.w, selectedVideoObject.h),
+                              })
+                            } else if (parsed !== null && selectedSoundObject) {
+                              updateSelectedSoundData({
+                                radius: radiusPercentToPx(parsed, selectedSoundObject.w, selectedSoundObject.h),
+                              })
+                            }
+                          }}
+                        />
+                        <strong>
+                          {`${Math.round(selectedObjectRadiusPercent)}%`}
+                        </strong>
+                      </div>
+                    </label>
+                  )}
+
+                  {(selectedShapeObject ||
+                    selectedTextboxObject ||
+                    selectedImageObject ||
+                    selectedVideoObject ||
+                    selectedSoundObject) && (
+                      <div className="object-param-row">
+                        <span>Shadow</span>
+                        <div className="object-param-shadow-controls">
+                          <input
+                            type="range"
+                            min={-180}
+                            max={180}
+                            step={1}
+                            value={selectedObjectShadowAngleDeg}
+                            disabled={selectedObjectTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateSelectedObjectShadow({ shadowAngleDeg: parsed })
+                              }
+                            }}
+                            aria-label="Shadow angle"
+                            title="Shadow angle"
+                          />
+                          <strong>{Math.round(selectedObjectShadowAngleDeg)}°</strong>
+                          <input
+                            type="range"
+                            min={0}
+                            max={MAX_SHADOW_BLUR_PX}
+                            step={1}
+                            value={selectedObjectShadowBlurPx}
+                            disabled={selectedObjectTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateSelectedObjectShadow({ shadowBlurPx: parsed })
+                              }
+                            }}
+                            aria-label="Shadow blur"
+                            title="Shadow blur"
+                          />
+                          <strong>{Math.round(selectedObjectShadowBlurPx)}px</strong>
+                          <ColorPickerChip
+                            value={selectedObjectShadowColor}
+                            fallback="#000000"
+                            disabled={selectedObjectTransformLocked}
+                            onChange={(nextColor) => updateSelectedObjectShadow({ shadowColor: nextColor })}
+                            ariaLabel="Shadow color"
+                            title="Shadow color"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                  {(selectedShapeObject || selectedTextboxObject) && (
+                    <div className="object-param-row">
+                      <span>Colour</span>
+                      {selectedShapeObject ? (
+                        <div className="object-param-fill-controls">
+                          <div className="slide-param-switch switch-3" role="group" aria-label="Shape fill mode">
+                            <button
+                              type="button"
+                              className={
+                                selectedShapeObject.shapeData.fillMode === 'solid' &&
+                                  selectedShapeObject.shapeData.fillColor !== 'transparent'
+                                  ? 'active'
+                                  : ''
+                              }
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedShapeData({
+                                  fillMode: 'solid',
+                                  fillGradient: null,
+                                  fillColor:
+                                    selectedShapeObject.shapeData.fillColor === 'transparent'
+                                      ? '#244a80'
+                                      : selectedShapeObject.shapeData.fillColor,
+                                })
+                                closeFillEditor()
+                              }}
+                            >
+                              Solid
+                            </button>
+                            <button
+                              type="button"
+                              className={selectedShapeObject.shapeData.fillMode === 'linearGradient' ? 'active' : ''}
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedShapeData({
+                                  fillMode: 'linearGradient',
+                                  fillGradient:
+                                    selectedShapeObject.shapeData.fillGradient ??
+                                    normalizeFillGradient(
+                                      null,
+                                      selectedShapeObject.shapeData.fillColor === 'transparent'
+                                        ? '#244a80'
+                                        : selectedShapeObject.shapeData.fillColor,
+                                      '#ffffff'
+                                    ),
+                                })
+                              }}
+                            >
+                              Gradient
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                selectedShapeObject.shapeData.fillMode === 'solid' &&
+                                  selectedShapeObject.shapeData.fillColor === 'transparent'
+                                  ? 'active'
+                                  : ''
+                              }
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedShapeData({
+                                  fillMode: 'solid',
+                                  fillGradient: null,
+                                  fillColor: 'transparent',
+                                })
+                                closeFillEditor()
+                              }}
+                            >
+                              None
+                            </button>
+                          </div>
+
+                          {selectedShapeObject.shapeData.fillMode === 'solid' &&
+                            selectedShapeObject.shapeData.fillColor !== 'transparent' ? (
+                            <ColorPickerChip
+                              className="object-param-color-chip"
+                              value={asHexColor(selectedShapeObject.shapeData.fillColor, '#244a80')}
+                              fallback="#244a80"
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextColor) => {
+                                updateSelectedShapeData({ fillColor: nextColor })
+                              }}
+                              ariaLabel="Shape background color"
+                              title="Shape background color"
+                            />
+                          ) : selectedShapeObject.shapeData.fillMode === 'linearGradient' ? (
+                            <button
+                              type="button"
+                              className="object-param-color-chip object-param-gradient-chip"
+                              style={{ background: getShapeBackground(selectedShapeObject.shapeData) }}
+                              disabled={selectedObjectTransformLocked}
+                              onClick={openObjectFillEditor}
+                              aria-label="Edit gradient"
+                              title="Edit gradient"
+                            />
+                          ) : null}
+                        </div>
+                      ) : selectedTextboxObject ? (
+                        <div className="object-param-fill-controls">
+                          <div className="slide-param-switch switch-3" role="group" aria-label="Textbox fill mode">
+                            <button
+                              type="button"
+                              className={
+                                selectedTextboxFillMode === 'solid' &&
+                                  selectedTextboxObject.textboxData.backgroundColor !== 'transparent'
+                                  ? 'active'
+                                  : ''
+                              }
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedTextboxData({
+                                  fillMode: 'solid',
+                                  fillGradient: null,
+                                  backgroundColor:
+                                    selectedTextboxObject.textboxData.backgroundColor === 'transparent'
+                                      ? DEFAULT_TEXTBOX_BACKGROUND
+                                      : selectedTextboxObject.textboxData.backgroundColor,
+                                })
+                                closeFillEditor()
+                              }}
+                            >
+                              Solid
+                            </button>
+                            <button
+                              type="button"
+                              className={selectedTextboxFillMode === 'linearGradient' ? 'active' : ''}
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedTextboxData({
+                                  fillMode: 'linearGradient',
+                                  fillGradient:
+                                    selectedTextboxObject.textboxData.fillGradient ??
+                                    normalizeFillGradient(
+                                      null,
+                                      selectedTextboxObject.textboxData.backgroundColor === 'transparent'
+                                        ? DEFAULT_TEXTBOX_BACKGROUND
+                                        : selectedTextboxObject.textboxData.backgroundColor,
+                                      '#ffffff'
+                                    ),
+                                })
+                              }}
+                            >
+                              Gradient
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                selectedTextboxFillMode === 'solid' &&
+                                  selectedTextboxObject.textboxData.backgroundColor === 'transparent'
+                                  ? 'active'
+                                  : ''
+                              }
+                              disabled={selectedObjectTransformLocked}
+                              onClick={() => {
+                                updateSelectedTextboxData({
+                                  fillMode: 'solid',
+                                  fillGradient: null,
+                                  backgroundColor: 'transparent',
+                                })
+                                closeFillEditor()
+                              }}
+                            >
+                              None
+                            </button>
+                          </div>
+
+                          {selectedTextboxFillMode === 'solid' &&
+                            selectedTextboxObject.textboxData.backgroundColor !== 'transparent' ? (
+                            <ColorPickerChip
+                              className="object-param-color-chip"
+                              value={asHexColor(
+                                selectedTextboxObject.textboxData.backgroundColor,
+                                DEFAULT_TEXTBOX_BACKGROUND
+                              )}
+                              fallback={DEFAULT_TEXTBOX_BACKGROUND}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextColor) => {
+                                updateSelectedTextboxData({ backgroundColor: nextColor })
+                              }}
+                              ariaLabel="Textbox background color"
+                              title="Textbox background color"
+                            />
+                          ) : selectedTextboxFillMode === 'linearGradient' ? (
+                            <button
+                              type="button"
+                              className="object-param-color-chip object-param-gradient-chip"
+                              style={{ background: getTextboxBackground(selectedTextboxObject.textboxData) }}
+                              disabled={selectedObjectTransformLocked}
+                              onClick={openObjectFillEditor}
+                              aria-label="Edit textbox gradient"
+                              title="Edit textbox gradient"
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
+                  {(selectedShapeObject ||
+                    selectedTextboxObject ||
+                    selectedImageObject ||
+                    selectedVideoObject ||
+                    selectedSoundObject) && (
+                      <div className="object-param-row">
+                        <span>Border</span>
+                        {selectedShapeObject ? (
+                          <div
+                            className={`object-param-border-controls ${selectedShapeObject.shapeData.borderWidth <= 0 ? 'border-none' : ''
+                              }`}
+                          >
+                            <BorderWidthDropdown
+                              value={selectedShapeObject.shapeData.borderWidth}
+                              borderColor={selectedShapeObject.shapeData.borderColor}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextValue) => {
+                                updateSelectedShapeData({
+                                  borderWidth: Math.max(0, Math.min(20, Math.round(nextValue))),
+                                })
+                              }}
+                            />
+                            {selectedShapeObject.shapeData.borderWidth > 0 && (
+                              <>
+                                <BorderStyleDropdown
+                                  value={selectedShapeObject.shapeData.borderType}
+                                  borderColor={selectedShapeObject.shapeData.borderColor}
+                                  borderWidth={selectedShapeObject.shapeData.borderWidth}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextValue) =>
+                                    updateSelectedShapeData({
+                                      borderType: nextValue,
+                                    })
+                                  }
+                                />
+                                <ColorPickerChip
+                                  value={asHexColor(selectedShapeObject.shapeData.borderColor, '#9db5de')}
+                                  fallback="#9db5de"
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextColor) => {
+                                    updateSelectedShapeData({ borderColor: nextColor })
+                                  }}
+                                  ariaLabel="Shape border color"
+                                  title="Shape border color"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : selectedTextboxObject ? (
+                          <div
+                            className={`object-param-border-controls ${selectedTextboxObject.textboxData.borderWidth <= 0 ? 'border-none' : ''
+                              }`}
+                          >
+                            <BorderWidthDropdown
+                              value={selectedTextboxObject.textboxData.borderWidth}
+                              borderColor={selectedTextboxObject.textboxData.borderColor}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextValue) => {
+                                updateSelectedTextboxData({
+                                  borderWidth: nextValue,
+                                })
+                              }}
+                            />
+                            {selectedTextboxObject.textboxData.borderWidth > 0 && (
+                              <>
+                                <BorderStyleDropdown
+                                  value={selectedTextboxObject.textboxData.borderType}
+                                  borderColor={selectedTextboxObject.textboxData.borderColor}
+                                  borderWidth={selectedTextboxObject.textboxData.borderWidth}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextValue) => {
+                                    updateSelectedTextboxData({
+                                      borderType: nextValue,
+                                    })
+                                  }}
+                                />
+                                <ColorPickerChip
+                                  value={asHexColor(
+                                    selectedTextboxObject.textboxData.borderColor,
+                                    DEFAULT_TEXTBOX_BORDER_COLOR
+                                  )}
+                                  fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextColor) => {
+                                    updateSelectedTextboxData({ borderColor: nextColor })
+                                  }}
+                                  ariaLabel="Textbox border color"
+                                  title="Textbox border color"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : selectedImageObject ? (
+                          <div
+                            className={`object-param-border-controls ${selectedImageObject.imageData.borderWidth <= 0 ? 'border-none' : ''
+                              }`}
+                          >
+                            <BorderWidthDropdown
+                              value={selectedImageObject.imageData.borderWidth}
+                              borderColor={selectedImageObject.imageData.borderColor}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextValue) => {
+                                updateSelectedImageData({
+                                  borderWidth: nextValue,
+                                })
+                              }}
+                            />
+                            {selectedImageObject.imageData.borderWidth > 0 && (
+                              <>
+                                <BorderStyleDropdown
+                                  value={selectedImageObject.imageData.borderType}
+                                  borderColor={selectedImageObject.imageData.borderColor}
+                                  borderWidth={selectedImageObject.imageData.borderWidth}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextValue) => {
+                                    updateSelectedImageData({
+                                      borderType: nextValue,
+                                    })
+                                  }}
+                                />
+                                <ColorPickerChip
+                                  value={asHexColor(
+                                    selectedImageObject.imageData.borderColor,
+                                    DEFAULT_TEXTBOX_BORDER_COLOR
+                                  )}
+                                  fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextColor) => {
+                                    updateSelectedImageData({ borderColor: nextColor })
+                                  }}
+                                  ariaLabel="Image border color"
+                                  title="Image border color"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : selectedVideoObject ? (
+                          <div
+                            className={`object-param-border-controls ${selectedVideoObject.videoData.borderWidth <= 0 ? 'border-none' : ''
+                              }`}
+                          >
+                            <BorderWidthDropdown
+                              value={selectedVideoObject.videoData.borderWidth}
+                              borderColor={selectedVideoObject.videoData.borderColor}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextValue) => {
+                                updateSelectedVideoData({
+                                  borderWidth: nextValue,
+                                })
+                              }}
+                            />
+                            {selectedVideoObject.videoData.borderWidth > 0 && (
+                              <>
+                                <BorderStyleDropdown
+                                  value={selectedVideoObject.videoData.borderType}
+                                  borderColor={selectedVideoObject.videoData.borderColor}
+                                  borderWidth={selectedVideoObject.videoData.borderWidth}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextValue) => {
+                                    updateSelectedVideoData({
+                                      borderType: nextValue,
+                                    })
+                                  }}
+                                />
+                                <ColorPickerChip
+                                  value={asHexColor(
+                                    selectedVideoObject.videoData.borderColor,
+                                    DEFAULT_TEXTBOX_BORDER_COLOR
+                                  )}
+                                  fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextColor) => {
+                                    updateSelectedVideoData({ borderColor: nextColor })
+                                  }}
+                                  ariaLabel="Video border color"
+                                  title="Video border color"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : selectedSoundObject ? (
+                          <div
+                            className={`object-param-border-controls ${selectedSoundObject.soundData.borderWidth <= 0 ? 'border-none' : ''
+                              }`}
+                          >
+                            <BorderWidthDropdown
+                              value={selectedSoundObject.soundData.borderWidth}
+                              borderColor={selectedSoundObject.soundData.borderColor}
+                              disabled={selectedObjectTransformLocked}
+                              onChange={(nextValue) => {
+                                updateSelectedSoundData({
+                                  borderWidth: nextValue,
+                                })
+                              }}
+                            />
+                            {selectedSoundObject.soundData.borderWidth > 0 && (
+                              <>
+                                <BorderStyleDropdown
+                                  value={selectedSoundObject.soundData.borderType}
+                                  borderColor={selectedSoundObject.soundData.borderColor}
+                                  borderWidth={selectedSoundObject.soundData.borderWidth}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextValue) => {
+                                    updateSelectedSoundData({
+                                      borderType: nextValue,
+                                    })
+                                  }}
+                                />
+                                <ColorPickerChip
+                                  value={asHexColor(
+                                    selectedSoundObject.soundData.borderColor,
+                                    DEFAULT_TEXTBOX_BORDER_COLOR
+                                  )}
+                                  fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                                  disabled={selectedObjectTransformLocked}
+                                  onChange={(nextColor) => {
+                                    updateSelectedSoundData({ borderColor: nextColor })
+                                  }}
+                                  ariaLabel="Sound border color"
+                                  title="Sound border color"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+
+                  <div className="object-param-row">
+                    <span>Protected</span>
+                    <div className="slide-param-switch" role="group" aria-label="Object protection">
+                      <button
+                        type="button"
+                        className={selectedObject.locked ? 'active' : ''}
+                        disabled={selectedObjectLockedByAncestor}
+                        onClick={() => setSelectedObjectProtected(true)}
+                      >
+                        <FontAwesomeIcon icon={faLock} /> On
+                      </button>
+                      <button
+                        type="button"
+                        className={!selectedObject.locked ? 'active' : ''}
+                        disabled={selectedObjectLockedByAncestor}
+                        onClick={() => setSelectedObjectProtected(false)}
+                      >
+                        <FontAwesomeIcon icon={faLockOpen} /> Off
+                      </button>
+                    </div>
+                  </div>
+
+                  {canToggleGroupFromSelection && (
+                    <div className="object-param-row">
+                      <span>Group</span>
+                      <button
+                        type="button"
+                        className="object-param-secondary-btn"
+                        onClick={() => {
+                          if (selectedGroupObject) {
+                            enterGroup(selectedGroupObject.id)
+                          }
+                        }}
+                        aria-label="Enter group"
+                        title="Enter group"
+                      >
+                        <FontAwesomeIcon icon={faLayerGroup} /> Enter
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : selectedObjectIds.length > 1 ? (
+                <div className="object-params-panel">
+                  {canScaleMultiSelection && (
+                    <label className="object-param-slider">
+                      <span>Scale</span>
+                      <div className="object-param-slider-control">
+                        <input
+                          type="range"
+                          min={OBJECT_SCALE_MIN_PERCENT}
+                          max={OBJECT_SCALE_MAX_PERCENT}
+                          step={1}
+                          value={multiSelectionScalePercent}
+                          disabled={multiEditTransformLocked}
+                          onWheel={handleRangeWheel}
+                          onDoubleClick={() => {
+                            updateMultiSelectedObjectScale(zoomCompensatedScalePercent)
+                          }}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateMultiSelectedObjectScale(parsed)
+                            }
+                          }}
+                        />
+                        <strong>{multiSelectionScalePercent}%</strong>
+                      </div>
+                    </label>
+                  )}
+
+                  {(selectedShapeObjects.length > 0 ||
+                    selectedTextboxObjects.length > 0 ||
+                    selectedImageObjects.length > 0 ||
+                    selectedVideoObjects.length > 0 ||
+                    selectedSoundObjects.length > 0) && (
+                      <label className="object-param-slider">
+                        <span>Opacity</span>
+                        <div className="object-param-slider-control">
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={multiEditOpacityPercent}
+                            disabled={multiEditTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateMultiSelectedOpacity(parsed)
+                              }
+                            }}
+                          />
+                          <strong>{Math.round(multiEditOpacityPercent)}%</strong>
+                        </div>
+                      </label>
+                    )}
+
+                  {multiEditRadiusReference && (
+                    <label className="object-param-slider">
+                      <span>Radius</span>
+                      <div className="object-param-slider-control">
+                        <input
+                          type="range"
+                          min={0}
+                          max={MAX_RADIUS_PERCENT}
+                          step={1}
+                          value={multiEditRadiusPercent}
+                          disabled={multiEditTransformLocked}
+                          onWheel={handleRangeWheel}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateMultiSelectedRadius(parsed)
+                            }
+                          }}
+                        />
+                        <strong>{Math.round(multiEditRadiusPercent)}%</strong>
+                      </div>
+                    </label>
+                  )}
+
+                  {(selectedShapeObjects.length > 0 ||
+                    selectedTextboxObjects.length > 0 ||
+                    selectedImageObjects.length > 0 ||
+                    selectedVideoObjects.length > 0 ||
+                    selectedSoundObjects.length > 0) && (
+                      <div className="object-param-row">
+                        <span>Shadow</span>
+                        <div className="object-param-shadow-controls">
+                          <input
+                            type="range"
+                            min={-180}
+                            max={180}
+                            step={1}
+                            value={multiEditShadowAngleDeg}
+                            disabled={multiEditTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateMultiSelectedShadow({ shadowAngleDeg: parsed })
+                              }
+                            }}
+                            aria-label="Shadow angle"
+                            title="Shadow angle"
+                          />
+                          <strong>{Math.round(multiEditShadowAngleDeg)}°</strong>
+                          <input
+                            type="range"
+                            min={0}
+                            max={MAX_SHADOW_BLUR_PX}
+                            step={1}
+                            value={multiEditShadowBlurPx}
+                            disabled={multiEditTransformLocked}
+                            onWheel={handleRangeWheel}
+                            onChange={(event) => {
+                              const parsed = parseNumberInput(event.target.value)
+                              if (parsed !== null) {
+                                updateMultiSelectedShadow({ shadowBlurPx: parsed })
+                              }
+                            }}
+                            aria-label="Shadow blur"
+                            title="Shadow blur"
+                          />
+                          <strong>{Math.round(multiEditShadowBlurPx)}px</strong>
+                          <ColorPickerChip
+                            value={multiEditShadowColor}
+                            fallback="#000000"
+                            disabled={multiEditTransformLocked}
+                            onChange={(nextColor) => updateMultiSelectedShadow({ shadowColor: nextColor })}
+                            ariaLabel="Shadow color"
+                            title="Shadow color"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                  {(selectedShapeObjects.length > 0 || selectedTextboxObjects.length > 0) && (
+                    <div className="object-param-row">
+                      <span>Colour</span>
+                      <div className="object-param-fill-controls">
+                        <div className="slide-param-switch switch-3" role="group" aria-label="Multi-selection fill mode">
+                          <button
+                            type="button"
+                            className={
+                              multiSelectedFillMode === 'solid' && !multiSelectedFillIsTransparent
+                                ? 'active'
+                                : ''
+                            }
+                            disabled={multiEditTransformLocked}
+                            onClick={() => {
+                              updateMultiSelectedBackground({
+                                fillMode: 'solid',
+                                color: multiEditFillColor,
+                              })
+                            }}
+                          >
+                            Solid
+                          </button>
+                          <button
+                            type="button"
+                            className={multiSelectedFillMode === 'linearGradient' ? 'active' : ''}
+                            disabled={multiEditTransformLocked}
+                            onClick={() => {
+                              updateMultiSelectedBackground({
+                                fillMode: 'linearGradient',
+                                gradient: selectedGradient,
+                              })
+                            }}
+                          >
+                            Gradient
+                          </button>
+                          <button
+                            type="button"
+                            className={
+                              multiSelectedFillMode === 'solid' && multiSelectedFillIsTransparent
+                                ? 'active'
+                                : ''
+                            }
+                            disabled={multiEditTransformLocked}
+                            onClick={() => {
+                              updateMultiSelectedBackground({
+                                fillMode: 'solid',
+                                color: 'transparent',
+                              })
+                            }}
+                          >
+                            None
+                          </button>
+                        </div>
+                        {multiSelectedFillMode === 'linearGradient' ? (
+                          <button
+                            type="button"
+                            className="object-param-color-chip object-param-gradient-chip"
+                            style={{ background: multiEditFillGradientCss }}
+                            disabled={multiEditTransformLocked}
+                            onClick={openObjectFillEditor}
+                            aria-label="Edit background gradient"
+                            title="Edit background gradient"
+                          />
+                        ) : !multiSelectedFillIsTransparent ? (
+                          <ColorPickerChip
+                            className="object-param-color-chip"
+                            value={multiEditFillColor}
+                            fallback="#244a80"
+                            disabled={multiEditTransformLocked}
+                            onChange={(nextColor) => {
+                              updateMultiSelectedBackground({
+                                fillMode: 'solid',
+                                color: nextColor,
+                              })
+                            }}
+                            ariaLabel="Background color"
+                            title="Background color"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+
+                  {(selectedShapeObjects.length > 0 ||
+                    selectedTextboxObjects.length > 0 ||
+                    selectedImageObjects.length > 0 ||
+                    selectedVideoObjects.length > 0 ||
+                    selectedSoundObjects.length > 0) && (
+                      <div className="object-param-row">
+                        <span>Border</span>
+                        <div className={`object-param-border-controls ${multiEditBorderWidth <= 0 ? 'border-none' : ''}`}>
+                          <BorderWidthDropdown
+                            value={multiEditBorderWidth}
+                            borderColor={multiEditBorderColor}
+                            disabled={multiEditTransformLocked}
+                            onChange={(nextValue) => {
+                              updateMultiSelectedBorder({ borderWidth: nextValue })
+                            }}
+                          />
+                          {multiEditBorderWidth > 0 && (
+                            <>
+                              <BorderStyleDropdown
+                                value={multiEditBorderType}
+                                borderColor={multiEditBorderColor}
+                                borderWidth={multiEditBorderWidth}
+                                disabled={multiEditTransformLocked}
+                                onChange={(nextValue) => {
+                                  updateMultiSelectedBorder({ borderType: nextValue })
+                                }}
+                              />
+                              <ColorPickerChip
+                                value={multiEditBorderColor}
+                                fallback={DEFAULT_TEXTBOX_BORDER_COLOR}
+                                disabled={multiEditTransformLocked}
+                                onChange={(nextColor) => {
+                                  updateMultiSelectedBorder({ borderColor: nextColor })
+                                }}
+                                ariaLabel="Border color"
+                                title="Border color"
+                              />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                  <div className="object-param-row">
+                    <span>Protected</span>
+                    <div className="slide-param-switch" role="group" aria-label="Multi-selection object protection">
+                      <button
+                        type="button"
+                        disabled={selectedObjects.every((object) => hasLockedAncestor(object, objectById))}
+                        onClick={() => setMultiSelectedProtected(true)}
+                      >
+                        <FontAwesomeIcon icon={faLock} /> On
+                      </button>
+                      <button
+                        type="button"
+                        disabled={selectedObjects.every((object) => hasLockedAncestor(object, objectById))}
+                        onClick={() => setMultiSelectedProtected(false)}
+                      >
+                        <FontAwesomeIcon icon={faLockOpen} /> Off
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="background-params object-params-panel">
+                  <div className="object-param-row">
+                    <span>Background</span>
+                    <div className="object-param-fill-controls">
+                      <div className="slide-param-switch switch-2" role="group" aria-label="Canvas background mode">
+                        <button
+                          type="button"
+                          className={canvasBackgroundControl.fillMode === 'solid' ? 'active' : ''}
+                          onClick={() => {
+                            setCanvasBackground(backgroundColorValue)
+                            closeFillEditor()
+                          }}
+                        >
+                          Solid
+                        </button>
+                        <button
+                          type="button"
+                          className={canvasBackgroundControl.fillMode === 'linearGradient' ? 'active' : ''}
+                          onClick={() => {
+                            setCanvasBackground(canvasGradientCss)
+                          }}
+                        >
+                          Gradient
+                        </button>
+                      </div>
+                      {canvasBackgroundControl.fillMode === 'solid' ? (
+                        <ColorPickerChip
+                          className="object-param-color-chip"
+                          value={backgroundColorValue}
+                          fallback="#1f365a"
+                          disabled={false}
+                          onChange={(nextColor) => {
+                            setCanvasBackground(nextColor)
+                            closeFillEditor()
+                          }}
+                          ariaLabel="Canvas background color"
+                          title="Canvas background color"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="object-param-color-chip object-param-gradient-chip"
+                          style={{ background: canvasGradientCss }}
+                          onClick={openCanvasFillEditor}
+                          aria-label="Edit canvas gradient"
+                          title="Edit canvas gradient"
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="object-param-row">
+                    <span>Show Grid</span>
+                    <div className="slide-param-switch switch-2" role="group" aria-label="Show grid">
+                      <button
+                        type="button"
+                        className={document.canvas.gridVisible ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ gridVisible: true })
+                        }}
+                      >
+                        On
+                      </button>
+                      <button
+                        type="button"
+                        className={!document.canvas.gridVisible ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ gridVisible: false })
+                        }}
+                      >
+                        Off
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="object-param-row">
+                    <span>Snap Grid</span>
+                    <div className="slide-param-switch switch-2" role="group" aria-label="Snap to grid">
+                      <button
+                        type="button"
+                        className={document.canvas.snapToGrid ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ snapToGrid: true })
+                        }}
+                      >
+                        On
+                      </button>
+                      <button
+                        type="button"
+                        className={!document.canvas.snapToGrid ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ snapToGrid: false })
+                        }}
+                      >
+                        Off
+                      </button>
+                    </div>
+                  </div>
+
+
+                  <label className="object-param-slider">
+                    <span>Grid Size</span>
+                    <div className="object-param-slider-control">
+                      <input
+                        type="range"
+                        min={10}
+                        max={400}
+                        step={5}
+                        value={document.canvas.baseGridSize}
+                        onWheel={handleRangeWheel}
+                        onDoubleClick={() => {
+                          setCanvasSettings({ baseGridSize: 100 })
+                        }}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            setCanvasSettings({ baseGridSize: parsed })
+                          }
+                        }}
+                      />
+                      <strong>{Math.round(document.canvas.baseGridSize)}px</strong>
+                    </div>
+                  </label>
+
+                  <div className="object-param-row">
+                    <span>Snap Object</span>
+                    <div className="slide-param-switch switch-2" role="group" aria-label="Snap to object edges">
+                      <button
+                        type="button"
+                        className={document.canvas.snapToObjectEdges ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ snapToObjectEdges: true })
+                        }}
+                      >
+                        On
+                      </button>
+                      <button
+                        type="button"
+                        className={!document.canvas.snapToObjectEdges ? 'active' : ''}
+                        onClick={() => {
+                          setCanvasSettings({ snapToObjectEdges: false })
+                        }}
+                      >
+                        Off
+                      </button>
+                    </div>
+                  </div>
+
+
+                  <label className="object-param-slider">
+                    <span>Snap Size</span>
+                    <div className="object-param-slider-control">
+                      <input
+                        type="range"
+                        min={1}
+                        max={32}
+                        step={1}
+                        value={document.canvas.snapTolerancePx}
+                        onWheel={handleRangeWheel}
+                        onDoubleClick={() => {
+                          setCanvasSettings({ snapTolerancePx: 8 })
+                        }}
+                        onChange={(event) => {
+                          const parsed = parseNumberInput(event.target.value)
+                          if (parsed !== null) {
+                            setCanvasSettings({ snapTolerancePx: parsed })
+                          }
+                        }}
+                      />
+                      <strong>{Math.round(document.canvas.snapTolerancePx)}px</strong>
+                    </div>
+                  </label>
+
+                </div>
+              )}
+            </section>
+          )
+
+          if (leftObjectParamsPortalNode) {
+            return createPortal(objectParametersSection, leftObjectParamsPortalNode)
+          }
+
+          return objectParametersSection
+        })()}
       </aside>
 
       <main className="canvas-area">
@@ -4397,11 +8869,35 @@ function App() {
           style={{ display: 'none' }}
         />
         <input
+          ref={assetLibraryInputRef}
+          type="file"
+          accept={SUPPORTED_LIBRARY_ASSET_ACCEPT}
+          multiple
+          onChange={handleAssetLibraryFileInput}
+          style={{ display: 'none' }}
+        />
+        <input
           ref={imageInputRef}
           type="file"
           accept={SUPPORTED_IMAGE_ACCEPT}
           multiple
           onChange={handleImageFile}
+          style={{ display: 'none' }}
+        />
+        <input
+          ref={videoInputRef}
+          type="file"
+          accept={SUPPORTED_VIDEO_ACCEPT}
+          multiple
+          onChange={handleVideoFile}
+          style={{ display: 'none' }}
+        />
+        <input
+          ref={soundInputRef}
+          type="file"
+          accept={SUPPORTED_AUDIO_ACCEPT}
+          multiple
+          onChange={handleSoundFile}
           style={{ display: 'none' }}
         />
 
@@ -4414,9 +8910,28 @@ function App() {
             onNavigatePrevious={goToPreviousSlide}
           />
         ) : (
-          <CanvasViewport hoveredSlideId={hoveredSlideId} />
+          <CanvasViewport
+            hoveredSlideId={hoveredSlideId}
+            hoveredAssetId={hoveredAssetId}
+            stylePreset={effectiveStylePreset}
+            creationTool={currentCreationTool}
+            onCreateObjectFromTool={handleCreateObjectFromTool}
+            targetDisplayPortalNode={slidesTargetDisplayPortalNode}
+            onTargetDisplayFrameChange={setTemplateTargetDisplayFrame}
+          />
         )}
       </main>
+      {designAssetContextMenu ? (
+        <div
+          className="design-asset-context-menu"
+          role="menu"
+          style={designAssetContextMenuStyle}
+        >
+          <button type="button" onClick={handleDownloadDesignAssetFromContextMenu} role="menuitem">
+            Download JSON
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

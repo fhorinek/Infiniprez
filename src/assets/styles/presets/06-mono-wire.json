@@ -1,0 +1,36 @@
+{
+  "id": "mono-wire",
+  "name": "Elegant Mono",
+  "inspiration": "Structured grayscale editorial language",
+  "fontFamily": "Times New Roman",
+  "canvasBackground": "linear-gradient(180deg, #f8f8f8 0%, #ededed 52%, #e3e3e3 100%)",
+  "text": {
+    "primary": "#181818",
+    "secondary": "#303030",
+    "muted": "#5e5e5e",
+    "accent": "#2a2a2a"
+  },
+  "objects": {
+    "foregroundFill": "#202020",
+    "foregroundBorder": "#4c4c4c",
+    "foregroundText": "#fbfbfb",
+    "backgroundFill": "#ffffff",
+    "backgroundBorder": "#bfbfbf",
+    "backgroundText": "#202020",
+    "accentFill": "#454545",
+    "accentBorder": "#6b6b6b",
+    "accentText": "#f8f8f8",
+    "mutedFill": "#e7e7e7",
+    "mutedBorder": "#b8b8b8",
+    "mutedText": "#3d3d3d",
+    "highlightFill": "#f2f2f2",
+    "highlightBorder": "#8f8f8f",
+    "highlightText": "#191919"
+  },
+  "assets": {
+    "imageBorder": "#5e5e5e",
+    "videoBorder": "#5e5e5e",
+    "audioBorder": "#5e5e5e",
+    "iconTint": "#2f2f2f"
+  }
+}

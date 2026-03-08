@@ -1,0 +1,83 @@
+{
+  "id": "studio-focus",
+  "name": "Focus Corners",
+  "description": "Diagonal corners with balanced text and visual blocks.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": -700,
+        "y": -360,
+        "w": 180,
+        "h": 180
+      },
+      "shapeData": {
+        "kind": "triangle",
+        "fillColor": "theme.accent",
+        "borderColor": "theme.accentSoft",
+        "borderWidth": 1
+      }
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": 710,
+        "y": 350,
+        "w": 180,
+        "h": 180
+      },
+      "shapeData": {
+        "kind": "triangle",
+        "fillColor": "theme.accentSoft",
+        "borderColor": "theme.accent",
+        "borderWidth": 1
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1320,
+        "h": 680
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": -265,
+        "w": 980,
+        "h": 120
+      },
+      "prompt": "Focus title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -350,
+        "y": 80,
+        "w": 560,
+        "h": 420
+      },
+      "prompt": "Core points"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 350,
+        "y": 70,
+        "w": 560,
+        "h": 430
+      },
+      "prompt": "Visual"
+    }
+  ]
+}

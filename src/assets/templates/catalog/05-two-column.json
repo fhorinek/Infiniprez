@@ -1,0 +1,81 @@
+{
+  "id": "two-column",
+  "name": "Two Column",
+  "description": "Parallel text or lists in two regions.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": -260,
+        "w": 780,
+        "h": 120
+      },
+      "prompt": "Slide title"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -300,
+        "y": 80,
+        "w": 540,
+        "h": 560
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 300,
+        "y": 80,
+        "w": 540,
+        "h": 560
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -300,
+        "y": 70,
+        "w": 470,
+        "h": 390
+      },
+      "prompt": "Left list"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 300,
+        "y": 70,
+        "w": 470,
+        "h": 390
+      },
+      "prompt": "Right list"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -300,
+        "y": 300,
+        "w": 430,
+        "h": 90
+      },
+      "prompt": "Left caption"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 300,
+        "y": 300,
+        "w": 430,
+        "h": 90
+      },
+      "prompt": "Right caption"
+    }
+  ]
+}

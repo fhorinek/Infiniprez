@@ -1,0 +1,77 @@
+{
+  "id": "slate-curve",
+  "name": "Blue Curve",
+  "description": "Soft curved header for polished business updates.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": 0,
+        "y": -320,
+        "w": 1800,
+        "h": 260
+      },
+      "shapeData": {
+        "fillColor": "theme.accentSoft",
+        "borderColor": "theme.accent",
+        "borderWidth": 0,
+        "radius": 220
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 15,
+        "w": 1320,
+        "h": 650
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": -240,
+        "w": 760,
+        "h": 120
+      },
+      "prompt": "Curve title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": 80,
+        "w": 600,
+        "h": 390
+      },
+      "prompt": "Agenda points"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 305,
+        "y": 70,
+        "w": 610,
+        "h": 420
+      },
+      "prompt": "Visual"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 305,
+        "y": 300,
+        "w": 610,
+        "h": 110
+      },
+      "prompt": "Description"
+    }
+  ]
+}

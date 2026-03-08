@@ -26,10 +26,14 @@ function createShapeRect(overrides: Partial<ShapeRectObject> = {}): ShapeRectObj
     w: overrides.w ?? 120,
     h: overrides.h ?? 80,
     rotation: overrides.rotation ?? 0,
+    scalePercent: overrides.scalePercent ?? 100,
+    keepAspectRatio: overrides.keepAspectRatio ?? false,
     locked: overrides.locked ?? false,
     zIndex: overrides.zIndex ?? 1,
     parentGroupId: overrides.parentGroupId ?? null,
     shapeData: {
+      kind: 'rect',
+      adjustmentPercent: 50,
       borderColor: '#9db5de',
       borderType: 'solid',
       borderWidth: 2,
@@ -111,10 +115,62 @@ describe('integration: group isolate mode', () => {
     expect(groupId).toBeTruthy()
     state.enterGroup(groupId!)
 
-    render(<CanvasViewport />)
+    const { container } = render(<CanvasViewport />)
 
-    const outside = screen.getByText('Circle').closest('.canvas-object')
+    const canvasObjects = container.querySelectorAll('.canvas-object')
+    const outside = canvasObjects[2]
     expect(outside?.className).toContain('inactive')
+  })
+})
+
+describe('integration: group deletion', () => {
+  it('deletes all descendants when deleting a group', () => {
+    const state = useEditorStore.getState()
+
+    createObject(createShapeRect({ id: 'standalone', x: -200, y: 0, zIndex: 1 }))
+    createObject(createShapeRect({ id: 'root-child', x: 0, y: 0, zIndex: 2, parentGroupId: 'root-group' }))
+    createObject(
+      createShapeRect({ id: 'nested-child', x: 200, y: 0, zIndex: 3, parentGroupId: 'nested-group' })
+    )
+    createObject({
+      id: 'nested-group',
+      type: 'group',
+      x: 180,
+      y: 0,
+      w: 220,
+      h: 160,
+      rotation: 0,
+      scalePercent: 100,
+      keepAspectRatio: false,
+      locked: false,
+      zIndex: 4,
+      parentGroupId: 'root-group',
+      groupData: {
+        childIds: ['nested-child'],
+      },
+    })
+    createObject({
+      id: 'root-group',
+      type: 'group',
+      x: 100,
+      y: 0,
+      w: 500,
+      h: 220,
+      rotation: 0,
+      scalePercent: 100,
+      keepAspectRatio: false,
+      locked: false,
+      zIndex: 5,
+      parentGroupId: null,
+      groupData: {
+        childIds: ['root-child', 'nested-group'],
+      },
+    })
+
+    state.deleteObjects(['root-group'])
+
+    const remainingIds = new Set(useEditorStore.getState().document.objects.map((entry) => entry.id))
+    expect(remainingIds).toEqual(new Set(['standalone']))
   })
 })
 
@@ -184,6 +240,59 @@ describe('integration: autosave restore', () => {
   })
 })
 
+describe('integration: replace document cleanup', () => {
+  it('removes empty groups without mutating metadata timestamps', () => {
+    const state = useEditorStore.getState()
+    const document = createEmptyDocument()
+    document.meta.createdAt = '2026-01-01T00:00:00.000Z'
+    document.meta.updatedAt = '2026-01-02T00:00:00.000Z'
+    document.objects = [
+      {
+        id: 'empty-group',
+        type: 'group',
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 100,
+        rotation: 0,
+        scalePercent: 100,
+        keepAspectRatio: false,
+        locked: false,
+        zIndex: 1,
+        parentGroupId: null,
+        groupData: {
+          childIds: [],
+        },
+      },
+    ]
+
+    state.replaceDocument(document)
+
+    expect(useEditorStore.getState().document.objects).toHaveLength(0)
+    expect(useEditorStore.getState().document.meta.updatedAt).toBe('2026-01-02T00:00:00.000Z')
+    expect(useEditorStore.getState().history.past).toHaveLength(0)
+  })
+})
+
+describe('integration: template creation', () => {
+  it('creates template content inside a group and uses template placeholders', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Title \+ Points/i }))
+
+    const objects = useEditorStore.getState().document.objects
+    const group = objects.find((entry) => entry.type === 'group')
+    expect(group?.type).toBe('group')
+    expect(group?.groupData.childIds.length).toBeGreaterThan(0)
+    expect(objects.some((entry) => entry.type === 'template_placeholder')).toBe(true)
+    if (group?.type === 'group') {
+      const children = objects.filter((entry) => entry.parentGroupId === group.id)
+      expect(children.length).toBe(group.groupData.childIds.length)
+      expect(children.some((entry) => entry.type === 'template_placeholder')).toBe(true)
+    }
+  })
+})
+
 describe('integration: new document reset', () => {
   it('resets store state and clears autosave keys', () => {
     render(<App />)
@@ -204,6 +313,102 @@ describe('integration: new document reset', () => {
   })
 })
 
+describe('integration: scale slider', () => {
+  it('scales relative to the selected object baseline instead of the zoom-neutral default', async () => {
+    render(<App />)
+
+    const object = createShapeRect({ id: 'scaled-rect', scalePercent: 200, zIndex: 1 })
+    createObject(object)
+    useEditorStore.getState().selectObjects([object.id])
+    await act(async () => {})
+
+    fireEvent.change(screen.getByRole('slider', { name: /^Scale\b/ }), {
+      target: { value: '300' },
+    })
+
+    const updatedObject = useEditorStore
+      .getState()
+      .document.objects.find((entry) => entry.id === object.id)
+
+    expect(updatedObject?.scalePercent).toBe(300)
+    expect(updatedObject?.w).toBe(180)
+    expect(updatedObject?.h).toBe(120)
+  })
+
+  it('keeps the linked slider value in sync when using the mouse wheel', async () => {
+    render(<App />)
+
+    const object = createShapeRect({ id: 'wheel-scale-rect', scalePercent: 200, zIndex: 1 })
+    createObject(object)
+    useEditorStore.getState().selectObjects([object.id])
+    await act(async () => {})
+
+    const scaleSlider = screen.getByRole('slider', { name: /^Scale\b/ })
+    fireEvent.wheel(scaleSlider, { deltaY: -100 })
+
+    const updatedObject = useEditorStore
+      .getState()
+      .document.objects.find((entry) => entry.id === object.id)
+
+    expect(updatedObject?.scalePercent).toBe(201)
+    expect(screen.getByText('201%')).toBeTruthy()
+  })
+})
+
+describe('integration: object aspect ratio lock', () => {
+  it('keeps height in sync when width changes from object parameters', async () => {
+    render(<App />)
+
+    const object = createShapeRect({ id: 'ratio-rect', w: 120, h: 80, zIndex: 1 })
+    createObject(object)
+    useEditorStore.getState().selectObjects([object.id])
+    await act(async () => {})
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock aspect ratio' }))
+
+    const spinbuttons = screen.getAllByRole('spinbutton')
+    fireEvent.change(spinbuttons[2]!, { target: { value: '240' } })
+
+    const updatedObject = useEditorStore
+      .getState()
+      .document.objects.find((entry) => entry.id === object.id)
+
+    expect(updatedObject?.w).toBe(240)
+    expect(updatedObject?.h).toBe(160)
+  })
+})
+
+describe('integration: keyboard undo', () => {
+  it('undoes the last edit with ctrl+z', async () => {
+    render(<App />)
+
+    const object = createShapeRect({ id: 'undo-rect', zIndex: 1 })
+    createObject(object)
+    await act(async () => {})
+
+    expect(useEditorStore.getState().document.objects.some((entry) => entry.id === object.id)).toBe(true)
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+
+    expect(useEditorStore.getState().document.objects.some((entry) => entry.id === object.id)).toBe(false)
+  })
+
+  it('deletes selected objects with backspace', async () => {
+    render(<App />)
+
+    const object = createShapeRect({ id: 'backspace-delete-rect', zIndex: 1 })
+    createObject(object)
+    useEditorStore.getState().selectObjects([object.id])
+    await act(async () => {})
+
+    fireEvent.keyDown(window, { key: 'Backspace' })
+
+    expect(
+      useEditorStore.getState().document.objects.some((entry) => entry.id === object.id)
+    ).toBe(false)
+  })
+})
+
 describe('integration: export runtime boot', () => {
   it('boots exported runtime markup', () => {
     const html = buildPresentationExportHtml({
@@ -219,6 +424,81 @@ describe('integration: export runtime boot', () => {
     expect(stage).not.toBeNull()
     expect(count?.textContent).toContain('1 / 1')
     expect(dom.window.document.querySelectorAll('.export-object')).toHaveLength(1)
+  })
+
+  it('allows embedded font and media assets in export csp', () => {
+    const html = buildPresentationExportHtml({
+      ...createEmptyDocument(),
+      slides: [createSlide(0)],
+    })
+
+    expect(html).toContain("font-src data:")
+    expect(html).toContain("media-src data: blob:")
+  })
+
+  it('excludes unused assets from exported html', () => {
+    const html = buildPresentationExportHtml({
+      ...createEmptyDocument(),
+      slides: [createSlide(0)],
+      objects: [
+        {
+          id: 'used-image',
+          type: 'image',
+          x: 0,
+          y: 0,
+          w: 320,
+          h: 180,
+          rotation: 0,
+          scalePercent: 100,
+          keepAspectRatio: true,
+          locked: false,
+          zIndex: 1,
+          parentGroupId: null,
+          imageData: {
+            assetId: 'asset-used',
+            intrinsicWidth: 320,
+            intrinsicHeight: 180,
+            borderColor: '#ffffff',
+            borderType: 'solid',
+            borderWidth: 0,
+            radius: 0,
+            opacityPercent: 100,
+            cropEnabled: false,
+            cropLeftPercent: 0,
+            cropTopPercent: 0,
+            cropRightPercent: 0,
+            cropBottomPercent: 0,
+            effectsEnabled: false,
+            filterPreset: 'none',
+            shadowColor: '#000000',
+            shadowBlurPx: 0,
+            shadowAngleDeg: 45,
+          },
+        },
+      ],
+      assets: [
+        {
+          id: 'asset-used',
+          name: 'used-image.png',
+          mimeType: 'image/png',
+          dataBase64: 'USED_DATA',
+          intrinsicWidth: 320,
+          intrinsicHeight: 180,
+        },
+        {
+          id: 'asset-unused',
+          name: 'unused-video.mp4',
+          mimeType: 'video/mp4',
+          dataBase64: 'UNUSED_DATA',
+          durationSec: 42,
+        },
+      ],
+    })
+
+    expect(html).toContain('used-image.png')
+    expect(html).toContain('USED_DATA')
+    expect(html).not.toContain('unused-video.mp4')
+    expect(html).not.toContain('UNUSED_DATA')
   })
 })
 

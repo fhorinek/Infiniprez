@@ -1,0 +1,121 @@
+{
+  "id": "mono-grid",
+  "name": "Grey Modular",
+  "description": "Monochrome card mosaic for concise factual slides.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": -260,
+        "w": 760,
+        "h": 120
+      },
+      "prompt": "Monochrome title"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -470,
+        "y": -40,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -180,
+        "y": -40,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 110,
+        "y": -40,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 400,
+        "y": -40,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -470,
+        "y": 230,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -180,
+        "y": 230,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 110,
+        "y": 230,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 400,
+        "y": 230,
+        "w": 250,
+        "h": 210
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": -145,
+        "w": 700,
+        "h": 90
+      },
+      "prompt": "Subtitle"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 400,
+        "y": 230,
+        "w": 210,
+        "h": 150
+      },
+      "prompt": "Notes"
+    }
+  ]
+}

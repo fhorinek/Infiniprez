@@ -5,6 +5,7 @@ import {
   createAssetCommand,
   createObjectCommand,
   createSlideCommand,
+  deleteAssetCommand,
   deleteObjectsCommand,
   deleteSlideCommand,
   executeCommand,
@@ -12,7 +13,9 @@ import {
   moveObjectCommand,
   recordExecutedCommand,
   redoCommand,
+  setCanvasSettingsCommand,
   setSlideOrderCommand,
+  setObjectKeepAspectRatioCommand,
   setShapeDataCommand,
   setShapeOpacityCommand,
   setCanvasBackgroundCommand,
@@ -20,6 +23,8 @@ import {
   setObjectZIndexCommand,
   setObjectLockCommand,
   setImageDataCommand,
+  setSoundDataCommand,
+  setVideoDataCommand,
   updateSlideCommand,
   ungroupObjectCommand,
   undoCommand,
@@ -28,12 +33,16 @@ import {
 import {
   computeLayerZIndexSnapshots,
   createEmptyDocument,
+  DEFAULT_CANVAS_SETTINGS,
   type Asset,
+  type CanvasSettings,
   type CanvasObject,
   type DocumentModel,
   type ImageData,
   type ShapeData,
   type Slide,
+  type SoundData,
+  type VideoData,
 } from '../model'
 import type { CameraState, EditorState, EditorStore, UiState } from './types'
 
@@ -67,6 +76,29 @@ function normalizeCameraZoom(zoom: number): number {
   return Math.min(100, Math.max(0.01, zoom))
 }
 
+function normalizeCanvasGridSize(baseGridSize: number): number {
+  if (!Number.isFinite(baseGridSize)) {
+    return 100
+  }
+  return Math.min(1000, Math.max(10, baseGridSize))
+}
+
+function normalizeCanvasSnapTolerance(snapTolerancePx: number): number {
+  if (!Number.isFinite(snapTolerancePx)) {
+    return 8
+  }
+  return Math.min(64, Math.max(1, snapTolerancePx))
+}
+
+function normalizeCanvasSettings(canvas: CanvasSettings): CanvasSettings {
+  return {
+    ...canvas,
+    background: canvas.background.trim() || DEFAULT_CANVAS_SETTINGS.background,
+    baseGridSize: normalizeCanvasGridSize(canvas.baseGridSize),
+    snapTolerancePx: normalizeCanvasSnapTolerance(canvas.snapTolerancePx),
+  }
+}
+
 function createInitialState(): EditorState {
   return {
     document: createEmptyDocument(),
@@ -74,6 +106,102 @@ function createInitialState(): EditorState {
     ui: { ...DEFAULT_UI },
     history: createEmptyHistory<DocumentModel>(),
     pendingBatch: null,
+  }
+}
+
+function getEmptyGroupIds(document: DocumentModel): string[] {
+  let remainingObjects = [...document.objects]
+  const emptyGroupIds = new Set<string>()
+
+  while (true) {
+    const childCounts = new Map<string, number>()
+    for (const object of remainingObjects) {
+      if (object.type === 'group') {
+        childCounts.set(object.id, 0)
+      }
+    }
+    for (const object of remainingObjects) {
+      if (object.parentGroupId && childCounts.has(object.parentGroupId)) {
+        childCounts.set(object.parentGroupId, (childCounts.get(object.parentGroupId) ?? 0) + 1)
+      }
+    }
+
+    const nextEmptyGroupIds = remainingObjects
+      .filter(
+        (object): object is Extract<CanvasObject, { type: 'group' }> =>
+          object.type === 'group' && (childCounts.get(object.id) ?? 0) === 0
+      )
+      .map((object) => object.id)
+
+    if (nextEmptyGroupIds.length === 0) {
+      return [...emptyGroupIds]
+    }
+
+    nextEmptyGroupIds.forEach((id) => emptyGroupIds.add(id))
+    const removedSet = new Set(nextEmptyGroupIds)
+    remainingObjects = remainingObjects.filter((object) => !removedSet.has(object.id))
+  }
+}
+
+function removeObjectsById(document: DocumentModel, objectIds: string[]): DocumentModel {
+  if (objectIds.length === 0) {
+    return document
+  }
+  const removedSet = new Set(objectIds)
+  const nextObjects = document.objects.filter((object) => !removedSet.has(object.id))
+  if (nextObjects.length === document.objects.length) {
+    return document
+  }
+  return {
+    ...document,
+    objects: nextObjects,
+  }
+}
+
+function restoreRemovedObjects(
+  document: DocumentModel,
+  removed: Array<{ object: CanvasObject; index: number }>
+): DocumentModel {
+  if (removed.length === 0) {
+    return document
+  }
+  const rebuilt = [...document.objects]
+  const sorted = [...removed].sort((a, b) => a.index - b.index)
+  for (const entry of sorted) {
+    rebuilt.splice(entry.index, 0, entry.object)
+  }
+  return {
+    ...document,
+    objects: rebuilt,
+  }
+}
+
+function cleanupEmptyGroups(document: DocumentModel): DocumentModel {
+  return removeObjectsById(document, getEmptyGroupIds(document))
+}
+
+function createEmptyGroupCleanupCommand(document: DocumentModel): Command<DocumentModel> | null {
+  const emptyGroupIds = getEmptyGroupIds(document)
+  if (emptyGroupIds.length === 0) {
+    return null
+  }
+  const removed = captureRemovedObjects(document, emptyGroupIds)
+  if (removed.length === 0) {
+    return null
+  }
+  return {
+    label: 'Delete objects',
+    execute: (state) => removeObjectsById(state, emptyGroupIds),
+    undo: (state) => restoreRemovedObjects(state, removed),
+  }
+}
+
+function normalizeUiStateForDocument(ui: UiState, document: DocumentModel): UiState {
+  const objectIds = new Set(document.objects.map((object) => object.id))
+  return {
+    ...ui,
+    selectedObjectIds: ui.selectedObjectIds.filter((id) => objectIds.has(id)),
+    activeGroupId: ui.activeGroupId && objectIds.has(ui.activeGroupId) ? ui.activeGroupId : null,
   }
 }
 
@@ -89,11 +217,15 @@ function executeOrQueueCommand(state: EditorState, command: Command<DocumentMode
     }
   }
 
-  const result = executeCommand(state.document, state.history, command)
+  const provisionalState = command.execute(state.document)
+  const cleanupCommand = createEmptyGroupCleanupCommand(provisionalState)
+  const finalCommand = cleanupCommand ? combineCommands(command.label, [command, cleanupCommand]) : command
+  const result = executeCommand(state.document, state.history, finalCommand)
   return {
     ...state,
     document: result.state,
     history: result.history,
+    ui: normalizeUiStateForDocument(state.ui, result.state),
   }
 }
 
@@ -101,6 +233,59 @@ function captureRemovedObjects(document: DocumentModel, objectIds: string[]) {
   return document.objects
     .map((object, index) => ({ object, index }))
     .filter((entry) => objectIds.includes(entry.object.id))
+}
+
+function collectObjectIdsForDeletion(document: DocumentModel, objectIds: string[]): string[] {
+  if (objectIds.length === 0) {
+    return []
+  }
+
+  const objectById = new Map(document.objects.map((object) => [object.id, object]))
+  const childrenByParent = new Map<string, string[]>()
+  for (const object of document.objects) {
+    if (!object.parentGroupId) {
+      continue
+    }
+    const children = childrenByParent.get(object.parentGroupId)
+    if (children) {
+      children.push(object.id)
+    } else {
+      childrenByParent.set(object.parentGroupId, [object.id])
+    }
+  }
+
+  const resolved = new Set<string>()
+  const stack = [...new Set(objectIds)]
+
+  while (stack.length > 0) {
+    const nextId = stack.pop()
+    if (!nextId || resolved.has(nextId)) {
+      continue
+    }
+
+    const target = objectById.get(nextId)
+    if (!target) {
+      continue
+    }
+    resolved.add(nextId)
+
+    if (target.type !== 'group') {
+      continue
+    }
+
+    for (const childId of target.groupData.childIds) {
+      if (!resolved.has(childId)) {
+        stack.push(childId)
+      }
+    }
+    for (const childId of childrenByParent.get(target.id) ?? []) {
+      if (!resolved.has(childId)) {
+        stack.push(childId)
+      }
+    }
+  }
+
+  return [...resolved]
 }
 
 function createId() {
@@ -157,7 +342,7 @@ function normalizeSlideForStore(slide: Slide): Slide {
   }
 }
 
-type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation' | 'scalePercent'>
 
 function hasTransformChanged(before: TransformSnapshot, after: TransformSnapshot): boolean {
   return (
@@ -165,7 +350,8 @@ function hasTransformChanged(before: TransformSnapshot, after: TransformSnapshot
     before.y !== after.y ||
     before.w !== after.w ||
     before.h !== after.h ||
-    before.rotation !== after.rotation
+    before.rotation !== after.rotation ||
+    before.scalePercent !== after.scalePercent
   )
 }
 
@@ -176,6 +362,7 @@ function getTransformSnapshot(object: CanvasObject): TransformSnapshot {
     w: object.w,
     h: object.h,
     rotation: object.rotation,
+    scalePercent: object.scalePercent,
   }
 }
 
@@ -260,6 +447,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     get().executeDocumentCommand(command)
   },
 
+  setCanvasSettings: (nextCanvasSettings) => {
+    const beforeCanvas = get().document.canvas
+    const afterCanvas = normalizeCanvasSettings({
+      ...beforeCanvas,
+      ...nextCanvasSettings,
+    })
+    if (JSON.stringify(beforeCanvas) === JSON.stringify(afterCanvas)) {
+      return
+    }
+
+    const command = setCanvasSettingsCommand(beforeCanvas, afterCanvas)
+    get().executeDocumentCommand(command)
+  },
+
   setMode: (mode) =>
     set((state) => ({
       ...state,
@@ -272,7 +473,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   replaceDocument: (document) =>
     set((state) => ({
       ...state,
-      document,
+      document: cleanupEmptyGroups(document),
       history: createEmptyHistory<DocumentModel>(),
       pendingBatch: null,
       ui: {
@@ -353,11 +554,18 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         return { ...state, pendingBatch: null }
       }
 
-      const batchedCommand = combineCommands(state.pendingBatch.label, state.pendingBatch.commands)
+      const cleanupCommand = createEmptyGroupCleanupCommand(state.document)
+      const commands = cleanupCommand
+        ? [...state.pendingBatch.commands, cleanupCommand]
+        : state.pendingBatch.commands
+      const batchedCommand = combineCommands(state.pendingBatch.label, commands)
+      const nextDocument = cleanupCommand ? cleanupCommand.execute(state.document) : state.document
       return {
         ...state,
+        document: nextDocument,
         history: recordExecutedCommand(state.history, batchedCommand),
         pendingBatch: null,
+        ui: normalizeUiStateForDocument(state.ui, nextDocument),
       }
     }),
 
@@ -382,6 +590,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ...state,
         document: result.state,
         history: result.history,
+        ui: normalizeUiStateForDocument(state.ui, result.state),
       }
     }),
 
@@ -392,6 +601,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ...state,
         document: result.state,
         history: result.history,
+        ui: normalizeUiStateForDocument(state.ui, result.state),
       }
     }),
 
@@ -405,6 +615,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     get().executeDocumentCommand(command)
   },
 
+  deleteAsset: (assetId: string) => {
+    const assets = get().document.assets
+    const index = assets.findIndex((entry) => entry.id === assetId)
+    if (index < 0) {
+      return
+    }
+    const command = deleteAssetCommand(assetId, { asset: assets[index], index })
+    get().executeDocumentCommand(command)
+  },
+
   moveObject: (objectId, next) => {
     const objects = get().document.objects
     const selectedIds = new Set(get().ui.selectedObjectIds)
@@ -413,17 +633,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (!target) {
       return
     }
+    const normalizedNext: TransformSnapshot = {
+      ...next,
+      scalePercent: next.scalePercent ?? target.scalePercent,
+    }
 
     const currentTransforms = new Map<string, TransformSnapshot>(
       objects.map((entry) => [entry.id, getTransformSnapshot(entry)])
     )
-    currentTransforms.set(objectId, next)
+    currentTransforms.set(objectId, normalizedNext)
 
     const commandEntries: Array<{ id: string; before: TransformSnapshot; after: TransformSnapshot }> =
       []
     const movedBefore = getTransformSnapshot(target)
-    if (hasTransformChanged(movedBefore, next)) {
-      commandEntries.push({ id: objectId, before: movedBefore, after: next })
+    if (hasTransformChanged(movedBefore, normalizedNext)) {
+      commandEntries.push({ id: objectId, before: movedBefore, after: normalizedNext })
     }
 
     const ancestorIds: string[] = []
@@ -458,6 +682,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         w: Math.max(20, aggregate.maxX - aggregate.minX),
         h: Math.max(20, aggregate.maxY - aggregate.minY),
         rotation: currentTransforms.get(groupId)?.rotation ?? group.rotation,
+        scalePercent: group.scalePercent,
       }
 
       currentTransforms.set(groupId, after)
@@ -477,16 +702,17 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return
     }
 
-    const removed = captureRemovedObjects(get().document, objectIds)
+    const idsToDelete = collectObjectIdsForDeletion(get().document, objectIds)
+    const removed = captureRemovedObjects(get().document, idsToDelete)
     if (removed.length === 0) {
       return
     }
 
-    const command = deleteObjectsCommand(objectIds, removed)
+    const command = deleteObjectsCommand(idsToDelete, removed)
     get().executeDocumentCommand(command)
 
     const selectedSet = new Set(get().ui.selectedObjectIds)
-    const hasRemovedSelected = objectIds.some((id) => selectedSet.has(id))
+    const hasRemovedSelected = idsToDelete.some((id) => selectedSet.has(id))
     if (hasRemovedSelected) {
       get().clearSelection()
     }
@@ -516,6 +742,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     get().executeDocumentCommand(command)
   },
 
+  setObjectKeepAspectRatio: (objectId, locked) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target) {
+      return
+    }
+
+    const beforeLocked = target.keepAspectRatio
+    if (beforeLocked === locked) {
+      return
+    }
+
+    const command = setObjectKeepAspectRatioCommand(objectId, beforeLocked, locked)
+    get().executeDocumentCommand(command)
+  },
+
   setImageData: (objectId, imageData: ImageData) => {
     const target = get().document.objects.find((entry) => entry.id === objectId)
     if (!target || target.type !== 'image') {
@@ -523,6 +764,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     const command = setImageDataCommand(objectId, target.imageData, imageData)
+    get().executeDocumentCommand(command)
+  },
+
+  setVideoData: (objectId, videoData: VideoData) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target || target.type !== 'video') {
+      return
+    }
+
+    const command = setVideoDataCommand(objectId, target.videoData, videoData)
+    get().executeDocumentCommand(command)
+  },
+
+  setSoundData: (objectId, soundData: SoundData) => {
+    const target = get().document.objects.find((entry) => entry.id === objectId)
+    if (!target || target.type !== 'sound') {
+      return
+    }
+
+    const command = setSoundDataCommand(objectId, target.soundData, soundData)
     get().executeDocumentCommand(command)
   },
 
@@ -538,10 +799,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setShapeOpacity: (objectId, opacityPercent) => {
     const target = get().document.objects.find((entry) => entry.id === objectId)
-    if (
-      !target ||
-      (target.type !== 'shape_rect' && target.type !== 'shape_circle' && target.type !== 'shape_arrow')
-    ) {
+    if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
       return
     }
 
@@ -556,10 +814,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setShapeData: (objectId, shapeData: ShapeData) => {
     const target = get().document.objects.find((entry) => entry.id === objectId)
-    if (
-      !target ||
-      (target.type !== 'shape_rect' && target.type !== 'shape_circle' && target.type !== 'shape_arrow')
-    ) {
+    if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
       return
     }
 
@@ -609,6 +864,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       w: Math.max(20, bounds.maxX - bounds.minX),
       h: Math.max(20, bounds.maxY - bounds.minY),
       rotation: 0,
+      scalePercent: 100,
+      keepAspectRatio: false,
       locked: false,
       zIndex: nextZIndex,
       parentGroupId: null,

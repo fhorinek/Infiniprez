@@ -1,0 +1,97 @@
+{
+  "id": "timeline",
+  "name": "Timeline",
+  "description": "Three-stage sequence layout.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": -260,
+        "w": 780,
+        "h": 120
+      },
+      "prompt": "Timeline title"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": 0,
+        "y": 30,
+        "w": 1100,
+        "h": 10
+      },
+      "shapeData": {
+        "fillColor": "theme.border",
+        "borderColor": "theme.border",
+        "borderWidth": 0,
+        "radius": 999
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -360,
+        "y": 180,
+        "w": 300,
+        "h": 260
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 180,
+        "w": 300,
+        "h": 260
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 360,
+        "y": 180,
+        "w": 300,
+        "h": 260
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -360,
+        "y": 175,
+        "w": 220,
+        "h": 180
+      },
+      "prompt": "Step 1"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": 175,
+        "w": 220,
+        "h": 180
+      },
+      "prompt": "Step 2"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 360,
+        "y": 175,
+        "w": 220,
+        "h": 180
+      },
+      "prompt": "Step 3"
+    }
+  ]
+}

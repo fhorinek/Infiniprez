@@ -1,0 +1,36 @@
+{
+  "id": "slate-light",
+  "name": "Curve Light",
+  "inspiration": "Clean curved business layout",
+  "fontFamily": "Trebuchet MS",
+  "canvasBackground": "linear-gradient(145deg, #f8fbff 0%, #edf3fa 56%, #e4ecf7 100%)",
+  "text": {
+    "primary": "#182a44",
+    "secondary": "#314c71",
+    "muted": "#60799f",
+    "accent": "#3468b6"
+  },
+  "objects": {
+    "foregroundFill": "#2f68ba",
+    "foregroundBorder": "#1e4e93",
+    "foregroundText": "#f5f9ff",
+    "backgroundFill": "#ffffff",
+    "backgroundBorder": "#a8bfdc",
+    "backgroundText": "#1d3658",
+    "accentFill": "#4f86d8",
+    "accentBorder": "#2e5ea7",
+    "accentText": "#f8fbff",
+    "mutedFill": "#e8eff8",
+    "mutedBorder": "#b8cbe2",
+    "mutedText": "#3d5b85",
+    "highlightFill": "#d7e7ff",
+    "highlightBorder": "#85abde",
+    "highlightText": "#183156"
+  },
+  "assets": {
+    "imageBorder": "#6e93c7",
+    "videoBorder": "#6e93c7",
+    "audioBorder": "#6e93c7",
+    "iconTint": "#2f5ea5"
+  }
+}

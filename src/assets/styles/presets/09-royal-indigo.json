@@ -1,0 +1,36 @@
+{
+  "id": "royal-indigo",
+  "name": "Royal Glow",
+  "inspiration": "High-impact keynote with glow accents",
+  "fontFamily": "Arial",
+  "canvasBackground": "radial-gradient(circle at 20% 18%, #2f2f8e 0%, #1f235e 45%, #0c1030 100%)",
+  "text": {
+    "primary": "#f0f1ff",
+    "secondary": "#ccd0f6",
+    "muted": "#9ca6d9",
+    "accent": "#a9b3ff"
+  },
+  "objects": {
+    "foregroundFill": "#4d57c1",
+    "foregroundBorder": "#c7cffd",
+    "foregroundText": "#f6f8ff",
+    "backgroundFill": "#212a65",
+    "backgroundBorder": "#8190dd",
+    "backgroundText": "#e7ebff",
+    "accentFill": "#6b74de",
+    "accentBorder": "#d9ddff",
+    "accentText": "#f8f9ff",
+    "mutedFill": "#323d89",
+    "mutedBorder": "#6e7ec2",
+    "mutedText": "#c6cef4",
+    "highlightFill": "#8993ef",
+    "highlightBorder": "#e4e8ff",
+    "highlightText": "#f8f9ff"
+  },
+  "assets": {
+    "imageBorder": "#b8c1ff",
+    "videoBorder": "#b8c1ff",
+    "audioBorder": "#b8c1ff",
+    "iconTint": "#d2d9ff"
+  }
+}

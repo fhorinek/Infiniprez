@@ -1,0 +1,36 @@
+{
+  "id": "ember-note",
+  "name": "Candy Ember",
+  "inspiration": "Warm, rounded showcase composition",
+  "fontFamily": "Georgia",
+  "canvasBackground": "linear-gradient(140deg, #351a23 0%, #7a2f3d 50%, #cb6a4f 100%)",
+  "text": {
+    "primary": "#fff5ef",
+    "secondary": "#ffd9c8",
+    "muted": "#f5b49e",
+    "accent": "#ffd18a"
+  },
+  "objects": {
+    "foregroundFill": "#d77755",
+    "foregroundBorder": "#ffd3a8",
+    "foregroundText": "#fffaf6",
+    "backgroundFill": "#682836",
+    "backgroundBorder": "#e2a384",
+    "backgroundText": "#ffece2",
+    "accentFill": "#e9a14f",
+    "accentBorder": "#ffe2bb",
+    "accentText": "#fffaf3",
+    "mutedFill": "#874052",
+    "mutedBorder": "#c78673",
+    "mutedText": "#ffd8c7",
+    "highlightFill": "#f2bf72",
+    "highlightBorder": "#ffe7c5",
+    "highlightText": "#fffaf1"
+  },
+  "assets": {
+    "imageBorder": "#ffc58f",
+    "videoBorder": "#ffc58f",
+    "audioBorder": "#ffc58f",
+    "iconTint": "#ffe0be"
+  }
+}

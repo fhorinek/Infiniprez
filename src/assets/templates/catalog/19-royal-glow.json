@@ -1,0 +1,93 @@
+{
+  "id": "royal-glow",
+  "name": "Royal Glow",
+  "description": "Glow accents with center-stage keynote messaging.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_circle",
+      "frame": {
+        "x": -560,
+        "y": -250,
+        "w": 280,
+        "h": 280
+      },
+      "shapeData": {
+        "fillColor": {
+          "blend": {
+            "a": "theme.highlight",
+            "b": "#ffffff",
+            "mix": 0.1
+          }
+        },
+        "borderColor": "theme.highlight",
+        "borderWidth": 0
+      }
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_circle",
+      "frame": {
+        "x": 590,
+        "y": 250,
+        "w": 320,
+        "h": 320
+      },
+      "shapeData": {
+        "fillColor": {
+          "blend": {
+            "a": "theme.accentSoft",
+            "b": "#ffffff",
+            "mix": 0.14
+          }
+        },
+        "borderColor": "theme.accentSoft",
+        "borderWidth": 0
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1320,
+        "h": 680
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": -230,
+        "w": 980,
+        "h": 150
+      },
+      "prompt": "Headline"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": -70,
+        "w": 860,
+        "h": 90
+      },
+      "prompt": "Subheading"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": 165,
+        "w": 760,
+        "h": 290
+      },
+      "prompt": "Key messages"
+    }
+  ]
+}

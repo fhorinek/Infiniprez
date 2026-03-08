@@ -1,0 +1,119 @@
+{
+  "id": "sand-honey",
+  "name": "Honey Editorial",
+  "description": "Hex accents for clean editorial storytelling.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1400,
+        "h": 720
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": -250,
+        "w": 700,
+        "h": 130
+      },
+      "prompt": "Editorial title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": -120,
+        "w": 620,
+        "h": 92
+      },
+      "prompt": "Description"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": 140,
+        "w": 620,
+        "h": 360
+      },
+      "prompt": "Main points"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 340,
+        "y": 90,
+        "w": 600,
+        "h": 470
+      },
+      "prompt": "Image or video"
+    },
+    {
+      "kind": "repeat",
+      "count": 7,
+      "step": {
+        "x": 160
+      },
+      "node": {
+        "kind": "shape",
+        "shapeType": "shape_rect",
+        "frame": {
+          "x": -600,
+          "y": -365,
+          "w": 110,
+          "h": 72
+        },
+        "shapeData": {
+          "kind": "hexagon",
+          "fillColor": {
+            "blend": {
+              "a": "theme.accentSoft",
+              "b": "theme.surface",
+              "mix": 0.35
+            }
+          },
+          "borderColor": "theme.accent",
+          "borderWidth": 1
+        }
+      }
+    },
+    {
+      "kind": "repeat",
+      "count": 7,
+      "step": {
+        "x": 160
+      },
+      "node": {
+        "kind": "shape",
+        "shapeType": "shape_rect",
+        "frame": {
+          "x": -600,
+          "y": 360,
+          "w": 110,
+          "h": 72
+        },
+        "shapeData": {
+          "kind": "hexagon",
+          "fillColor": {
+            "blend": {
+              "a": "theme.accentSoft",
+              "b": "theme.surface",
+              "mix": 0.35
+            }
+          },
+          "borderColor": "theme.accent",
+          "borderWidth": 1
+        }
+      }
+    }
+  ]
+}

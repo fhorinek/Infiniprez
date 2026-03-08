@@ -3,6 +3,7 @@ import { CURRENT_SCHEMA_VERSION, DEFAULT_CANVAS_BACKGROUND, type DocumentModel }
 
 const nonEmptyStringSchema = z.string().trim().min(1)
 const idSchema = nonEmptyStringSchema
+const MAX_OBJECT_RADIUS_PX = 1000000
 const isoTimestampSchema = z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
   message: 'Expected ISO timestamp',
 })
@@ -70,6 +71,7 @@ const textboxDataSchema = z
     richTextHtml: z.string(),
     fontFamily: nonEmptyStringSchema,
     alignment: z.enum(['left', 'center', 'right']),
+    verticalAlignment: z.enum(['top', 'middle', 'bottom']).default('top'),
     listType: z.enum(['none', 'bullet', 'numbered']),
     autoHeight: z.boolean(),
     fillMode: z.enum(['solid', 'linearGradient']).default('solid'),
@@ -78,6 +80,7 @@ const textboxDataSchema = z
     borderColor: colorSchema.default('#b2c6ee'),
     borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
     borderWidth: z.number().min(0).max(20).default(1),
+    radius: z.number().min(0).max(MAX_OBJECT_RADIUS_PX).default(0),
     opacityPercent: z.number().min(0).max(100).default(100),
     shadowColor: colorSchema.default('#000000'),
     shadowBlurPx: z.number().min(0).max(200).default(0),
@@ -105,11 +108,10 @@ const imageDataSchema = z.object({
   assetId: idSchema,
   intrinsicWidth: z.number().positive(),
   intrinsicHeight: z.number().positive(),
-  keepAspectRatio: z.boolean(),
   borderColor: colorSchema.default('#b2c6ee'),
   borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
   borderWidth: z.number().min(0).max(20).default(0),
-  radius: z.number().min(0).max(1000).default(0),
+  radius: z.number().min(0).max(MAX_OBJECT_RADIUS_PX).default(0),
   opacityPercent: z.number().min(0).max(100).default(100),
   cropEnabled: z.boolean().default(false),
   cropLeftPercent: z.number().min(0).max(100).default(0),
@@ -125,15 +127,59 @@ const imageDataSchema = z.object({
   shadowAngleDeg: z.number().min(-180).max(180).default(45),
 })
 
+const videoDataSchema = z.object({
+  assetId: idSchema,
+  intrinsicWidth: z.number().positive(),
+  intrinsicHeight: z.number().positive(),
+  borderColor: colorSchema.default('#b2c6ee'),
+  borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderWidth: z.number().min(0).max(20).default(0),
+  radius: z.number().min(0).max(MAX_OBJECT_RADIUS_PX).default(0),
+  opacityPercent: z.number().min(0).max(100).default(100),
+  autoplay: z.boolean().default(false),
+  loop: z.boolean().default(true),
+  muted: z.boolean().default(true),
+  shadowColor: colorSchema.default('#000000'),
+  shadowBlurPx: z.number().min(0).max(200).default(0),
+  shadowAngleDeg: z.number().min(-180).max(180).default(45),
+})
+
+const soundDataSchema = z.object({
+  assetId: idSchema,
+  borderColor: colorSchema.default('#b2c6ee'),
+  borderType: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderWidth: z.number().min(0).max(20).default(0),
+  radius: z.number().min(0).max(MAX_OBJECT_RADIUS_PX).default(18),
+  opacityPercent: z.number().min(0).max(100).default(100),
+  loop: z.boolean().default(false),
+  shadowColor: colorSchema.default('#000000'),
+  shadowBlurPx: z.number().min(0).max(200).default(0),
+  shadowAngleDeg: z.number().min(-180).max(180).default(45),
+})
+
 const shapeDataSchema = z
   .object({
+    kind: z.enum([
+      'rect',
+      'roundedRect',
+      'diamond',
+      'triangle',
+      'trapezoid',
+      'parallelogram',
+      'hexagon',
+      'pentagon',
+      'octagon',
+      'star',
+      'cloud',
+    ]),
+    adjustmentPercent: z.number().min(0).max(100),
     borderColor: colorSchema,
     borderType: z.enum(['solid', 'dashed', 'dotted']),
     borderWidth: z.number().min(0).max(20),
     fillMode: z.enum(['solid', 'linearGradient']),
     fillColor: colorSchema,
     fillGradient: fillGradientSchema.nullable(),
-    radius: z.number().min(0).max(1000).default(0),
+    radius: z.number().min(0).max(MAX_OBJECT_RADIUS_PX).default(0),
     opacityPercent: z.number().min(0).max(100),
     shadowColor: colorSchema.default('#000000'),
     shadowBlurPx: z.number().min(0).max(200).default(0),
@@ -168,6 +214,11 @@ const groupDataSchema = z.object({
   }),
 })
 
+const templatePlaceholderDataSchema = z.object({
+  kind: z.enum(['universal', 'text', 'list', 'image']),
+  prompt: nonEmptyStringSchema,
+})
+
 const baseObjectSchema = z.object({
   id: idSchema,
   x: z.number(),
@@ -175,6 +226,8 @@ const baseObjectSchema = z.object({
   w: z.number().positive(),
   h: z.number().positive(),
   rotation: z.number(),
+  scalePercent: z.number().positive().default(100),
+  keepAspectRatio: z.boolean().default(false),
   locked: z.boolean(),
   zIndex: z.number().int(),
   parentGroupId: idSchema.nullable(),
@@ -190,6 +243,16 @@ const imageObjectSchema = baseObjectSchema.extend({
   imageData: imageDataSchema,
 })
 
+const videoObjectSchema = baseObjectSchema.extend({
+  type: z.literal('video'),
+  videoData: videoDataSchema,
+})
+
+const soundObjectSchema = baseObjectSchema.extend({
+  type: z.literal('sound'),
+  soundData: soundDataSchema,
+})
+
 const shapeRectObjectSchema = baseObjectSchema.extend({
   type: z.literal('shape_rect'),
   shapeData: shapeDataSchema,
@@ -200,14 +263,14 @@ const shapeCircleObjectSchema = baseObjectSchema.extend({
   shapeData: shapeDataSchema,
 })
 
-const shapeArrowObjectSchema = baseObjectSchema.extend({
-  type: z.literal('shape_arrow'),
-  shapeData: shapeDataSchema,
-})
-
 const groupObjectSchema = baseObjectSchema.extend({
   type: z.literal('group'),
   groupData: groupDataSchema,
+})
+
+const templatePlaceholderObjectSchema = baseObjectSchema.extend({
+  type: z.literal('template_placeholder'),
+  templatePlaceholderData: templatePlaceholderDataSchema,
 })
 
 const slideSchema = z
@@ -242,6 +305,9 @@ const assetSchema = z.object({
   name: nonEmptyStringSchema,
   mimeType: nonEmptyStringSchema,
   dataBase64: nonEmptyStringSchema,
+  intrinsicWidth: z.number().positive().nullable().optional(),
+  intrinsicHeight: z.number().positive().nullable().optional(),
+  durationSec: z.number().nonnegative().nullable().optional(),
 })
 
 export const documentSchema = z.object({
@@ -264,9 +330,11 @@ export const documentSchema = z.object({
     z.discriminatedUnion('type', [
       textboxObjectSchema,
       imageObjectSchema,
+      videoObjectSchema,
+      soundObjectSchema,
       shapeRectObjectSchema,
       shapeCircleObjectSchema,
-      shapeArrowObjectSchema,
+      templatePlaceholderObjectSchema,
       groupObjectSchema,
     ])
   ),

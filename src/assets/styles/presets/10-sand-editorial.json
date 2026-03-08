@@ -1,0 +1,36 @@
+{
+  "id": "sand-editorial",
+  "name": "Honey Editorial",
+  "inspiration": "Clean honeycomb-inspired publication look",
+  "fontFamily": "Georgia",
+  "canvasBackground": "linear-gradient(160deg, #f6f0e6 0%, #ebe1d2 54%, #dfd0bd 100%)",
+  "text": {
+    "primary": "#2d241d",
+    "secondary": "#4d3e33",
+    "muted": "#7b6554",
+    "accent": "#8e6448"
+  },
+  "objects": {
+    "foregroundFill": "#91674a",
+    "foregroundBorder": "#5f412f",
+    "foregroundText": "#fffaf6",
+    "backgroundFill": "#fff8ee",
+    "backgroundBorder": "#c9b199",
+    "backgroundText": "#372a21",
+    "accentFill": "#b78462",
+    "accentBorder": "#7b563f",
+    "accentText": "#fff9f5",
+    "mutedFill": "#e7d8c7",
+    "mutedBorder": "#bda28a",
+    "mutedText": "#5a4536",
+    "highlightFill": "#f1e1d1",
+    "highlightBorder": "#987259",
+    "highlightText": "#392a20"
+  },
+  "assets": {
+    "imageBorder": "#9b7358",
+    "videoBorder": "#9b7358",
+    "audioBorder": "#9b7358",
+    "iconTint": "#7f5c45"
+  }
+}

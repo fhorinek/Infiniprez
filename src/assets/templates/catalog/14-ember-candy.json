@@ -1,0 +1,103 @@
+{
+  "id": "ember-candy",
+  "name": "Candy Focus",
+  "description": "Rounded warm card style for product highlights.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_circle",
+      "frame": {
+        "x": -660,
+        "y": -290,
+        "w": 230,
+        "h": 230
+      },
+      "shapeData": {
+        "fillColor": {
+          "blend": {
+            "a": "theme.accentSoft",
+            "b": "#ffffff",
+            "mix": 0.2
+          }
+        },
+        "borderColor": "theme.accentSoft",
+        "borderWidth": 0
+      }
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_circle",
+      "frame": {
+        "x": 640,
+        "y": 260,
+        "w": 280,
+        "h": 280
+      },
+      "shapeData": {
+        "fillColor": {
+          "blend": {
+            "a": "theme.accent",
+            "b": "#ffffff",
+            "mix": 0.18
+          }
+        },
+        "borderColor": "theme.accent",
+        "borderWidth": 0
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 20,
+        "w": 1260,
+        "h": 640
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": -230,
+        "w": 740,
+        "h": 130
+      },
+      "prompt": "Warm title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": -105,
+        "w": 620,
+        "h": 95
+      },
+      "prompt": "Intro text"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -390,
+        "y": 140,
+        "w": 560,
+        "h": 360
+      },
+      "prompt": "Story bullets"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 315,
+        "y": 80,
+        "w": 620,
+        "h": 470
+      },
+      "prompt": "Feature image"
+    }
+  ]
+}

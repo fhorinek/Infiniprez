@@ -1,0 +1,51 @@
+{
+  "id": "closing-cta",
+  "name": "Closing CTA",
+  "description": "Closing message and action prompt.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1220,
+        "h": 560
+      },
+      "variant": "accent"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": -80,
+        "w": 900,
+        "h": 160
+      },
+      "prompt": "Closing title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": 100,
+        "w": 780,
+        "h": 140
+      },
+      "prompt": "Closing message"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": 260,
+        "w": 620,
+        "h": 140
+      },
+      "prompt": "Action points"
+    }
+  ]
+}

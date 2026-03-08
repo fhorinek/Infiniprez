@@ -1,0 +1,36 @@
+{
+  "id": "forest-brief",
+  "name": "Forest Path",
+  "inspiration": "Organic blocks with grounded accents",
+  "fontFamily": "Tahoma",
+  "canvasBackground": "radial-gradient(circle at 20% 20%, #2a4f3f 0%, #183126 45%, #0b1811 100%)",
+  "text": {
+    "primary": "#eff9f0",
+    "secondary": "#d0e8d3",
+    "muted": "#99c4a2",
+    "accent": "#8ed7a3"
+  },
+  "objects": {
+    "foregroundFill": "#3f7a5f",
+    "foregroundBorder": "#b4e6c4",
+    "foregroundText": "#f4fff5",
+    "backgroundFill": "#1d3a2b",
+    "backgroundBorder": "#7db79a",
+    "backgroundText": "#e2f6e8",
+    "accentFill": "#5fae79",
+    "accentBorder": "#c6f0d1",
+    "accentText": "#f7fff9",
+    "mutedFill": "#2f5543",
+    "mutedBorder": "#6e9a81",
+    "mutedText": "#c2e3cc",
+    "highlightFill": "#7ecb97",
+    "highlightBorder": "#d8f5df",
+    "highlightText": "#f7fff8"
+  },
+  "assets": {
+    "imageBorder": "#afe2bf",
+    "videoBorder": "#afe2bf",
+    "audioBorder": "#afe2bf",
+    "iconTint": "#cdeed5"
+  }
+}

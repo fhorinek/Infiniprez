@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Slide } from '../model'
 import {
+  isBackwardPresentationKey,
+  isForwardPresentationKey,
+  PRESENTATION_BACKWARD_KEYS,
+  PRESENTATION_FORWARD_KEYS,
   resolveTransitionDurationMs,
   resolveTransitionProgress,
   shouldAutoAdvanceSlide,
@@ -43,5 +47,14 @@ describe('slide timing and transition selection', () => {
     expect(shouldAutoAdvanceSlide(createSlide({ triggerMode: 'timed' }), 0, 3)).toBe(true)
     expect(shouldAutoAdvanceSlide(createSlide({ triggerMode: 'timed' }), 2, 3)).toBe(false)
     expect(shouldAutoAdvanceSlide(null, 0, 3)).toBe(false)
+  })
+
+  it('shares presentation keyboard bindings', () => {
+    expect(PRESENTATION_FORWARD_KEYS).toContain('ArrowRight')
+    expect(PRESENTATION_FORWARD_KEYS).toContain(' ')
+    expect(PRESENTATION_BACKWARD_KEYS).toContain('ArrowLeft')
+    expect(isForwardPresentationKey('PageDown')).toBe(true)
+    expect(isBackwardPresentationKey('PageUp')).toBe(true)
+    expect(isForwardPresentationKey('Escape')).toBe(false)
   })
 })

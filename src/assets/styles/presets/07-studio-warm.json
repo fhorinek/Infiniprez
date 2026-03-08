@@ -1,0 +1,36 @@
+{
+  "id": "studio-warm",
+  "name": "Studio Focus",
+  "inspiration": "Warm editorial with geometric corners",
+  "fontFamily": "Trebuchet MS",
+  "canvasBackground": "linear-gradient(150deg, #f8efe6 0%, #f4dfcf 48%, #e8c6a7 100%)",
+  "text": {
+    "primary": "#2e211a",
+    "secondary": "#584034",
+    "muted": "#876452",
+    "accent": "#b35d3b"
+  },
+  "objects": {
+    "foregroundFill": "#c36d47",
+    "foregroundBorder": "#844a31",
+    "foregroundText": "#fff8f3",
+    "backgroundFill": "#fff7ef",
+    "backgroundBorder": "#d6b69f",
+    "backgroundText": "#3b2a20",
+    "accentFill": "#d3875e",
+    "accentBorder": "#9e5838",
+    "accentText": "#fff8f2",
+    "mutedFill": "#efd9c8",
+    "mutedBorder": "#cda98e",
+    "mutedText": "#604332",
+    "highlightFill": "#f4dfcc",
+    "highlightBorder": "#b7744d",
+    "highlightText": "#3a281d"
+  },
+  "assets": {
+    "imageBorder": "#b8764f",
+    "videoBorder": "#b8764f",
+    "audioBorder": "#b8764f",
+    "iconTint": "#9a5636"
+  }
+}

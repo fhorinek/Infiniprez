@@ -1,17 +1,20 @@
 import { produce } from 'immer'
 import type { Command } from './types'
 import type {
+  CanvasSettings,
   CanvasObject,
   DocumentModel,
   ImageData,
   LayerOrderAction,
   ShapeData,
   Slide,
+  SoundData,
   TextboxData,
+  VideoData,
   ZIndexSnapshot,
 } from '../model'
 
-type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation' | 'scalePercent'>
 type SlideOrderSnapshot = Record<string, number>
 
 function withUpdatedTimestamp(document: DocumentModel): DocumentModel {
@@ -51,7 +54,9 @@ export function createAssetCommand(asset: DocumentModel['assets'][number]): Comm
     execute: (state) =>
       withUpdatedTimestamp(
         produce(state, (draft) => {
-          const exists = draft.assets.some((entry) => entry.id === asset.id)
+          const exists = draft.assets.some(
+            (entry) => entry.id === asset.id || entry.dataBase64 === asset.dataBase64
+          )
           if (!exists) {
             draft.assets.push(asset)
           }
@@ -61,6 +66,29 @@ export function createAssetCommand(asset: DocumentModel['assets'][number]): Comm
       withUpdatedTimestamp(
         produce(state, (draft) => {
           draft.assets = draft.assets.filter((entry) => entry.id !== asset.id)
+        })
+      ),
+  }
+}
+
+export function deleteAssetCommand(
+  assetId: string,
+  removed: { asset: DocumentModel['assets'][number]; index: number }
+): Command<DocumentModel> {
+  return {
+    label: 'Delete asset',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.assets = draft.assets.filter((entry) => entry.id !== assetId)
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const rebuilt = [...draft.assets]
+          rebuilt.splice(removed.index, 0, removed.asset)
+          draft.assets = rebuilt
         })
       ),
   }
@@ -113,6 +141,7 @@ export function moveObjectCommand(
           target.w = after.w
           target.h = after.h
           target.rotation = after.rotation
+          target.scalePercent = after.scalePercent
         })
       ),
     undo: (state) =>
@@ -127,6 +156,7 @@ export function moveObjectCommand(
           target.w = before.w
           target.h = before.h
           target.rotation = before.rotation
+          target.scalePercent = before.scalePercent
         })
       ),
   }
@@ -275,6 +305,36 @@ export function setObjectLockCommand(
   }
 }
 
+export function setObjectKeepAspectRatioCommand(
+  objectId: string,
+  beforeLocked: boolean,
+  afterLocked: boolean
+): Command<DocumentModel> {
+  return {
+    label: afterLocked ? 'Lock aspect ratio' : 'Unlock aspect ratio',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target) {
+            return
+          }
+          target.keepAspectRatio = afterLocked
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target) {
+            return
+          }
+          target.keepAspectRatio = beforeLocked
+        })
+      ),
+  }
+}
+
 export function setCanvasBackgroundCommand(
   beforeBackground: string,
   afterBackground: string
@@ -296,6 +356,27 @@ export function setCanvasBackgroundCommand(
   }
 }
 
+export function setCanvasSettingsCommand(
+  beforeCanvas: CanvasSettings,
+  afterCanvas: CanvasSettings
+): Command<DocumentModel> {
+  return {
+    label: 'Update canvas settings',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.canvas = { ...afterCanvas }
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          draft.canvas = { ...beforeCanvas }
+        })
+      ),
+  }
+}
+
 export function setShapeOpacityCommand(
   objectId: string,
   beforeOpacityPercent: number,
@@ -307,12 +388,7 @@ export function setShapeOpacityCommand(
       withUpdatedTimestamp(
         produce(state, (draft) => {
           const target = draft.objects.find((entry) => entry.id === objectId)
-          if (
-            !target ||
-            (target.type !== 'shape_rect' &&
-              target.type !== 'shape_circle' &&
-              target.type !== 'shape_arrow')
-          ) {
+          if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
             return
           }
           target.shapeData.opacityPercent = afterOpacityPercent
@@ -322,12 +398,7 @@ export function setShapeOpacityCommand(
       withUpdatedTimestamp(
         produce(state, (draft) => {
           const target = draft.objects.find((entry) => entry.id === objectId)
-          if (
-            !target ||
-            (target.type !== 'shape_rect' &&
-              target.type !== 'shape_circle' &&
-              target.type !== 'shape_arrow')
-          ) {
+          if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
             return
           }
           target.shapeData.opacityPercent = beforeOpacityPercent
@@ -347,12 +418,7 @@ export function setShapeDataCommand(
       withUpdatedTimestamp(
         produce(state, (draft) => {
           const target = draft.objects.find((entry) => entry.id === objectId)
-          if (
-            !target ||
-            (target.type !== 'shape_rect' &&
-              target.type !== 'shape_circle' &&
-              target.type !== 'shape_arrow')
-          ) {
+          if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
             return
           }
           target.shapeData = afterShapeData
@@ -362,12 +428,7 @@ export function setShapeDataCommand(
       withUpdatedTimestamp(
         produce(state, (draft) => {
           const target = draft.objects.find((entry) => entry.id === objectId)
-          if (
-            !target ||
-            (target.type !== 'shape_rect' &&
-              target.type !== 'shape_circle' &&
-              target.type !== 'shape_arrow')
-          ) {
+          if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
             return
           }
           target.shapeData = beforeShapeData
@@ -431,6 +492,66 @@ export function setImageDataCommand(
             return
           }
           target.imageData = beforeImageData
+        })
+      ),
+  }
+}
+
+export function setVideoDataCommand(
+  objectId: string,
+  beforeVideoData: VideoData,
+  afterVideoData: VideoData
+): Command<DocumentModel> {
+  return {
+    label: 'Update video',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'video') {
+            return
+          }
+          target.videoData = afterVideoData
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'video') {
+            return
+          }
+          target.videoData = beforeVideoData
+        })
+      ),
+  }
+}
+
+export function setSoundDataCommand(
+  objectId: string,
+  beforeSoundData: SoundData,
+  afterSoundData: SoundData
+): Command<DocumentModel> {
+  return {
+    label: 'Update sound',
+    execute: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'sound') {
+            return
+          }
+          target.soundData = afterSoundData
+        })
+      ),
+    undo: (state) =>
+      withUpdatedTimestamp(
+        produce(state, (draft) => {
+          const target = draft.objects.find((entry) => entry.id === objectId)
+          if (!target || target.type !== 'sound') {
+            return
+          }
+          target.soundData = beforeSoundData
         })
       ),
   }

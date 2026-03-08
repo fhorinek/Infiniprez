@@ -9,9 +9,23 @@ export type TransitionType = 'ease' | 'linear' | 'instant'
 export type BorderType = 'solid' | 'dashed' | 'dotted'
 export type FillMode = 'solid' | 'linearGradient'
 export type GradientType = 'linear' | 'radial' | 'circles'
+export type ShapeKind =
+  | 'rect'
+  | 'roundedRect'
+  | 'diamond'
+  | 'triangle'
+  | 'trapezoid'
+  | 'parallelogram'
+  | 'hexagon'
+  | 'pentagon'
+  | 'octagon'
+  | 'star'
+  | 'cloud'
 export type TextAlignment = 'left' | 'center' | 'right'
+export type TextVerticalAlignment = 'top' | 'middle' | 'bottom'
 export type TextListType = 'none' | 'bullet' | 'numbered'
 export type ImageFilterPreset = 'none' | 'bw' | 'sepia' | 'vibrant' | 'warm' | 'cool' | 'dramatic'
+export type TemplatePlaceholderKind = 'universal' | 'text' | 'list' | 'image'
 
 export interface DocumentMeta {
   version: SchemaVersion
@@ -57,6 +71,7 @@ export interface TextboxData {
   richTextHtml: string
   fontFamily: string
   alignment: TextAlignment
+  verticalAlignment?: TextVerticalAlignment
   listType: TextListType
   autoHeight: boolean
   fillMode: FillMode
@@ -65,6 +80,7 @@ export interface TextboxData {
   borderColor: string
   borderType: BorderType
   borderWidth: number
+  radius: number
   opacityPercent: number
   shadowColor: string
   shadowBlurPx: number
@@ -75,7 +91,6 @@ export interface ImageData {
   assetId: string
   intrinsicWidth: number
   intrinsicHeight: number
-  keepAspectRatio: boolean
   borderColor: string
   borderType: BorderType
   borderWidth: number
@@ -88,6 +103,36 @@ export interface ImageData {
   cropBottomPercent: number
   effectsEnabled: boolean
   filterPreset: ImageFilterPreset
+  shadowColor: string
+  shadowBlurPx: number
+  shadowAngleDeg: number
+}
+
+export interface VideoData {
+  assetId: string
+  intrinsicWidth: number
+  intrinsicHeight: number
+  borderColor: string
+  borderType: BorderType
+  borderWidth: number
+  radius: number
+  opacityPercent: number
+  autoplay: boolean
+  loop: boolean
+  muted: boolean
+  shadowColor: string
+  shadowBlurPx: number
+  shadowAngleDeg: number
+}
+
+export interface SoundData {
+  assetId: string
+  borderColor: string
+  borderType: BorderType
+  borderWidth: number
+  radius: number
+  opacityPercent: number
+  loop: boolean
   shadowColor: string
   shadowBlurPx: number
   shadowAngleDeg: number
@@ -109,6 +154,8 @@ export interface FillGradient {
 }
 
 export interface ShapeData {
+  kind: ShapeKind
+  adjustmentPercent: number
   borderColor: string
   borderType: BorderType
   borderWidth: number
@@ -126,6 +173,11 @@ export interface GroupData {
   childIds: string[]
 }
 
+export interface TemplatePlaceholderData {
+  kind: TemplatePlaceholderKind
+  prompt: string
+}
+
 export interface BaseObject {
   id: string
   x: number
@@ -133,6 +185,8 @@ export interface BaseObject {
   w: number
   h: number
   rotation: number
+  scalePercent: number
+  keepAspectRatio: boolean
   locked: boolean
   zIndex: number
   parentGroupId: string | null
@@ -148,6 +202,16 @@ export interface ImageObject extends BaseObject {
   imageData: ImageData
 }
 
+export interface VideoObject extends BaseObject {
+  type: 'video'
+  videoData: VideoData
+}
+
+export interface SoundObject extends BaseObject {
+  type: 'sound'
+  soundData: SoundData
+}
+
 export interface ShapeRectObject extends BaseObject {
   type: 'shape_rect'
   shapeData: ShapeData
@@ -158,22 +222,24 @@ export interface ShapeCircleObject extends BaseObject {
   shapeData: ShapeData
 }
 
-export interface ShapeArrowObject extends BaseObject {
-  type: 'shape_arrow'
-  shapeData: ShapeData
-}
-
 export interface GroupObject extends BaseObject {
   type: 'group'
   groupData: GroupData
 }
 
+export interface TemplatePlaceholderObject extends BaseObject {
+  type: 'template_placeholder'
+  templatePlaceholderData: TemplatePlaceholderData
+}
+
 export type CanvasObject =
   | TextboxObject
   | ImageObject
+  | VideoObject
+  | SoundObject
   | ShapeRectObject
   | ShapeCircleObject
-  | ShapeArrowObject
+  | TemplatePlaceholderObject
   | GroupObject
 
 export interface Asset {
@@ -181,6 +247,9 @@ export interface Asset {
   name: string
   mimeType: string
   dataBase64: string
+  intrinsicWidth?: number | null
+  intrinsicHeight?: number | null
+  durationSec?: number | null
 }
 
 export interface DocumentModel {

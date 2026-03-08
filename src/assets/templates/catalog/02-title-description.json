@@ -1,0 +1,61 @@
+{
+  "id": "title-description",
+  "name": "Title + Description",
+  "description": "Large title with summary block.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 110,
+        "w": 1180,
+        "h": 470
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": -250,
+        "w": 820,
+        "h": 130
+      },
+      "prompt": "Title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": -90,
+        "w": 760,
+        "h": 120
+      },
+      "prompt": "Subtitle"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": 125,
+        "w": 760,
+        "h": 260
+      },
+      "prompt": "Description points"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 430,
+        "y": 130,
+        "w": 280,
+        "h": 210
+      },
+      "prompt": "Callout"
+    }
+  ]
+}

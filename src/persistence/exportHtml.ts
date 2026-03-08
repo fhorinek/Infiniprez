@@ -1,4 +1,11 @@
 import type { DocumentModel } from '../model'
+import { resolveLibraryAssetKind } from '../assetFile'
+import { buildAssetFontFaceCss, resolveAssetFontFamily } from '../fontAssets'
+import {
+  PRESENTATION_BACKWARD_KEYS,
+  PRESENTATION_FORWARD_KEYS,
+} from '../presentation'
+import { resolveTextboxBaseTextStyle, textboxUsesFontFamily } from '../textboxRichText'
 
 function escapeHtml(value: string): string {
   return value
@@ -9,14 +16,55 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
+function collectExportAssets(document: DocumentModel) {
+  const usedAssetIds = new Set<string>()
+
+  document.objects.forEach((object) => {
+    if (object.type === 'image') {
+      usedAssetIds.add(object.imageData.assetId)
+      return
+    }
+    if (object.type === 'video') {
+      usedAssetIds.add(object.videoData.assetId)
+      return
+    }
+    if (object.type === 'sound') {
+      usedAssetIds.add(object.soundData.assetId)
+      return
+    }
+    if (object.type !== 'textbox') {
+      return
+    }
+    document.assets.forEach((asset) => {
+      if (resolveLibraryAssetKind(asset) !== 'font') {
+        return
+      }
+      if (!textboxUsesFontFamily(object.textboxData, resolveAssetFontFamily(asset))) {
+        return
+      }
+      usedAssetIds.add(asset.id)
+    })
+  })
+
+  return document.assets.filter((asset) => usedAssetIds.has(asset.id))
+}
+
 export function buildPresentationExportHtml(document: DocumentModel): string {
-  const serialized = JSON.stringify(document)
+  const exportAssets = collectExportAssets(document)
+  const exportDocument = {
+    ...document,
+    assets: exportAssets,
+  }
+  const serialized = JSON.stringify(exportDocument)
+  const serializedForwardKeys = JSON.stringify(PRESENTATION_FORWARD_KEYS)
+  const serializedBackwardKeys = JSON.stringify(PRESENTATION_BACKWARD_KEYS)
+  const fontAssetCss = buildAssetFontFaceCss(exportAssets)
   const stageBackground = escapeHtml(
     document.canvas.background || 'radial-gradient(circle at 20% 20%, #1f365a 0%, #0f1523 55%)'
   )
   const serializedAssets = JSON.stringify(
     Object.fromEntries(
-      document.assets.map((asset) => [
+      exportAssets.map((asset) => [
         asset.id,
         {
           name: asset.name,
@@ -26,11 +74,19 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       ])
     )
   )
+  const serializedTextboxBaseStyles = JSON.stringify(
+    Object.fromEntries(
+      document.objects
+        .filter((object) => object.type === 'textbox')
+        .map((object) => [object.id, resolveTextboxBaseTextStyle(object.textboxData)])
+    )
+  )
 
   const runtimeScript = `
 (() => {
   const model = window.__INFINIPREZ_EXPORT__;
   const assetsById = window.__INFINIPREZ_EXPORT_ASSETS__ || {};
+  const textboxBaseStylesById = window.__INFINIPREZ_EXPORT_TEXTBOX_STYLES__ || {};
   const stage = document.getElementById('stage');
   const prevBtn = document.getElementById('prev-slide');
   const nextBtn = document.getElementById('next-slide');
@@ -44,11 +100,14 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   let currentSlideIndex = 0;
   let currentCamera = { x: 0, y: 0, zoom: 1, rotation: 0 };
   let transitionFrame = null;
+  let timedAdvanceTimeout = null;
   let freeMoveEnabled = false;
   let panInteraction = null;
   let wheelNavigateThrottleUntil = 0;
   let fullscreenAttempted = false;
   const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180;
+  const FORWARD_KEYS = ${serializedForwardKeys};
+  const BACKWARD_KEYS = ${serializedBackwardKeys};
 
   const toNumber = (value, fallback) => (Number.isFinite(value) ? value : fallback);
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -69,6 +128,15 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       return clamp(rounded, 0, 10000);
     }
     return clamp(rounded, 1000, 10000);
+  };
+  const shouldAutoAdvanceSlide = (slide, slideIndex, totalSlides) => {
+    if (!slide) {
+      return false;
+    }
+    if (slide.triggerMode !== 'timed') {
+      return false;
+    }
+    return slideIndex >= 0 && slideIndex < totalSlides - 1;
   };
   const interpolateCamera = (start, end, t) => ({
     x: start.x + (end.x - start.x) * t,
@@ -123,6 +191,15 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  const getTemplatePlaceholderBadge = (kind) => {
+    if (kind === 'image') {
+      return 'IMG';
+    }
+    if (kind === 'list') {
+      return 'LIST';
+    }
+    return 'TEXT';
+  };
   const getTextboxHtml = (object) => {
     const stored = String(object?.textboxData?.richTextHtml || '').trim();
     if (stored.length > 0) {
@@ -167,13 +244,29 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       gradientStops.join(', ') + ')';
   };
   const getShapeStyle = (object) => ({
+    kind: [
+      'rect',
+      'roundedRect',
+      'diamond',
+      'triangle',
+      'trapezoid',
+      'parallelogram',
+      'hexagon',
+      'pentagon',
+      'octagon',
+      'star',
+      'cloud',
+    ].includes(String(object?.shapeData?.kind))
+      ? String(object.shapeData.kind)
+      : 'rect',
+    adjustmentPercent: clamp(toNumber(object?.shapeData?.adjustmentPercent, 50), 0, 100),
     fillMode: object?.shapeData?.fillMode || 'solid',
     fillColor: object?.shapeData?.fillColor || '#244a80',
     fillGradient: object?.shapeData?.fillGradient || null,
     borderColor: object?.shapeData?.borderColor || '#8fb0e6',
     borderType: object?.shapeData?.borderType || 'solid',
     borderWidth: clamp(toNumber(object?.shapeData?.borderWidth, 1), 0, 20),
-    radius: clamp(toNumber(object?.shapeData?.radius, 0), 0, 1000),
+    radius: clamp(toNumber(object?.shapeData?.radius, 0), 0, 1000000),
     opacityPercent: clamp(toNumber(object?.shapeData?.opacityPercent, 100), 0, 100),
     shadowColor: String(object?.shapeData?.shadowColor || '#000000'),
     shadowBlurPx: clamp(toNumber(object?.shapeData?.shadowBlurPx, 0), 0, 200),
@@ -185,6 +278,158 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     }
     return shapeStyle.fillColor;
   };
+  const getShapeClipPath = (kind) => {
+    switch (kind) {
+      case 'diamond':
+        return 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
+      case 'triangle':
+        return 'polygon(50% 0%, 100% 100%, 0% 100%)';
+      case 'trapezoid':
+        return 'polygon(18% 0%, 82% 0%, 100% 100%, 0% 100%)';
+      case 'parallelogram':
+        return 'polygon(20% 0%, 100% 0%, 80% 100%, 0% 100%)';
+      case 'hexagon':
+        return 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)';
+      case 'pentagon':
+        return 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)';
+      case 'octagon':
+        return 'polygon(28% 0%, 72% 0%, 100% 28%, 100% 72%, 72% 100%, 28% 100%, 0% 72%, 0% 28%)';
+      case 'star':
+        return 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)';
+      case 'cloud':
+        return 'polygon(17% 69%, 9% 58%, 10% 44%, 18% 34%, 31% 31%, 38% 18%, 51% 12%, 64% 17%, 72% 27%, 85% 28%, 94% 38%, 95% 52%, 89% 63%, 78% 69%, 67% 70%, 57% 76%, 44% 77%, 34% 72%, 24% 73%)';
+      default:
+        return '';
+    }
+  };
+  const toPointPath = (points) => points.map((point, index) =>
+    (index === 0 ? 'M ' : 'L ') + point.x + ' ' + point.y
+  ).join(' ') + ' Z';
+  const toSmoothClosedPath = (points) => {
+    if (!points || points.length < 2) {
+      return '';
+    }
+    let path = 'M ' + points[0].x + ' ' + points[0].y;
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index];
+      const next = points[(index + 1) % points.length];
+      const midX = (current.x + next.x) / 2;
+      const midY = (current.y + next.y) / 2;
+      path += ' Q ' + current.x + ' ' + current.y + ' ' + midX + ' ' + midY;
+    }
+    return path + ' Z';
+  };
+  const getRoundedRectPath = (width, height, radius) => {
+    const safeRadius = clamp(radius, 0, Math.min(width, height) / 2);
+    if (safeRadius <= 0.001) {
+      return 'M 0 0 H ' + width + ' V ' + height + ' H 0 Z';
+    }
+    return [
+      'M ' + safeRadius + ' 0',
+      'H ' + (width - safeRadius),
+      'A ' + safeRadius + ' ' + safeRadius + ' 0 0 1 ' + width + ' ' + safeRadius,
+      'V ' + (height - safeRadius),
+      'A ' + safeRadius + ' ' + safeRadius + ' 0 0 1 ' + (width - safeRadius) + ' ' + height,
+      'H ' + safeRadius,
+      'A ' + safeRadius + ' ' + safeRadius + ' 0 0 1 0 ' + (height - safeRadius),
+      'V ' + safeRadius,
+      'A ' + safeRadius + ' ' + safeRadius + ' 0 0 1 ' + safeRadius + ' 0',
+      'Z',
+    ].join(' ');
+  };
+  const getStarPath = (width, height, innerRatio) => {
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const outerRadius = Math.min(width, height) / 2;
+    const innerRadius = outerRadius * innerRatio;
+    const points = Array.from({ length: 10 }, (_, index) => {
+      const isOuter = index % 2 === 0;
+      const angle = -Math.PI / 2 + (index * Math.PI) / 5;
+      const radius = isOuter ? outerRadius : innerRadius;
+      return {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius,
+      };
+    });
+    return toPointPath(points);
+  };
+  const getCloudPath = (width, height, topPercent) => {
+    const topY = clamp(height * (topPercent / 100), height * 0.04, height * 0.38);
+    return toSmoothClosedPath([
+      { x: width * 0.16, y: height * 0.72 },
+      { x: width * 0.08, y: height * 0.59 },
+      { x: width * 0.09, y: height * 0.44 },
+      { x: width * 0.18, y: height * 0.34 },
+      { x: width * 0.31, y: height * 0.32 },
+      { x: width * 0.38, y: topY + height * 0.08 },
+      { x: width * 0.5, y: topY },
+      { x: width * 0.63, y: topY + height * 0.05 },
+      { x: width * 0.73, y: height * 0.27 },
+      { x: width * 0.86, y: height * 0.3 },
+      { x: width * 0.95, y: height * 0.42 },
+      { x: width * 0.94, y: height * 0.57 },
+      { x: width * 0.84, y: height * 0.68 },
+      { x: width * 0.69, y: height * 0.71 },
+      { x: width * 0.56, y: height * 0.8 },
+      { x: width * 0.42, y: height * 0.79 },
+      { x: width * 0.31, y: height * 0.72 },
+      { x: width * 0.22, y: height * 0.74 },
+    ]);
+  };
+  const getShapeSvgDescriptor = (type, shapeStyle, width, height) => {
+    const safeWidth = Math.max(1, width);
+    const safeHeight = Math.max(1, height);
+    if (type === 'shape_circle') {
+      return {
+        kind: 'ellipse',
+        cx: safeWidth / 2,
+        cy: safeHeight / 2,
+        rx: safeWidth / 2,
+        ry: safeHeight / 2,
+      };
+    }
+    switch (shapeStyle.kind) {
+      case 'roundedRect':
+        return { kind: 'path', d: getRoundedRectPath(safeWidth, safeHeight, shapeStyle.radius) };
+      case 'diamond':
+        return { kind: 'path', d: toPointPath([{ x: safeWidth / 2, y: 0 }, { x: safeWidth, y: safeHeight / 2 }, { x: safeWidth / 2, y: safeHeight }, { x: 0, y: safeHeight / 2 }]) };
+      case 'triangle':
+        return { kind: 'path', d: toPointPath([{ x: safeWidth / 2, y: 0 }, { x: safeWidth, y: safeHeight }, { x: 0, y: safeHeight }]) };
+      case 'trapezoid': {
+        const inset = (safeWidth * clamp(shapeStyle.adjustmentPercent, 0, 40)) / 100;
+        return { kind: 'path', d: toPointPath([{ x: inset, y: 0 }, { x: safeWidth - inset, y: 0 }, { x: safeWidth, y: safeHeight }, { x: 0, y: safeHeight }]) };
+      }
+      case 'parallelogram': {
+        const skew = (safeWidth * clamp(shapeStyle.adjustmentPercent, 0, 40)) / 100;
+        return { kind: 'path', d: toPointPath([{ x: skew, y: 0 }, { x: safeWidth, y: 0 }, { x: safeWidth - skew, y: safeHeight }, { x: 0, y: safeHeight }]) };
+      }
+      case 'hexagon': {
+        const inset = (safeWidth * clamp(shapeStyle.adjustmentPercent, 0, 40)) / 100;
+        return { kind: 'path', d: toPointPath([{ x: inset, y: 0 }, { x: safeWidth - inset, y: 0 }, { x: safeWidth, y: safeHeight / 2 }, { x: safeWidth - inset, y: safeHeight }, { x: inset, y: safeHeight }, { x: 0, y: safeHeight / 2 }]) };
+      }
+      case 'pentagon': {
+        const shoulderY = (safeHeight * clamp(shapeStyle.adjustmentPercent, 20, 70)) / 100;
+        return { kind: 'path', d: toPointPath([{ x: safeWidth / 2, y: 0 }, { x: safeWidth, y: shoulderY }, { x: safeWidth * 0.82, y: safeHeight }, { x: safeWidth * 0.18, y: safeHeight }, { x: 0, y: shoulderY }]) };
+      }
+      case 'octagon': {
+        const inset = (Math.min(safeWidth, safeHeight) * clamp(shapeStyle.adjustmentPercent, 10, 35)) / 100;
+        return { kind: 'path', d: toPointPath([{ x: inset, y: 0 }, { x: safeWidth - inset, y: 0 }, { x: safeWidth, y: inset }, { x: safeWidth, y: safeHeight - inset }, { x: safeWidth - inset, y: safeHeight }, { x: inset, y: safeHeight }, { x: 0, y: safeHeight - inset }, { x: 0, y: inset }]) };
+      }
+      case 'star':
+        return { kind: 'path', d: getStarPath(safeWidth, safeHeight, clamp(shapeStyle.adjustmentPercent, 15, 80) / 100) };
+      case 'cloud':
+        return { kind: 'path', d: getCloudPath(safeWidth, safeHeight, clamp(shapeStyle.adjustmentPercent, 6, 28)) };
+      case 'rect':
+      default:
+        return { kind: 'path', d: getRoundedRectPath(safeWidth, safeHeight, 0) };
+    }
+  };
+  const getShapeBorderRadius = (kind, radiusPx) => {
+    if (kind !== 'rect' && kind !== 'roundedRect') {
+      return '0px';
+    }
+    return String(Math.max(0, radiusPx)) + 'px';
+  };
   const getTextboxStyle = (object) => ({
     fillMode: object?.textboxData?.fillMode || 'solid',
     backgroundColor: object?.textboxData?.backgroundColor || '#1f3151',
@@ -192,6 +437,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     borderColor: object?.textboxData?.borderColor || '#b2c6ee',
     borderType: object?.textboxData?.borderType || 'solid',
     borderWidth: clamp(toNumber(object?.textboxData?.borderWidth, 1), 0, 20),
+    radius: clamp(toNumber(object?.textboxData?.radius, 0), 0, 1000000),
     opacityPercent: clamp(toNumber(object?.textboxData?.opacityPercent, 100), 0, 100),
     shadowColor: String(object?.textboxData?.shadowColor || '#000000'),
     shadowBlurPx: clamp(toNumber(object?.textboxData?.shadowBlurPx, 0), 0, 200),
@@ -252,7 +498,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     borderColor: object?.imageData?.borderColor || '#b2c6ee',
     borderType: object?.imageData?.borderType || 'solid',
     borderWidth: clamp(toNumber(object?.imageData?.borderWidth, 0), 0, 20),
-    radius: clamp(toNumber(object?.imageData?.radius, 0), 0, 1000),
+    radius: clamp(toNumber(object?.imageData?.radius, 0), 0, 1000000),
     opacityPercent: clamp(toNumber(object?.imageData?.opacityPercent, 100), 0, 100),
     cropLeftPercent: clamp(toNumber(object?.imageData?.cropLeftPercent, 0), 0, 100),
     cropTopPercent: clamp(toNumber(object?.imageData?.cropTopPercent, 0), 0, 100),
@@ -265,6 +511,30 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     shadowColor: String(object?.imageData?.shadowColor || '#000000'),
     shadowBlurPx: clamp(toNumber(object?.imageData?.shadowBlurPx, 0), 0, 200),
     shadowAngleDeg: clamp(toNumber(object?.imageData?.shadowAngleDeg, 45), -180, 180),
+  });
+  const getVideoStyle = (object) => ({
+    borderColor: object?.videoData?.borderColor || '#b2c6ee',
+    borderType: object?.videoData?.borderType || 'solid',
+    borderWidth: clamp(toNumber(object?.videoData?.borderWidth, 0), 0, 20),
+    radius: clamp(toNumber(object?.videoData?.radius, 0), 0, 1000000),
+    opacityPercent: clamp(toNumber(object?.videoData?.opacityPercent, 100), 0, 100),
+    autoplay: Boolean(object?.videoData?.autoplay),
+    loop: Boolean(object?.videoData?.loop),
+    muted: Boolean(object?.videoData?.muted),
+    shadowColor: String(object?.videoData?.shadowColor || '#000000'),
+    shadowBlurPx: clamp(toNumber(object?.videoData?.shadowBlurPx, 0), 0, 200),
+    shadowAngleDeg: clamp(toNumber(object?.videoData?.shadowAngleDeg, 45), -180, 180),
+  });
+  const getSoundStyle = (object) => ({
+    borderColor: object?.soundData?.borderColor || '#b2c6ee',
+    borderType: object?.soundData?.borderType || 'solid',
+    borderWidth: clamp(toNumber(object?.soundData?.borderWidth, 0), 0, 20),
+    radius: clamp(toNumber(object?.soundData?.radius, 18), 0, 1000000),
+    opacityPercent: clamp(toNumber(object?.soundData?.opacityPercent, 100), 0, 100),
+    loop: Boolean(object?.soundData?.loop),
+    shadowColor: String(object?.soundData?.shadowColor || '#000000'),
+    shadowBlurPx: clamp(toNumber(object?.soundData?.shadowBlurPx, 0), 0, 200),
+    shadowAngleDeg: clamp(toNumber(object?.soundData?.shadowAngleDeg, 45), -180, 180),
   });
   const getTextboxBackground = (textboxStyle) => {
     if (textboxStyle.fillMode === 'linearGradient' && textboxStyle.fillGradient) {
@@ -284,6 +554,8 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     }
     return 'data:' + asset.mimeType + ';base64,' + asset.dataBase64;
   };
+  const getObjectBorderScale = (object) =>
+    clamp(toNumber(object?.scalePercent, 100), 1, 10000) / 100;
 
   const getViewport = () => ({ width: window.innerWidth, height: window.innerHeight });
   const getSlideCamera = (slide) =>
@@ -299,6 +571,12 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     if (transitionFrame !== null) {
       cancelAnimationFrame(transitionFrame);
       transitionFrame = null;
+    }
+  };
+  const stopTimedAdvance = () => {
+    if (timedAdvanceTimeout !== null) {
+      window.clearTimeout(timedAdvanceTimeout);
+      timedAdvanceTimeout = null;
     }
   };
   const tryEnterFullscreen = () => {
@@ -373,31 +651,85 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       element.style.transform =
         'rotate(' + String(toNumber(object.rotation, 0) + camera.rotation) + 'rad)';
 
-      if (object.type === 'shape_rect' || object.type === 'shape_circle' || object.type === 'shape_arrow') {
+      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
         const shapeStyle = getShapeStyle(object);
-        element.style.borderWidth = String(shapeStyle.borderWidth * camera.zoom) + 'px';
-        element.style.borderStyle = shapeStyle.borderType;
-        element.style.borderColor = shapeStyle.borderColor;
-        element.style.background = getShapeBackground(shapeStyle);
+        const borderScale = getObjectBorderScale(object);
         element.style.opacity = String(shapeStyle.opacityPercent / 100);
-        element.style.boxShadow = resolveShadowCss(
+        element.style.filter = resolveShadowFilter(
           shapeStyle.shadowColor,
           shapeStyle.shadowBlurPx,
           shapeStyle.shadowAngleDeg,
           camera.zoom
         );
-        element.style.borderRadius =
-          object.type === 'shape_circle'
-            ? '999px'
-            : String(shapeStyle.radius * camera.zoom) + 'px';
-        if (object.type === 'shape_arrow') {
-          element.textContent = '→';
-          element.style.display = 'grid';
-          element.style.placeItems = 'center';
-          element.style.fontSize = '24px';
+        const svgNamespace = 'http://www.w3.org/2000/svg';
+        const shapeSvg = document.createElementNS(svgNamespace, 'svg');
+        shapeSvg.setAttribute('viewBox', '0 0 ' + String(Math.max(1, toNumber(object.w, 1))) + ' ' + String(Math.max(1, toNumber(object.h, 1))));
+        shapeSvg.setAttribute('preserveAspectRatio', 'none');
+        shapeSvg.style.position = 'absolute';
+        shapeSvg.style.inset = '0';
+        shapeSvg.style.width = '100%';
+        shapeSvg.style.height = '100%';
+        shapeSvg.style.overflow = 'visible';
+        const descriptor = getShapeSvgDescriptor(object.type, shapeStyle, Math.max(1, toNumber(object.w, 1)), Math.max(1, toNumber(object.h, 1)));
+        const borderShape =
+          descriptor.kind === 'ellipse'
+            ? document.createElementNS(svgNamespace, 'ellipse')
+            : document.createElementNS(svgNamespace, 'path');
+        if (descriptor.kind === 'ellipse') {
+          borderShape.setAttribute('cx', String(descriptor.cx));
+          borderShape.setAttribute('cy', String(descriptor.cy));
+          borderShape.setAttribute('rx', String(descriptor.rx));
+          borderShape.setAttribute('ry', String(descriptor.ry));
+        } else {
+          borderShape.setAttribute('d', String(descriptor.d));
         }
+        const clipPathId = 'shape-fill-' + String(object.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const defs = document.createElementNS(svgNamespace, 'defs');
+        const clipPath = document.createElementNS(svgNamespace, 'clipPath');
+        clipPath.setAttribute('id', clipPathId);
+        clipPath.setAttribute('clipPathUnits', 'userSpaceOnUse');
+        const clipShape =
+          descriptor.kind === 'ellipse'
+            ? document.createElementNS(svgNamespace, 'ellipse')
+            : document.createElementNS(svgNamespace, 'path');
+        if (descriptor.kind === 'ellipse') {
+          clipShape.setAttribute('cx', String(descriptor.cx));
+          clipShape.setAttribute('cy', String(descriptor.cy));
+          clipShape.setAttribute('rx', String(descriptor.rx));
+          clipShape.setAttribute('ry', String(descriptor.ry));
+        } else {
+          clipShape.setAttribute('d', String(descriptor.d));
+        }
+        clipPath.appendChild(clipShape);
+        defs.appendChild(clipPath);
+        shapeSvg.appendChild(defs);
+        const fillLayer = document.createElementNS(svgNamespace, 'foreignObject');
+        fillLayer.setAttribute('x', '0');
+        fillLayer.setAttribute('y', '0');
+        fillLayer.setAttribute('width', String(Math.max(1, toNumber(object.w, 1))));
+        fillLayer.setAttribute('height', String(Math.max(1, toNumber(object.h, 1))));
+        fillLayer.setAttribute('clip-path', 'url(#' + clipPathId + ')');
+        const fillLayerContent = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+        fillLayerContent.style.width = '100%';
+        fillLayerContent.style.height = '100%';
+        fillLayerContent.style.background = getShapeBackground(shapeStyle);
+        fillLayer.appendChild(fillLayerContent);
+        borderShape.setAttribute('fill', 'none');
+        borderShape.setAttribute('stroke', shapeStyle.borderColor);
+        borderShape.setAttribute('stroke-width', String(shapeStyle.borderWidth * borderScale));
+        borderShape.setAttribute('stroke-linejoin', 'round');
+        borderShape.setAttribute('stroke-linecap', 'round');
+        if (shapeStyle.borderType === 'dashed') {
+          borderShape.setAttribute('stroke-dasharray', String(shapeStyle.borderWidth * borderScale * 4) + ' ' + String(shapeStyle.borderWidth * borderScale * 2));
+        } else if (shapeStyle.borderType === 'dotted') {
+          borderShape.setAttribute('stroke-dasharray', String(shapeStyle.borderWidth * borderScale) + ' ' + String(shapeStyle.borderWidth * borderScale * 1.8));
+        }
+        shapeSvg.appendChild(fillLayer);
+        shapeSvg.appendChild(borderShape);
+        element.appendChild(shapeSvg);
       } else if (object.type === 'image') {
         const imageStyle = getImageStyle(object);
+        const borderScale = getObjectBorderScale(object);
         element.style.opacity = String(imageStyle.opacityPercent / 100);
         element.style.background = 'transparent';
         element.style.filter = resolveShadowFilter(
@@ -408,7 +740,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
         );
         const clipLayer = document.createElement('div');
         clipLayer.className = 'export-image-clip';
-        clipLayer.style.borderWidth = String(imageStyle.borderWidth * camera.zoom) + 'px';
+        clipLayer.style.borderWidth = String(imageStyle.borderWidth * borderScale * camera.zoom) + 'px';
         clipLayer.style.borderStyle = imageStyle.borderType;
         clipLayer.style.borderColor = imageStyle.borderColor;
         clipLayer.style.clipPath =
@@ -431,11 +763,141 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
           clipLayer.appendChild(image);
         }
         element.appendChild(clipLayer);
+      } else if (object.type === 'video') {
+        const videoStyle = getVideoStyle(object);
+        const borderScale = getObjectBorderScale(object);
+        element.style.opacity = String(videoStyle.opacityPercent / 100);
+        element.style.background = 'transparent';
+        element.style.cursor = 'pointer';
+        element.addEventListener('pointerdown', (event) => {
+          event.stopPropagation();
+        });
+        element.style.filter = resolveShadowFilter(
+          videoStyle.shadowColor,
+          videoStyle.shadowBlurPx,
+          videoStyle.shadowAngleDeg,
+          camera.zoom
+        );
+        const clipLayer = document.createElement('div');
+        clipLayer.className = 'export-image-clip';
+        clipLayer.style.borderWidth = String(videoStyle.borderWidth * borderScale * camera.zoom) + 'px';
+        clipLayer.style.borderStyle = videoStyle.borderType;
+        clipLayer.style.borderColor = videoStyle.borderColor;
+        clipLayer.style.clipPath =
+          'inset(0% 0% 0% 0% round ' +
+          String(videoStyle.radius * camera.zoom) + 'px)';
+        const src = getImageSrc(object.videoData?.assetId);
+        if (src) {
+          const video = document.createElement('video');
+          video.src = src;
+          video.muted = videoStyle.muted;
+          video.loop = videoStyle.loop;
+          video.autoplay = false;
+          video.playsInline = true;
+          video.controls = false;
+          video.preload = 'metadata';
+          video.style.width = String(Math.max(1, object.w * camera.zoom)) + 'px';
+          video.style.height = String(Math.max(1, object.h * camera.zoom)) + 'px';
+          video.style.objectFit = 'fill';
+          clipLayer.appendChild(video);
+          element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (video.paused) {
+              void video.play().catch(() => undefined);
+            } else {
+              video.pause();
+            }
+          });
+        }
+        element.appendChild(clipLayer);
+      } else if (object.type === 'sound') {
+        const soundStyle = getSoundStyle(object);
+        const borderScale = getObjectBorderScale(object);
+        const soundContentScale = borderScale;
+        element.style.opacity = String(soundStyle.opacityPercent / 100);
+        element.style.background = 'linear-gradient(135deg, rgba(32, 52, 92, 0.92), rgba(19, 28, 48, 0.96))';
+        element.style.filter = resolveShadowFilter(
+          soundStyle.shadowColor,
+          soundStyle.shadowBlurPx,
+          soundStyle.shadowAngleDeg,
+          camera.zoom
+        );
+        element.style.borderWidth = String(soundStyle.borderWidth * borderScale * camera.zoom) + 'px';
+        element.style.borderStyle = soundStyle.borderType;
+        element.style.borderColor = soundStyle.borderColor;
+        element.style.borderRadius = String(soundStyle.radius * camera.zoom) + 'px';
+        element.style.cursor = 'pointer';
+        element.addEventListener('pointerdown', (event) => {
+          event.stopPropagation();
+        });
+        element.style.padding =
+          String(12 * camera.zoom * soundContentScale) + 'px ' +
+          String(16 * camera.zoom * soundContentScale) + 'px';
+        element.style.display = 'grid';
+        element.style.gridTemplateColumns =
+          String(18 * camera.zoom * soundContentScale) + 'px minmax(0, 1fr)';
+        element.style.alignItems = 'center';
+        element.style.gap = String(12 * camera.zoom * soundContentScale) + 'px';
+        const asset = assetsById[object.soundData?.assetId];
+        const icon = document.createElement('span');
+        icon.textContent = '▶';
+        icon.style.fontSize = String(Math.max(14, 18 * camera.zoom * soundContentScale)) + 'px';
+        icon.style.lineHeight = '1';
+        const label = document.createElement('strong');
+        label.textContent = String(asset?.name || 'Sound');
+        label.style.overflow = 'hidden';
+        label.style.textOverflow = 'ellipsis';
+        label.style.whiteSpace = 'nowrap';
+        label.style.fontSize = String(Math.max(11, 13 * camera.zoom * soundContentScale)) + 'px';
+        const audio = document.createElement('audio');
+        const src = getImageSrc(object.soundData?.assetId);
+        if (src) {
+          audio.src = src;
+        }
+        audio.loop = soundStyle.loop;
+        audio.preload = 'metadata';
+        audio.addEventListener('play', () => {
+          icon.textContent = '❚❚';
+        });
+        audio.addEventListener('pause', () => {
+          icon.textContent = '▶';
+        });
+        element.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (audio.paused) {
+            void audio.play().catch(() => undefined);
+          } else {
+            audio.pause();
+          }
+        });
+        element.appendChild(icon);
+        element.appendChild(label);
+        element.appendChild(audio);
+      } else if (object.type === 'template_placeholder') {
+        const templateScale = Math.max(
+          0.01,
+          camera.zoom * getObjectBorderScale(object)
+        );
+        element.style.setProperty('--export-template-scale', String(templateScale));
+        const shell = document.createElement('div');
+        shell.className =
+          'export-template-placeholder kind-' +
+          String(object.templatePlaceholderData?.kind || 'text');
+        const badge = document.createElement('span');
+        badge.textContent = getTemplatePlaceholderBadge(
+          String(object.templatePlaceholderData?.kind || 'text')
+        );
+        const label = document.createElement('strong');
+        label.textContent = String(object.templatePlaceholderData?.prompt || 'Placeholder');
+        shell.appendChild(badge);
+        shell.appendChild(label);
+        element.appendChild(shell);
       } else if (object.type === 'textbox') {
         const textboxStyle = getTextboxStyle(object);
-        element.style.borderWidth = String(textboxStyle.borderWidth * camera.zoom) + 'px';
+        element.style.borderWidth = String(textboxStyle.borderWidth * getObjectBorderScale(object) * camera.zoom) + 'px';
         element.style.borderStyle = textboxStyle.borderType;
         element.style.borderColor = textboxStyle.borderColor;
+        element.style.borderRadius = String(textboxStyle.radius * camera.zoom) + 'px';
         element.style.background = getTextboxBackground(textboxStyle);
         element.style.opacity = String(textboxStyle.opacityPercent / 100);
         element.style.boxShadow = resolveShadowCss(
@@ -445,13 +907,22 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
           camera.zoom
         );
         element.style.padding = '0';
+        const renderTextboxScale = clamp(
+          toNumber(camera.zoom, 1) *
+            clamp(toNumber(object?.scalePercent, 100), 1, 10000) / 100,
+          0.01,
+          300
+        );
         const richContent = document.createElement('div');
         richContent.className = 'export-textbox-content textbox-rich-content';
-        richContent.style.transform = 'scale(' + String(clamp(toNumber(camera.zoom, 1), 0.01, 100)) + ')';
+        richContent.style.transform = 'scale(' + String(renderTextboxScale) + ')';
         richContent.style.transformOrigin = 'top left';
-        richContent.style.width = String(100 / clamp(toNumber(camera.zoom, 1), 0.01, 100)) + '%';
-        richContent.style.height = String(100 / clamp(toNumber(camera.zoom, 1), 0.01, 100)) + '%';
-        richContent.style.fontFamily = String(object?.textboxData?.fontFamily || 'Space Grotesk');
+        richContent.style.width = String(100 / renderTextboxScale) + '%';
+        richContent.style.height = String(100 / renderTextboxScale) + '%';
+        const textboxBaseStyle = textboxBaseStylesById[object.id] || null;
+        richContent.style.fontFamily = String(textboxBaseStyle?.fontFamily || object?.textboxData?.fontFamily || 'Arial');
+        richContent.style.fontSize = String(toNumber(textboxBaseStyle?.fontSizePx, 28)) + 'px';
+        richContent.style.color = String(textboxBaseStyle?.textColor || '#f0f3fc');
         richContent.innerHTML = getTextboxHtml(object);
         element.appendChild(richContent);
       }
@@ -499,8 +970,20 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     prevBtn.disabled = freeMoveEnabled || currentSlideIndex <= 0;
     nextBtn.disabled = freeMoveEnabled || currentSlideIndex >= slides.length - 1;
   };
+  const syncTimedAdvance = () => {
+    stopTimedAdvance();
+    const slide = slides[currentSlideIndex] || null;
+    if (freeMoveEnabled || !shouldAutoAdvanceSlide(slide, currentSlideIndex, slides.length)) {
+      return;
+    }
+    const delayMs = Math.max(0, Math.round(toNumber(slide.triggerDelayMs, 0)));
+    timedAdvanceTimeout = window.setTimeout(() => {
+      setSlideIndex(currentSlideIndex + 1);
+    }, delayMs);
+  };
 
   const setSlideIndex = (nextIndex, forceInstant = false) => {
+    stopTimedAdvance();
     if (slides.length === 0) {
       transitionToSlide(null, true);
       title.textContent = model.meta?.title || 'Export';
@@ -516,6 +999,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     title.textContent = slide?.name || model.meta?.title || 'Export';
     count.textContent = String(bounded + 1) + ' / ' + String(slides.length);
     updateNavigationState();
+    syncTimedAdvance();
   };
   const setFreeMoveEnabled = (nextValue) => {
     const nextEnabled = Boolean(nextValue);
@@ -530,10 +1014,12 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       freeBtn.setAttribute('aria-pressed', freeMoveEnabled ? 'true' : 'false');
       freeBtn.title = freeMoveEnabled ? 'Disable free move' : 'Enable free move';
     }
+    stopTimedAdvance();
     if (!freeMoveEnabled && slides.length > 0) {
       transitionToSlide(slides[currentSlideIndex], true);
     }
     updateNavigationState();
+    syncTimedAdvance();
   };
 
   prevBtn.addEventListener('click', () => setSlideIndex(currentSlideIndex - 1));
@@ -663,6 +1149,24 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       event.preventDefault();
     }
   });
+  window.addEventListener('keydown', (event) => {
+    if (FORWARD_KEYS.includes(event.key)) {
+      event.preventDefault();
+      setSlideIndex(currentSlideIndex + 1);
+      return;
+    }
+    if (BACKWARD_KEYS.includes(event.key)) {
+      event.preventDefault();
+      setSlideIndex(currentSlideIndex - 1);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+        void document.exitFullscreen().catch(() => undefined);
+      }
+    }
+  });
   window.addEventListener('resize', () => renderCamera(currentCamera));
   tryEnterFullscreen();
   setupFullscreenFallback();
@@ -678,13 +1182,14 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';"
+    content="default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';"
   />
   <title>${escapeHtml(document.meta.title || 'Infiniprez Export')}</title>
   <style>
+    ${fontAssetCss}
     :root {
       color-scheme: dark;
-      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      font-family: Arial, Verdana, sans-serif;
     }
     body {
       margin: 0;
@@ -788,6 +1293,55 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       white-space: normal;
       padding: 0;
     }
+    .export-object.template_placeholder {
+      --export-template-scale: 1;
+      border-width: calc(1px * var(--export-template-scale));
+      border-style: dashed;
+      border-color: rgba(183, 213, 255, 0.6);
+      background:
+        linear-gradient(135deg, rgba(27, 44, 74, 0.82), rgba(18, 28, 47, 0.9));
+      padding: 0;
+    }
+    .export-object.sound {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0.7rem 0.9rem;
+      background: linear-gradient(135deg, rgba(32, 52, 92, 0.92), rgba(19, 28, 48, 0.96));
+      cursor: pointer;
+    }
+    .export-template-placeholder {
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      display: grid;
+      place-items: center;
+      gap: calc(0.35rem * var(--export-template-scale));
+      padding: calc(0.8rem * var(--export-template-scale));
+      text-align: center;
+    }
+    .export-template-placeholder span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: calc(3.8rem * var(--export-template-scale));
+      padding: calc(0.2rem * var(--export-template-scale))
+        calc(0.55rem * var(--export-template-scale));
+      border-radius: 999px;
+      border: calc(1px * var(--export-template-scale)) solid rgba(197, 221, 255, 0.34);
+      background: rgba(142, 184, 255, 0.18);
+      font-size: calc(0.74rem * var(--export-template-scale));
+      font-weight: 800;
+      letter-spacing: 0.12em;
+    }
+    .export-template-placeholder strong {
+      max-width: 100%;
+      font-size: calc(1rem * var(--export-template-scale));
+      line-height: 1.22;
+      font-weight: 700;
+      white-space: pre-wrap;
+    }
     .export-textbox-content {
       width: 100%;
       height: 100%;
@@ -809,6 +1363,14 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     .textbox-rich-content ol {
       margin: 0;
       padding-left: 1.2em;
+    }
+    .textbox-rich-content ul,
+    .textbox-rich-content ol,
+    .textbox-rich-content li,
+    .textbox-rich-content li::marker {
+      font-family: inherit;
+      font-size: inherit;
+      color: inherit;
     }
     .textbox-rich-content.textbox-align-left {
       text-align: left;
@@ -839,6 +1401,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
   <script>
     window.__INFINIPREZ_EXPORT__ = ${serialized};
     window.__INFINIPREZ_EXPORT_ASSETS__ = ${serializedAssets};
+    window.__INFINIPREZ_EXPORT_TEXTBOX_STYLES__ = ${serializedTextboxBaseStyles};
     ${runtimeScript}
   </script>
 </body>

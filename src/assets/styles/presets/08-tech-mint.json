@@ -1,0 +1,36 @@
+{
+  "id": "tech-mint",
+  "name": "Mint Growth",
+  "inspiration": "Modern growth-oriented product narrative",
+  "fontFamily": "Verdana",
+  "canvasBackground": "linear-gradient(138deg, #081f29 0%, #0f3a45 48%, #1e6c6b 100%)",
+  "text": {
+    "primary": "#e9fffb",
+    "secondary": "#b9efe6",
+    "muted": "#7dc7bf",
+    "accent": "#84f2d0"
+  },
+  "objects": {
+    "foregroundFill": "#2a8f82",
+    "foregroundBorder": "#a5f4df",
+    "foregroundText": "#f4fffc",
+    "backgroundFill": "#113b43",
+    "backgroundBorder": "#6fc1b6",
+    "backgroundText": "#ddfaf4",
+    "accentFill": "#34b39f",
+    "accentBorder": "#bdf8eb",
+    "accentText": "#f7fffd",
+    "mutedFill": "#1a5760",
+    "mutedBorder": "#5ca6a3",
+    "mutedText": "#b8e9e4",
+    "highlightFill": "#5ad4c1",
+    "highlightBorder": "#d7fff7",
+    "highlightText": "#f8fffe"
+  },
+  "assets": {
+    "imageBorder": "#95ecd9",
+    "videoBorder": "#95ecd9",
+    "audioBorder": "#95ecd9",
+    "iconTint": "#b4f4e6"
+  }
+}

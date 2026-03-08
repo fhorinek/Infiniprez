@@ -1,0 +1,51 @@
+{
+  "id": "title-image",
+  "name": "Title + Image",
+  "description": "Narrative intro with hero media.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -420,
+        "y": 30,
+        "w": 520,
+        "h": 570
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": -210,
+        "w": 440,
+        "h": 160
+      },
+      "prompt": "Headline"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": 45,
+        "w": 430,
+        "h": 220
+      },
+      "prompt": "Description"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 360,
+        "y": 30,
+        "w": 700,
+        "h": 540
+      },
+      "prompt": "Hero media"
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "id": "comparison",
+  "name": "Comparison",
+  "description": "Left-right compare with balanced placeholders.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 0,
+        "y": -290,
+        "w": 860,
+        "h": 120
+      },
+      "prompt": "Comparison title"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -320,
+        "y": 40,
+        "w": 540,
+        "h": 600
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 320,
+        "y": 40,
+        "w": 540,
+        "h": 600
+      },
+      "variant": "accent"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -320,
+        "y": -150,
+        "w": 330,
+        "h": 100
+      },
+      "prompt": "Option A"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 320,
+        "y": -150,
+        "w": 330,
+        "h": 100
+      },
+      "prompt": "Option B"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -320,
+        "y": 90,
+        "w": 460,
+        "h": 370
+      },
+      "prompt": "Option A points"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 320,
+        "y": 90,
+        "w": 460,
+        "h": 370
+      },
+      "prompt": "Option B points"
+    }
+  ]
+}

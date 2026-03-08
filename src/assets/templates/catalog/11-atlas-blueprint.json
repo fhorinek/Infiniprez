@@ -1,0 +1,131 @@
+{
+  "id": "atlas-blueprint",
+  "name": "Blueprint Plan",
+  "description": "Technical blueprint with a precise grid and callouts.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 1460,
+        "h": 760
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -370,
+        "y": -265,
+        "w": 700,
+        "h": 130
+      },
+      "prompt": "Blueprint title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -370,
+        "y": -150,
+        "w": 620,
+        "h": 90
+      },
+      "prompt": "Project subtitle"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -370,
+        "y": 120,
+        "w": 620,
+        "h": 400
+      },
+      "prompt": "Plan bullets"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 360,
+        "y": 95,
+        "w": 620,
+        "h": 540
+      },
+      "prompt": "Diagram or image"
+    },
+    {
+      "kind": "repeat",
+      "count": 6,
+      "step": {
+        "y": 88
+      },
+      "node": {
+        "kind": "shape",
+        "shapeType": "shape_rect",
+        "frame": {
+          "x": 335,
+          "y": -220,
+          "w": 670,
+          "h": 2
+        },
+        "shapeData": {
+          "fillColor": {
+            "blend": {
+              "a": "theme.highlight",
+              "b": "theme.surface",
+              "mix": 0.45
+            }
+          },
+          "borderColor": {
+            "blend": {
+              "a": "theme.highlight",
+              "b": "theme.surface",
+              "mix": 0.45
+            }
+          },
+          "borderWidth": 0,
+          "radius": 999
+        }
+      }
+    },
+    {
+      "kind": "repeat",
+      "count": 5,
+      "step": {
+        "x": 130
+      },
+      "node": {
+        "kind": "shape",
+        "shapeType": "shape_rect",
+        "frame": {
+          "x": 70,
+          "y": 40,
+          "w": 2,
+          "h": 530
+        },
+        "shapeData": {
+          "fillColor": {
+            "blend": {
+              "a": "theme.highlight",
+              "b": "theme.surface",
+              "mix": 0.52
+            }
+          },
+          "borderColor": {
+            "blend": {
+              "a": "theme.highlight",
+              "b": "theme.surface",
+              "mix": 0.52
+            }
+          },
+          "borderWidth": 0,
+          "radius": 999
+        }
+      }
+    }
+  ]
+}

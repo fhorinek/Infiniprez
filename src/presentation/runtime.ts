@@ -1,5 +1,8 @@
 import type { Slide } from '../model'
 
+export const PRESENTATION_FORWARD_KEYS = ['Right', 'ArrowRight', 'ArrowDown', 'PageDown', ' '] as const
+export const PRESENTATION_BACKWARD_KEYS = ['Left', 'ArrowLeft', 'ArrowUp', 'PageUp'] as const
+
 export function easeInOutCubic(t: number) {
   if (t < 0.5) {
     return 4 * t * t * t
@@ -44,4 +47,12 @@ export function shouldAutoAdvanceSlide(
     return false
   }
   return slideIndex >= 0 && slideIndex < totalSlides - 1
+}
+
+export function isForwardPresentationKey(key: string): boolean {
+  return PRESENTATION_FORWARD_KEYS.includes(key as (typeof PRESENTATION_FORWARD_KEYS)[number])
+}
+
+export function isBackwardPresentationKey(key: string): boolean {
+  return PRESENTATION_BACKWARD_KEYS.includes(key as (typeof PRESENTATION_BACKWARD_KEYS)[number])
 }

@@ -1,0 +1,36 @@
+{
+  "id": "ocean-report",
+  "name": "Ocean Plan",
+  "inspiration": "Blueprint-like oceanic strategy deck",
+  "fontFamily": "Trebuchet MS",
+  "canvasBackground": "linear-gradient(135deg, #102742 0%, #0f3f65 45%, #13618f 100%)",
+  "text": {
+    "primary": "#ebf7ff",
+    "secondary": "#c0e4f8",
+    "muted": "#89bdd9",
+    "accent": "#7ad3ff"
+  },
+  "objects": {
+    "foregroundFill": "#1f7caf",
+    "foregroundBorder": "#9fe3ff",
+    "foregroundText": "#effbff",
+    "backgroundFill": "#123552",
+    "backgroundBorder": "#6eafcf",
+    "backgroundText": "#def3ff",
+    "accentFill": "#26a2de",
+    "accentBorder": "#bdefff",
+    "accentText": "#f2fdff",
+    "mutedFill": "#1c4a6d",
+    "mutedBorder": "#5c90b2",
+    "mutedText": "#b4d9ed",
+    "highlightFill": "#44bdf4",
+    "highlightBorder": "#d2f5ff",
+    "highlightText": "#f6feff"
+  },
+  "assets": {
+    "imageBorder": "#8fd8ff",
+    "videoBorder": "#8fd8ff",
+    "audioBorder": "#8fd8ff",
+    "iconTint": "#a7e6ff"
+  }
+}

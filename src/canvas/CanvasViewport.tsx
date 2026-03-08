@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -8,8 +9,12 @@ import {
   type PointerEvent,
   type RefObject,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
+  faAlignCenter,
+  faAlignLeft,
+  faAlignRight,
   faArrowsDownToLine,
   faArrowsUpToLine,
   faArrowDown,
@@ -18,14 +23,24 @@ import {
   faCompass,
   faCropSimple,
   faFileImport,
+  faGripLines,
   faLayerGroup,
+  faListUl,
   faLock,
   faLockOpen,
   faMagnifyingGlass,
+  faImage,
   faObjectUngroup,
   faPenToSquare,
+  faPlay,
+  faPause,
+  faRotateLeft,
+  faRotateRight,
   faSliders,
   faTrashCan,
+  faGripLinesVertical,
+  faUpDownLeftRight,
+  faVideo,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   canReorderLayer,
@@ -33,9 +48,11 @@ import {
   type CanvasObject,
   type FillGradient,
   type LayerOrderAction,
+  type ShapeKind,
   type ShapeData,
   type TextRun,
 } from '../model'
+import type { StylePreset } from '../stylePresets'
 import { useEditorStore } from '../store'
 import { type CameraState } from '../store/types'
 import {
@@ -49,8 +66,20 @@ import {
   type ViewportSize,
   worldToScreen,
 } from './math'
+import { getAlignmentDeltas, type AlignmentAction } from './alignment'
 import { RichTextboxEditor } from './RichTextboxEditor'
-import { resolveTextboxRichHtml, richHtmlToPlainText } from '../textboxRichText'
+import {
+  resolveTextboxBaseTextStyle,
+  resolveTextboxRichHtml,
+  richHtmlToPlainText,
+  textboxUsesFontFamily,
+} from '../textboxRichText'
+import {
+  buildLibraryAsset,
+  findMatchingLibraryAsset,
+  isSupportedLibraryAssetFile,
+  resolveLibraryAssetKind,
+} from '../assetFile'
 import {
   SUPPORTED_IMAGE_ACCEPT,
   getImageDimensions,
@@ -59,12 +88,34 @@ import {
   toAssetBase64,
 } from '../imageFile'
 import { IMAGE_FILTER_OPTIONS, resolveImageFilterCss } from '../imageEffects'
+import {
+  createDefaultImageData,
+  createDefaultSoundData,
+  createDefaultVideoData,
+  getDefaultPlacedMediaSize,
+  getZoomAdjustedObjectScalePercent,
+  isObjectAspectRatioLocked,
+  resolveObjectBorderScale,
+} from '../objectDefaults'
 import { resolveObjectDropShadowFilter, resolveObjectShadowCss } from '../objectShadow'
+import {
+  getShapeAdjustmentHandle,
+  getShapeBorderRadius,
+  getShapeClipPath,
+  normalizeShapeKind,
+  resolveShapeAdjustmentFromLocalPoint,
+} from '../shapeStyle'
+import { ShapeSvg } from '../ShapeSvg'
+import { ASSET_LIBRARY_DRAG_MIME, type AssetLibraryDragPayload } from '../assetDrag'
+import { collectAvailableTextboxFonts, resolveAssetFontFamily } from '../fontAssets'
 
 interface GridLine {
   id: string
   value: number
 }
+
+type TargetDisplayPreset = 'display' | 'desktop' | 'phone' | 'tablet' | 'tv'
+type TargetDisplayOrientation = 'landscape' | 'portrait'
 
 interface PanInteraction {
   pointerId: number
@@ -79,6 +130,7 @@ interface ObjectInteraction {
   targets: Array<{
     id: string
     objectType: CanvasObject['type']
+    keepAspectRatio: boolean
     start: TransformSnapshot
   }>
   mode: 'move' | 'resize' | 'rotate'
@@ -117,12 +169,39 @@ interface ImageCropInteraction {
   objectRotation: number
 }
 
+interface ShapeAdjustInteraction {
+  pointerId: number
+  objectId: string
+  objectType: 'shape_rect' | 'shape_circle'
+  cameraStart: CameraState
+  objectStart: TransformSnapshot
+  shapeDataStart: ShapeData
+}
+
 interface MarqueeInteraction {
   pointerId: number
   startScreen: Point
   currentScreen: Point
   baseSelection: string[]
   toggleObjectId: string | null
+}
+
+interface CreationToolConfig {
+  type: 'textbox' | 'shape_rect' | 'shape_circle' | 'image'
+  shapeKind?: ShapeKind
+  image?: {
+    intrinsicWidth: number
+    intrinsicHeight: number
+  }
+}
+
+interface CreationInteraction {
+  pointerId: number
+  tool: CreationToolConfig['type']
+  startScreen: Point
+  currentScreen: Point
+  cameraStart: CameraState
+  image?: CreationToolConfig['image']
 }
 
 interface Rect {
@@ -143,9 +222,28 @@ interface SelectionFrameState extends SelectionFrame {
   selectionKey: string
 }
 
+interface SnapEdgeCandidate {
+  value: number
+  minCross: number
+  maxCross: number
+}
+
 interface SnapCandidateEdges {
-  x: number[]
-  y: number[]
+  x: SnapEdgeCandidate[]
+  y: SnapEdgeCandidate[]
+}
+
+interface SmartGuideLine {
+  orientation: 'vertical' | 'horizontal'
+  position: number
+  start: number
+  end: number
+  kind: 'align' | 'spacing'
+}
+
+interface SnapResult {
+  offset: Point
+  guides: SmartGuideLine[]
 }
 
 interface ClipboardState {
@@ -166,6 +264,14 @@ interface TextboxPointerState {
   timestampMs: number
 }
 
+interface AlignmentSelectionUnit {
+  id: string
+  bounds: Rect
+  targets: CanvasObject[]
+}
+
+type TemplatePlaceholderChoice = 'text' | 'list' | 'image' | 'video'
+
 const DOUBLE_CLICK_MS = 500
 const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180
 const TEXTBOX_CAMERA_ROTATION_TRANSITION_MS = 220
@@ -173,6 +279,31 @@ const DEFAULT_TEXTBOX_BACKGROUND = '#1f3151'
 const DEFAULT_TEXTBOX_BORDER_COLOR = '#b2c6ee'
 const DEFAULT_TEXTBOX_BORDER_WIDTH = 1
 const TEXTBOX_LINE_HEIGHT = 1.35
+const TARGET_DISPLAY_MIN_BORDER_SEPARATION_PX = 32
+const SUPPORTED_VIDEO_ACCEPT = 'video/mp4,video/webm,video/ogg,video/quicktime,.mp4,.webm,.ogg,.ogv,.mov'
+const TARGET_DISPLAY_PRESETS: Array<{
+  value: TargetDisplayPreset
+  label: string
+  width: number | null
+  height: number | null
+}> = [
+    { value: 'display', label: 'Display', width: null, height: null },
+    { value: 'desktop', label: 'Desktop', width: 1440, height: 900 },
+    { value: 'phone', label: 'Phone', width: 390, height: 844 },
+    { value: 'tablet', label: 'Tablet', width: 834, height: 1112 },
+    { value: 'tv', label: 'TV', width: 1920, height: 1080 },
+  ]
+const UNIVERSAL_TEMPLATE_CHOICES: Array<{
+  choice: TemplatePlaceholderChoice
+  label: string
+  icon: typeof faPenToSquare
+  cornerClassName: string
+}> = [
+    { choice: 'text', label: 'Text', icon: faPenToSquare, cornerClassName: 'corner-top-left' },
+    { choice: 'list', label: 'Bullets', icon: faListUl, cornerClassName: 'corner-top-right' },
+    { choice: 'image', label: 'Image', icon: faImage, cornerClassName: 'corner-bottom-left' },
+    { choice: 'video', label: 'Video', icon: faVideo, cornerClassName: 'corner-bottom-right' },
+  ]
 
 function easeInOutCubic(value: number): number {
   if (value < 0.5) {
@@ -216,6 +347,21 @@ function createDefaultTextRun(text = ''): TextRun {
   }
 }
 
+function getTemplatePlaceholderBadge(
+  kind: Extract<CanvasObject, { type: 'template_placeholder' }>['templatePlaceholderData']['kind']
+) {
+  if (kind === 'universal') {
+    return 'ANY'
+  }
+  if (kind === 'image') {
+    return 'IMG'
+  }
+  if (kind === 'list') {
+    return 'LIST'
+  }
+  return 'TEXT'
+}
+
 function haveSameRunStyle(a: TextRun, b: TextRun): boolean {
   return (
     a.bold === b.bold &&
@@ -244,6 +390,199 @@ function normalizeTextboxRuns(runs: TextRun[]): TextRun[] {
     return [createDefaultTextRun('')]
   }
   return merged
+}
+
+function CanvasVideoPreview({
+  src,
+  muted,
+  loop,
+  widthPx,
+  heightPx,
+  onVideoElement,
+}: {
+  src: string
+  muted: boolean
+  loop: boolean
+  widthPx: number
+  heightPx: number
+  onVideoElement?: (element: HTMLVideoElement | null) => void
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [isHovered, setIsHovered] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) {
+      return
+    }
+    video.pause()
+    setIsPlaying(false)
+    try {
+      video.currentTime = 0
+    } catch {
+      // Ignore currentTime assignment failures before metadata is ready.
+    }
+  }, [src])
+
+  return (
+    <div
+      className={`canvas-video-preview ${isHovered ? 'hovered' : ''}`}
+      style={{
+        width: `${widthPx}px`,
+        height: `${heightPx}px`,
+      }}
+      onPointerEnter={() => setIsHovered(true)}
+      onPointerLeave={() => setIsHovered(false)}
+    >
+      <video
+        ref={(node) => {
+          videoRef.current = node
+          onVideoElement?.(node)
+        }}
+        src={src}
+        muted={muted}
+        loop={loop}
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={() => {
+          const video = videoRef.current
+          if (!video) {
+            return
+          }
+          video.pause()
+          setIsPlaying(false)
+          video.currentTime = 0
+        }}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        style={{
+          width: `${widthPx}px`,
+          height: `${heightPx}px`,
+          objectFit: 'fill',
+        }}
+      />
+      <div className="canvas-video-controls">
+        <button
+          type="button"
+          className="canvas-video-control-btn"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            const video = videoRef.current
+            if (!video) {
+              return
+            }
+            if (video.paused) {
+              void video.play().catch(() => undefined)
+            } else {
+              video.pause()
+            }
+          }}
+          aria-label={isPlaying ? 'Pause video' : 'Play video'}
+          title={isPlaying ? 'Pause video' : 'Play video'}
+        >
+          <FontAwesomeIcon icon={isPlaying ? faPause : faPlay} />
+        </button>
+        <button
+          type="button"
+          className="canvas-video-control-btn"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            const video = videoRef.current
+            if (!video) {
+              return
+            }
+            video.currentTime = 0
+            if (!video.paused) {
+              void video.play().catch(() => undefined)
+            }
+          }}
+          aria-label="Restart video"
+          title="Restart video"
+        >
+          <FontAwesomeIcon icon={faRotateLeft} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CanvasSoundPreview({
+  src,
+  label,
+  loop,
+  contentScale,
+  onAudioElement,
+}: {
+  src: string
+  label: string
+  loop: boolean
+  contentScale: number
+  onAudioElement?: (element: HTMLAudioElement | null) => void
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const safeContentScale = Math.max(0.01, contentScale)
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) {
+      return
+    }
+    audio.pause()
+    setIsPlaying(false)
+    try {
+      audio.currentTime = 0
+    } catch {
+      // Ignore currentTime assignment failures before metadata is ready.
+    }
+  }, [src])
+
+  return (
+    <div
+      className="canvas-sound-preview"
+      style={
+        {
+          '--canvas-sound-scale': String(safeContentScale),
+        } as CSSProperties
+      }
+    >
+      <audio
+        ref={(node) => {
+          audioRef.current = node
+          onAudioElement?.(node)
+        }}
+        src={src}
+        preload="metadata"
+        loop={loop}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onLoadedMetadata={() => {
+          const audio = audioRef.current
+          if (!audio) {
+            return
+          }
+          audio.pause()
+          setIsPlaying(false)
+          audio.currentTime = 0
+        }}
+      />
+      <span className="canvas-sound-icon" aria-hidden="true">
+        <FontAwesomeIcon icon={isPlaying ? faPause : faPlay} />
+      </span>
+      <strong className="canvas-sound-label">{label}</strong>
+    </div>
+  )
 }
 
 function useViewportSize(ref: RefObject<HTMLElement>) {
@@ -374,23 +713,30 @@ function getObjectLabel(object: CanvasObject): string {
     return content.length > 0 ? content : 'Textbox'
   }
 
+  if (object.type === 'template_placeholder') {
+    return object.templatePlaceholderData.prompt
+  }
+
   if (object.type === 'image') {
     return 'Image'
   }
 
-  if (object.type === 'shape_rect') {
-    return 'Rectangle'
+  if (object.type === 'video') {
+    return 'Video'
   }
 
-  if (object.type === 'shape_circle') {
-    return 'Circle'
-  }
-
-  if (object.type === 'shape_arrow') {
-    return 'Arrow'
+  if (object.type === 'sound') {
+    return 'Sound'
   }
 
   return 'Group'
+}
+
+function resolveTextboxObjectScale(
+  _textboxData: Extract<CanvasObject, { type: 'textbox' }>['textboxData'],
+  scalePercent: number
+) {
+  return Math.max(1, Math.min(10000, scalePercent)) / 100
 }
 
 function toRect(start: Point, end: Point): Rect {
@@ -403,7 +749,7 @@ function toRect(start: Point, end: Point): Rect {
 }
 
 function isTextInputTarget(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null
+  const element = target instanceof HTMLElement ? target : null
   if (!element) {
     return false
   }
@@ -550,57 +896,264 @@ function offsetRect(rect: Rect, delta: Point): Rect {
   }
 }
 
+function gcd(a: number, b: number): number {
+  let x = Math.abs(Math.round(a))
+  let y = Math.abs(Math.round(b))
+  while (y !== 0) {
+    const next = x % y
+    x = y
+    y = next
+  }
+  return Math.max(1, x)
+}
+
+function formatAspectRatio(width: number, height: number) {
+  const divisor = gcd(width, height)
+  return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`
+}
+
 function collectSnapCandidateEdges(objects: CanvasObject[]): SnapCandidateEdges {
-  const x: number[] = []
-  const y: number[] = []
+  const x: SnapEdgeCandidate[] = []
+  const y: SnapEdgeCandidate[] = []
 
   for (const object of objects) {
     const bounds = getObjectWorldAabb(object)
-    x.push(bounds.minX, bounds.maxX, (bounds.minX + bounds.maxX) / 2)
-    y.push(bounds.minY, bounds.maxY, (bounds.minY + bounds.maxY) / 2)
+    x.push(
+      { value: bounds.minX, minCross: bounds.minY, maxCross: bounds.maxY },
+      { value: bounds.maxX, minCross: bounds.minY, maxCross: bounds.maxY },
+      {
+        value: (bounds.minX + bounds.maxX) / 2,
+        minCross: bounds.minY,
+        maxCross: bounds.maxY,
+      }
+    )
+    y.push(
+      { value: bounds.minY, minCross: bounds.minX, maxCross: bounds.maxX },
+      { value: bounds.maxY, minCross: bounds.minX, maxCross: bounds.maxX },
+      {
+        value: (bounds.minY + bounds.maxY) / 2,
+        minCross: bounds.minX,
+        maxCross: bounds.maxX,
+      }
+    )
   }
 
   return { x, y }
 }
 
-function getBestSnapDelta(values: number[], candidates: number[], tolerance: number): number {
+function getBestSnapMatch(values: number[], candidates: SnapEdgeCandidate[], tolerance: number) {
   let bestDelta = 0
   let bestAbsDelta = tolerance + 1
+  let bestCandidate: SnapEdgeCandidate | null = null
 
   for (const value of values) {
     for (const candidate of candidates) {
-      const delta = candidate - value
+      const delta = candidate.value - value
       const absDelta = Math.abs(delta)
       if (absDelta <= tolerance && absDelta < bestAbsDelta) {
         bestDelta = delta
         bestAbsDelta = absDelta
+        bestCandidate = candidate
       }
     }
   }
 
-  return bestAbsDelta <= tolerance ? bestDelta : 0
+  return bestAbsDelta <= tolerance
+    ? {
+      delta: bestDelta,
+      candidate: bestCandidate,
+    }
+    : {
+      delta: 0,
+      candidate: null,
+    }
 }
 
-function getObjectEdgeSnapOffset(
+function getObjectEdgeSnapResult(
   bounds: Rect,
   candidates: SnapCandidateEdges,
   tolerance: number
-): Point {
+): SnapResult {
   if (tolerance <= 0) {
-    return { x: 0, y: 0 }
+    return { offset: { x: 0, y: 0 }, guides: [] }
+  }
+
+  const xMatch = getBestSnapMatch(
+    [bounds.minX, bounds.maxX, (bounds.minX + bounds.maxX) / 2],
+    candidates.x,
+    tolerance
+  )
+  const yMatch = getBestSnapMatch(
+    [bounds.minY, bounds.maxY, (bounds.minY + bounds.maxY) / 2],
+    candidates.y,
+    tolerance
+  )
+  const guides: SmartGuideLine[] = []
+
+  if (xMatch.candidate) {
+    guides.push({
+      orientation: 'vertical',
+      position: xMatch.candidate.value,
+      start: Math.min(bounds.minY + yMatch.delta, xMatch.candidate.minCross),
+      end: Math.max(bounds.maxY + yMatch.delta, xMatch.candidate.maxCross),
+      kind: 'align',
+    })
+  }
+
+  if (yMatch.candidate) {
+    guides.push({
+      orientation: 'horizontal',
+      position: yMatch.candidate.value,
+      start: Math.min(bounds.minX + xMatch.delta, yMatch.candidate.minCross),
+      end: Math.max(bounds.maxX + xMatch.delta, yMatch.candidate.maxCross),
+      kind: 'align',
+    })
   }
 
   return {
-    x: getBestSnapDelta(
-      [bounds.minX, bounds.maxX, (bounds.minX + bounds.maxX) / 2],
-      candidates.x,
-      tolerance
-    ),
-    y: getBestSnapDelta(
-      [bounds.minY, bounds.maxY, (bounds.minY + bounds.maxY) / 2],
-      candidates.y,
-      tolerance
-    ),
+    offset: {
+      x: xMatch.delta,
+      y: yMatch.delta,
+    },
+    guides,
+  }
+}
+
+function rangesOverlap(aMin: number, aMax: number, bMin: number, bMax: number) {
+  return Math.min(aMax, bMax) >= Math.max(aMin, bMin)
+}
+
+function getHorizontalSpacingSnap(
+  bounds: Rect,
+  candidates: CanvasObject[],
+  tolerance: number
+): SnapResult {
+  if (tolerance <= 0) {
+    return { offset: { x: 0, y: 0 }, guides: [] }
+  }
+
+  const candidateBounds = candidates
+    .map((object) => getObjectWorldAabb(object))
+    .filter((entry) => rangesOverlap(entry.minY, entry.maxY, bounds.minY, bounds.maxY))
+    .sort((a, b) => a.minX - b.minX)
+
+  const width = Math.max(1, bounds.maxX - bounds.minX)
+  let bestDelta = 0
+  let bestAbsDelta = tolerance + 1
+  let bestGuides: SmartGuideLine[] = []
+
+  for (let leftIndex = 0; leftIndex < candidateBounds.length - 1; leftIndex += 1) {
+    const left = candidateBounds[leftIndex]
+    for (let rightIndex = leftIndex + 1; rightIndex < candidateBounds.length; rightIndex += 1) {
+      const right = candidateBounds[rightIndex]
+      const available = right.minX - left.maxX
+      if (available < width) {
+        continue
+      }
+      const targetMinX = left.maxX + (available - width) / 2
+      const delta = targetMinX - bounds.minX
+      const absDelta = Math.abs(delta)
+      if (absDelta > tolerance || absDelta >= bestAbsDelta) {
+        continue
+      }
+      const snapped = offsetRect(bounds, { x: delta, y: 0 })
+      const overlapMinY = Math.max(left.minY, right.minY, snapped.minY)
+      const overlapMaxY = Math.min(left.maxY, right.maxY, snapped.maxY)
+      const guideY =
+        overlapMaxY >= overlapMinY
+          ? (overlapMinY + overlapMaxY) / 2
+          : (snapped.minY + snapped.maxY) / 2
+      bestDelta = delta
+      bestAbsDelta = absDelta
+      bestGuides = [
+        {
+          orientation: 'horizontal',
+          position: guideY,
+          start: left.maxX,
+          end: snapped.minX,
+          kind: 'spacing',
+        },
+        {
+          orientation: 'horizontal',
+          position: guideY,
+          start: snapped.maxX,
+          end: right.minX,
+          kind: 'spacing',
+        },
+      ]
+    }
+  }
+
+  return {
+    offset: { x: bestDelta, y: 0 },
+    guides: bestGuides,
+  }
+}
+
+function getVerticalSpacingSnap(
+  bounds: Rect,
+  candidates: CanvasObject[],
+  tolerance: number
+): SnapResult {
+  if (tolerance <= 0) {
+    return { offset: { x: 0, y: 0 }, guides: [] }
+  }
+
+  const candidateBounds = candidates
+    .map((object) => getObjectWorldAabb(object))
+    .filter((entry) => rangesOverlap(entry.minX, entry.maxX, bounds.minX, bounds.maxX))
+    .sort((a, b) => a.minY - b.minY)
+
+  const height = Math.max(1, bounds.maxY - bounds.minY)
+  let bestDelta = 0
+  let bestAbsDelta = tolerance + 1
+  let bestGuides: SmartGuideLine[] = []
+
+  for (let topIndex = 0; topIndex < candidateBounds.length - 1; topIndex += 1) {
+    const top = candidateBounds[topIndex]
+    for (let bottomIndex = topIndex + 1; bottomIndex < candidateBounds.length; bottomIndex += 1) {
+      const bottom = candidateBounds[bottomIndex]
+      const available = bottom.minY - top.maxY
+      if (available < height) {
+        continue
+      }
+      const targetMinY = top.maxY + (available - height) / 2
+      const delta = targetMinY - bounds.minY
+      const absDelta = Math.abs(delta)
+      if (absDelta > tolerance || absDelta >= bestAbsDelta) {
+        continue
+      }
+      const snapped = offsetRect(bounds, { x: 0, y: delta })
+      const overlapMinX = Math.max(top.minX, bottom.minX, snapped.minX)
+      const overlapMaxX = Math.min(top.maxX, bottom.maxX, snapped.maxX)
+      const guideX =
+        overlapMaxX >= overlapMinX
+          ? (overlapMinX + overlapMaxX) / 2
+          : (snapped.minX + snapped.maxX) / 2
+      bestDelta = delta
+      bestAbsDelta = absDelta
+      bestGuides = [
+        {
+          orientation: 'vertical',
+          position: guideX,
+          start: top.maxY,
+          end: snapped.minY,
+          kind: 'spacing',
+        },
+        {
+          orientation: 'vertical',
+          position: guideX,
+          start: snapped.maxY,
+          end: bottom.minY,
+          kind: 'spacing',
+        },
+      ]
+    }
+  }
+
+  return {
+    offset: { x: 0, y: bestDelta },
+    guides: bestGuides,
   }
 }
 
@@ -671,22 +1224,51 @@ function createId() {
 
 interface CanvasViewportProps {
   hoveredSlideId?: string | null
+  hoveredAssetId?: string | null
+  stylePreset?: StylePreset | null
+  creationTool?: CreationToolConfig | null
+  targetDisplayPortalNode?: HTMLDivElement | null
+  onTargetDisplayFrameChange?: (frame: { width: number; height: number }) => void
+  onCreateObjectFromTool?: (
+    tool: CreationToolConfig['type'],
+    frame: Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
+  ) => void
 }
 
 export function CanvasViewport({
   hoveredSlideId = null,
+  hoveredAssetId = null,
+  stylePreset = null,
+  creationTool = null,
+  targetDisplayPortalNode = null,
+  onTargetDisplayFrameChange,
+  onCreateObjectFromTool,
 }: CanvasViewportProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const imageReloadInputRef = useRef<HTMLInputElement>(null)
+  const templatePlaceholderVideoInputRef = useRef<HTMLInputElement>(null)
   const pendingImageReloadObjectIdRef = useRef<string | null>(null)
+  const pendingTemplatePlaceholderImageIdRef = useRef<string | null>(null)
+  const pendingTemplatePlaceholderVideoIdRef = useRef<string | null>(null)
+  const pendingTemplatePlaceholderActivationIdRef = useRef<string | null>(null)
+  const pendingTemplatePlaceholderChoiceRef = useRef<{
+    placeholderId: string
+    choice: TemplatePlaceholderChoice
+  } | null>(null)
+  const pendingTextboxEditIdRef = useRef<string | null>(null)
   const panRef = useRef<PanInteraction | null>(null)
   const objectInteractionRef = useRef<ObjectInteraction | null>(null)
   const imageCropInteractionRef = useRef<ImageCropInteraction | null>(null)
+  const shapeAdjustInteractionRef = useRef<ShapeAdjustInteraction | null>(null)
   const marqueeRef = useRef<MarqueeInteraction | null>(null)
+  const creationInteractionRef = useRef<CreationInteraction | null>(null)
   const clipboardRef = useRef<ClipboardState | null>(null)
   const cameraRef = useRef<CameraState | null>(null)
+  const videoElementMapRef = useRef<Map<string, HTMLVideoElement>>(new Map())
+  const soundElementMapRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const cameraRotationAnimationFrameRef = useRef<number | null>(null)
   const textboxEditingCameraRotationRef = useRef<number | null>(null)
+  const editingTextboxMeasuredHeightPxRef = useRef<number | null>(null)
   const lastPointerDownRef = useRef<{ enterGroupId: string | null; timestampMs: number } | null>(null)
   const lastTextboxPointerRef = useRef<TextboxPointerState | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<Rect | null>(null)
@@ -697,6 +1279,11 @@ export function CanvasViewport({
   const [editingTextboxPlainText, setEditingTextboxPlainText] = useState('')
   const [activeImageEffectsObjectId, setActiveImageEffectsObjectId] = useState<string | null>(null)
   const [styleCopySourceObjectId, setStyleCopySourceObjectId] = useState<string | null>(null)
+  const [smartGuides, setSmartGuides] = useState<SmartGuideLine[]>([])
+  const [creationPreviewRect, setCreationPreviewRect] = useState<Rect | null>(null)
+  const [targetDisplayPreset, setTargetDisplayPreset] = useState<TargetDisplayPreset>('display')
+  const [targetDisplayOrientation, setTargetDisplayOrientation] =
+    useState<TargetDisplayOrientation>('landscape')
 
   const camera = useEditorStore((state) => state.camera)
   const setCamera = useEditorStore((state) => state.setCamera)
@@ -709,6 +1296,7 @@ export function CanvasViewport({
   const activeGroupId = useEditorStore((state) => state.ui.activeGroupId)
   const selectObjects = useEditorStore((state) => state.selectObjects)
   const clearSelection = useEditorStore((state) => state.clearSelection)
+  const selectSlide = useEditorStore((state) => state.selectSlide)
   const createAsset = useEditorStore((state) => state.createAsset)
   const createObject = useEditorStore((state) => state.createObject)
   const enterGroup = useEditorStore((state) => state.enterGroup)
@@ -721,9 +1309,20 @@ export function CanvasViewport({
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const setShapeData = useEditorStore((state) => state.setShapeData)
   const setImageData = useEditorStore((state) => state.setImageData)
+  const setVideoData = useEditorStore((state) => state.setVideoData)
+  const setSoundData = useEditorStore((state) => state.setSoundData)
   const setTextboxData = useEditorStore((state) => state.setTextboxData)
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
+
+  function ensureLibraryAsset(asset: Asset): Asset {
+    const existing = findMatchingLibraryAsset(useEditorStore.getState().document.assets, asset)
+    if (existing) {
+      return existing
+    }
+    createAsset(asset)
+    return asset
+  }
 
   useEffect(() => {
     cameraRef.current = camera
@@ -746,6 +1345,8 @@ export function CanvasViewport({
   const orderedObjects = useMemo(() => [...objects].sort((a, b) => a.zIndex - b.zIndex), [objects])
   const objectById = useMemo(() => new Map(objects.map((object) => [object.id, object])), [objects])
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
+  const hoveredAsset = hoveredAssetId ? assetById.get(hoveredAssetId) ?? null : null
+  const availableTextboxFonts = useMemo(() => collectAvailableTextboxFonts(assets), [assets])
   const editableObjects = useMemo(() => {
     if (activeGroupId === null) {
       return orderedObjects.filter((object) => object.parentGroupId === null)
@@ -766,6 +1367,15 @@ export function CanvasViewport({
   const selectedObjectLockedByAncestor = selectedObject
     ? hasLockedAncestor(selectedObject, objectById)
     : false
+  const selectedShapeAdjustmentHandle =
+    selectedObject && (selectedObject.type === 'shape_rect' || selectedObject.type === 'shape_circle')
+      ? getShapeAdjustmentHandle(
+        selectedObject.type,
+        selectedObject.shapeData,
+        selectedObject.w,
+        selectedObject.h
+      )
+      : null
   const editingTextboxObject = useMemo(() => {
     if (!editingTextboxId) {
       return null
@@ -839,11 +1449,13 @@ export function CanvasViewport({
     }
 
     const sourceShape =
-      source.type === 'shape_rect' || source.type === 'shape_circle' || source.type === 'shape_arrow'
+      source.type === 'shape_rect' || source.type === 'shape_circle'
         ? source.shapeData
         : null
     const sourceTextbox = source.type === 'textbox' ? source.textboxData : null
     const sourceImage = source.type === 'image' ? source.imageData : null
+    const sourceVideo = source.type === 'video' ? source.videoData : null
+    const sourceSound = source.type === 'sound' ? source.soundData : null
 
     const common = sourceShape
       ? {
@@ -862,7 +1474,7 @@ export function CanvasViewport({
           borderType: sourceTextbox.borderType,
           borderWidth: sourceTextbox.borderWidth,
           opacityPercent: sourceTextbox.opacityPercent,
-          radius: 0,
+          radius: sourceTextbox.radius,
           shadowColor: sourceTextbox.shadowColor,
           shadowBlurPx: sourceTextbox.shadowBlurPx,
           shadowAngleDeg: sourceTextbox.shadowAngleDeg,
@@ -878,13 +1490,35 @@ export function CanvasViewport({
             shadowBlurPx: sourceImage.shadowBlurPx,
             shadowAngleDeg: sourceImage.shadowAngleDeg,
           }
-          : null
+          : sourceVideo
+            ? {
+              borderColor: sourceVideo.borderColor,
+              borderType: sourceVideo.borderType,
+              borderWidth: sourceVideo.borderWidth,
+              opacityPercent: sourceVideo.opacityPercent,
+              radius: sourceVideo.radius,
+              shadowColor: sourceVideo.shadowColor,
+              shadowBlurPx: sourceVideo.shadowBlurPx,
+              shadowAngleDeg: sourceVideo.shadowAngleDeg,
+            }
+            : sourceSound
+              ? {
+                borderColor: sourceSound.borderColor,
+                borderType: sourceSound.borderType,
+                borderWidth: sourceSound.borderWidth,
+                opacityPercent: sourceSound.opacityPercent,
+                radius: sourceSound.radius,
+                shadowColor: sourceSound.shadowColor,
+                shadowBlurPx: sourceSound.shadowBlurPx,
+                shadowAngleDeg: sourceSound.shadowAngleDeg,
+              }
+              : null
 
     if (!common) {
       return
     }
 
-    if (target.type === 'shape_rect' || target.type === 'shape_circle' || target.type === 'shape_arrow') {
+    if (target.type === 'shape_rect' || target.type === 'shape_circle') {
       const nextShapeData: ShapeData = {
         ...target.shapeData,
         borderColor: common.borderColor,
@@ -916,6 +1550,7 @@ export function CanvasViewport({
         borderType: common.borderType,
         borderWidth: common.borderWidth,
         opacityPercent: common.opacityPercent,
+        radius: common.radius,
         shadowColor: common.shadowColor,
         shadowBlurPx: common.shadowBlurPx,
         shadowAngleDeg: common.shadowAngleDeg,
@@ -951,6 +1586,36 @@ export function CanvasViewport({
           }
           : {}),
       })
+      return
+    }
+
+    if (target.type === 'video') {
+      setVideoData(target.id, {
+        ...target.videoData,
+        borderColor: common.borderColor,
+        borderType: common.borderType,
+        borderWidth: common.borderWidth,
+        opacityPercent: common.opacityPercent,
+        radius: common.radius,
+        shadowColor: common.shadowColor,
+        shadowBlurPx: common.shadowBlurPx,
+        shadowAngleDeg: common.shadowAngleDeg,
+      })
+      return
+    }
+
+    if (target.type === 'sound') {
+      setSoundData(target.id, {
+        ...target.soundData,
+        borderColor: common.borderColor,
+        borderType: common.borderType,
+        borderWidth: common.borderWidth,
+        opacityPercent: common.opacityPercent,
+        radius: common.radius,
+        shadowColor: common.shadowColor,
+        shadowBlurPx: common.shadowBlurPx,
+        shadowAngleDeg: common.shadowAngleDeg,
+      })
     }
   }
 
@@ -964,6 +1629,18 @@ export function CanvasViewport({
     () => selectedObjects.filter((object) => !isObjectEffectivelyLocked(object, objectById)),
     [objectById, selectedObjects]
   )
+  const selectedAlignmentUnits = useMemo<AlignmentSelectionUnit[]>(
+    () =>
+      selectedUnlockedObjects.map((object) => ({
+        id: object.id,
+        bounds: getObjectWorldAabb(object),
+        targets:
+          activeGroupId === null && object.type === 'group'
+            ? collectGroupTransformTargets(object, objectById)
+            : [object],
+      })),
+    [activeGroupId, objectById, selectedUnlockedObjects]
+  )
   const selectedUnlockedIds = useMemo(
     () => selectedUnlockedObjects.map((object) => object.id),
     [selectedUnlockedObjects]
@@ -972,8 +1649,25 @@ export function CanvasViewport({
     () => getSelectionKey(selectedUnlockedIds),
     [selectedUnlockedIds]
   )
+  const canAlignSelectedObjects = selectedAlignmentUnits.length > 1
+  const canDistributeSelectedObjects = selectedAlignmentUnits.length > 2
   const activeCropObjectId =
     selectedObject?.type === 'image' && selectedObject.imageData.cropEnabled ? selectedObject.id : null
+
+  function disableActiveCropMode() {
+    if (!activeCropObjectId) {
+      return false
+    }
+    const cropObject = objectById.get(activeCropObjectId)
+    if (!cropObject || cropObject.type !== 'image' || !cropObject.imageData.cropEnabled) {
+      return false
+    }
+    setImageData(cropObject.id, {
+      ...cropObject.imageData,
+      cropEnabled: false,
+    })
+    return true
+  }
 
   useEffect(() => {
     if (selectedObject || selectedUnlockedObjects.length < 2) {
@@ -1018,11 +1712,20 @@ export function CanvasViewport({
         animateCameraRotationTo(textboxEditingCameraRotationRef.current)
         textboxEditingCameraRotationRef.current = null
       }
+      editingTextboxMeasuredHeightPxRef.current = null
       setEditingTextboxId(null)
       setEditingTextboxHtml('')
       setEditingTextboxPlainText('')
     }
   }, [animateCameraRotationTo, editingTextboxId, editingTextboxObject])
+
+  useEffect(() => {
+    if (creationTool) {
+      return
+    }
+    creationInteractionRef.current = null
+    setCreationPreviewRect(null)
+  }, [creationTool])
 
   const gridStep = useMemo(
     () => getDynamicGridStep(canvasSettings.baseGridSize, camera.zoom),
@@ -1033,6 +1736,54 @@ export function CanvasViewport({
     () => getViewWorldBounds(camera, viewportSize),
     [camera, viewportSize]
   )
+  const targetDisplayFrame = useMemo(() => {
+    if (targetDisplayPreset === 'display') {
+      return {
+        left: 0,
+        top: 0,
+        width: viewportSize.width,
+        height: viewportSize.height,
+        aspectRatioLabel: formatAspectRatio(viewportSize.width, viewportSize.height),
+        isConstrained: false,
+      }
+    }
+
+    const preset = TARGET_DISPLAY_PRESETS.find((entry) => entry.value === targetDisplayPreset)
+    const baseWidth = preset?.width ?? viewportSize.width
+    const baseHeight = preset?.height ?? viewportSize.height
+    const ratioWidth = targetDisplayOrientation === 'landscape' ? Math.max(baseWidth, baseHeight) : Math.min(baseWidth, baseHeight)
+    const ratioHeight = targetDisplayOrientation === 'landscape' ? Math.min(baseWidth, baseHeight) : Math.max(baseWidth, baseHeight)
+    const availableWidth = Math.max(
+      1,
+      viewportSize.width - TARGET_DISPLAY_MIN_BORDER_SEPARATION_PX * 2
+    )
+    const availableHeight = Math.max(
+      1,
+      viewportSize.height - TARGET_DISPLAY_MIN_BORDER_SEPARATION_PX * 2
+    )
+    const scale = Math.min(
+      availableWidth / Math.max(1, ratioWidth),
+      availableHeight / Math.max(1, ratioHeight)
+    )
+    const width = Math.max(1, ratioWidth * scale)
+    const height = Math.max(1, ratioHeight * scale)
+
+    return {
+      left: (viewportSize.width - width) / 2,
+      top: (viewportSize.height - height) / 2,
+      width,
+      height,
+      aspectRatioLabel: formatAspectRatio(ratioWidth, ratioHeight),
+      isConstrained: true,
+    }
+  }, [targetDisplayOrientation, targetDisplayPreset, viewportSize.height, viewportSize.width])
+
+  useEffect(() => {
+    onTargetDisplayFrameChange?.({
+      width: targetDisplayFrame.width,
+      height: targetDisplayFrame.height,
+    })
+  }, [onTargetDisplayFrameChange, targetDisplayFrame.height, targetDisplayFrame.width])
 
   const majorGridLines = useMemo(() => {
     if (!canvasSettings.gridVisible) {
@@ -1069,11 +1820,28 @@ export function CanvasViewport({
   ])
 
   const slideGuides = useMemo(() => {
+    const frameViewport = {
+      width: targetDisplayFrame.width,
+      height: targetDisplayFrame.height,
+    }
+    const frameOffset = {
+      x: targetDisplayFrame.left,
+      y: targetDisplayFrame.top,
+    }
+
+    const worldToTargetFrameScreen = (world: Point) => {
+      const withinFrame = worldToScreen(world, camera, frameViewport)
+      return {
+        x: frameOffset.x + withinFrame.x,
+        y: frameOffset.y + withinFrame.y,
+      }
+    }
+
     return orderedSlides.map((slide) => {
       const safeSlideZoom = Math.max(0.0001, slide.zoom)
-      const frameWorldWidth = viewportSize.width / safeSlideZoom
-      const frameWorldHeight = viewportSize.height / safeSlideZoom
-      const centerScreen = worldToScreen({ x: slide.x, y: slide.y }, camera, viewportSize)
+      const frameWorldWidth = targetDisplayFrame.width / safeSlideZoom
+      const frameWorldHeight = targetDisplayFrame.height / safeSlideZoom
+      const centerScreen = worldToTargetFrameScreen({ x: slide.x, y: slide.y })
       const frameWidthPx = frameWorldWidth * camera.zoom
       const frameHeightPx = frameWorldHeight * camera.zoom
       const frameWorldRotation = -slide.rotation
@@ -1086,7 +1854,7 @@ export function CanvasViewport({
         x: slide.x + topLeftLocal.x,
         y: slide.y + topLeftLocal.y,
       }
-      const topLeftScreen = worldToScreen(topLeftWorld, camera, viewportSize)
+      const topLeftScreen = worldToTargetFrameScreen(topLeftWorld)
 
       return {
         id: slide.id,
@@ -1102,7 +1870,22 @@ export function CanvasViewport({
         isHovered: slide.id === hoveredSlideId,
       }
     })
-  }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, viewportSize])
+  }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, targetDisplayFrame])
+
+  const activeSlideBadge = useMemo(() => {
+    if (!selectedSlideId) {
+      return null
+    }
+    const index = orderedSlides.findIndex((slide) => slide.id === selectedSlideId)
+    if (index < 0) {
+      return null
+    }
+    const slide = orderedSlides[index]
+    return {
+      label: `Slide ${index + 1} / ${orderedSlides.length}`,
+      name: slide.name || `Slide ${index + 1}`,
+    }
+  }, [orderedSlides, selectedSlideId])
 
   function getViewportRelativePoint(clientX: number, clientY: number): Point {
     const element = viewportRef.current
@@ -1182,12 +1965,13 @@ export function CanvasViewport({
     const selectedSet = new Set(contextSelectionIds)
     return editableObjects.filter((object) => selectedSet.has(object.id))
   }, [contextSelectionIds, editableObjects])
-  const contextUnlockedIds = useMemo(
-    () =>
-      contextSelectionObjects
-        .filter((object) => !isObjectEffectivelyLocked(object, objectById))
-        .map((object) => object.id),
+  const contextUnlockedObjects = useMemo(
+    () => contextSelectionObjects.filter((object) => !isObjectEffectivelyLocked(object, objectById)),
     [contextSelectionObjects, objectById]
+  )
+  const contextUnlockedIds = useMemo(
+    () => contextUnlockedObjects.map((object) => object.id),
+    [contextUnlockedObjects]
   )
 
   const canBringToFront = canReorderLayer(objects, contextSelectionIds, 'top')
@@ -1221,6 +2005,67 @@ export function CanvasViewport({
       return
     }
     reorderObjectsLayer(contextSelectionIds, action)
+  }
+
+  function getAlignmentActionLabel(action: AlignmentAction) {
+    switch (action) {
+      case 'left':
+        return 'Align left'
+      case 'right':
+        return 'Align right'
+      case 'top':
+        return 'Align top'
+      case 'bottom':
+        return 'Align bottom'
+      case 'center-horizontal':
+        return 'Align horizontal centers'
+      case 'center-vertical':
+        return 'Align vertical centers'
+      case 'center':
+        return 'Align center'
+      case 'distribute-horizontal':
+        return 'Distribute horizontally'
+      case 'distribute-vertical':
+        return 'Distribute vertically'
+    }
+  }
+
+  function applyAlignment(action: AlignmentAction) {
+    if (selectedAlignmentUnits.length < 2) {
+      return
+    }
+
+    const deltas = getAlignmentDeltas(
+      selectedAlignmentUnits.map((unit) => ({
+        id: unit.id,
+        bounds: unit.bounds,
+      })),
+      action
+    ).filter((delta) => Math.abs(delta.x) > 0.0001 || Math.abs(delta.y) > 0.0001)
+
+    if (deltas.length === 0) {
+      return
+    }
+
+    const deltaById = new Map(deltas.map((delta) => [delta.id, delta]))
+    beginCommandBatch(getAlignmentActionLabel(action))
+    selectedAlignmentUnits.forEach((unit) => {
+      const delta = deltaById.get(unit.id)
+      if (!delta) {
+        return
+      }
+      unit.targets.forEach((target) => {
+        moveObject(target.id, {
+          x: target.x + delta.x,
+          y: target.y + delta.y,
+          w: target.w,
+          h: target.h,
+          rotation: target.rotation,
+        })
+      })
+    })
+    commitCommandBatch()
+    setMultiSelectionFrame(null)
   }
 
   function animateCameraRotationTo(targetRotation: number) {
@@ -1270,6 +2115,7 @@ export function CanvasViewport({
       textboxEditingCameraRotationRef.current = camera.rotation
     }
 
+    editingTextboxMeasuredHeightPxRef.current = null
     animateCameraRotationTo(-target.rotation)
 
     setEditingTextboxId(target.id)
@@ -1288,15 +2134,16 @@ export function CanvasViewport({
       return
     }
 
+    const contentScale = resolveTextboxObjectScale(target.textboxData, target.scalePercent)
     let desiredHeightWorld: number
     if (Number.isFinite(measuredHeightPx) && measuredHeightPx && measuredHeightPx > 0) {
-      desiredHeightWorld = Math.max(24, measuredHeightPx)
+      desiredHeightWorld = Math.max(1, measuredHeightPx * contentScale)
     } else {
       const firstRun = target.textboxData.runs[0] ?? createDefaultTextRun('')
       const lines = Math.max(1, nextText.split('\n').length)
-      const lineHeightPx = Math.max(12, firstRun.fontSize * TEXTBOX_LINE_HEIGHT)
+      const lineHeightPx = Math.max(12, firstRun.fontSize * TEXTBOX_LINE_HEIGHT * contentScale)
       const verticalPaddingPx = 14
-      desiredHeightWorld = Math.max(24, lines * lineHeightPx + verticalPaddingPx)
+      desiredHeightWorld = Math.max(1, lines * lineHeightPx + verticalPaddingPx)
     }
 
     // Auto-height should only expand the textbox while editing, never shrink it.
@@ -1322,6 +2169,7 @@ export function CanvasViewport({
       setEditingTextboxId(null)
       setEditingTextboxHtml('')
       setEditingTextboxPlainText('')
+      editingTextboxMeasuredHeightPxRef.current = null
       return
     }
 
@@ -1332,7 +2180,11 @@ export function CanvasViewport({
         richTextHtml: editingTextboxHtml,
         runs: [{ ...baseRun, text: editingTextboxPlainText }],
       }
-      applyTextboxAutoHeight(editingTextboxObject, editingTextboxPlainText)
+      applyTextboxAutoHeight(
+        editingTextboxObject,
+        editingTextboxPlainText,
+        editingTextboxMeasuredHeightPxRef.current ?? undefined
+      )
       setTextboxData(editingTextboxObject.id, nextTextboxData)
     }
 
@@ -1344,6 +2196,7 @@ export function CanvasViewport({
     setEditingTextboxId(null)
     setEditingTextboxHtml('')
     setEditingTextboxPlainText('')
+    editingTextboxMeasuredHeightPxRef.current = null
   }
 
   function copySelection(ids: string[]) {
@@ -1430,13 +2283,433 @@ export function CanvasViewport({
     }
   }
 
+  function createTextboxFromTemplatePlaceholder(
+    placeholder: Extract<CanvasObject, { type: 'template_placeholder' }>,
+    listType: 'none' | 'bullet'
+  ): Extract<CanvasObject, { type: 'textbox' }>['textboxData'] {
+    const textStyleRole = stylePreset?.textStyles.find((entry) => entry.id === 'text') ?? null
+    const textColor = textStyleRole?.color ?? stylePreset?.textColor ?? '#f0f3fc'
+    const fontFamily = textStyleRole?.fontFamily ?? stylePreset?.fontFamily ?? 'Arial'
+    const fontSize = textStyleRole?.fontSize ?? 28
+    const isBulletList = listType === 'bullet'
+    const text = isBulletList ? 'List item' : placeholder.templatePlaceholderData.prompt
+    const richTextHtml = isBulletList
+      ? `<ul><li><span style="color: ${textColor}; font-size: ${fontSize}px; font-family: ${fontFamily};">List item</span></li></ul>`
+      : `<p><span style="color: ${textColor}; font-size: ${fontSize}px; font-family: ${fontFamily};">${placeholder.templatePlaceholderData.prompt}</span></p>`
+
+    return {
+      runs: [
+        {
+          ...createDefaultTextRun(text),
+          color: textColor,
+          fontSize,
+        },
+      ],
+      richTextHtml,
+      fontFamily,
+      alignment: isBulletList ? 'left' : 'center',
+      verticalAlignment: 'top',
+      listType,
+      autoHeight: true,
+      fillMode: 'solid',
+      backgroundColor: stylePreset?.textboxBackground ?? DEFAULT_TEXTBOX_BACKGROUND,
+      fillGradient: null,
+      borderColor: stylePreset?.textboxBorder ?? DEFAULT_TEXTBOX_BORDER_COLOR,
+      borderType: 'solid',
+      borderWidth: DEFAULT_TEXTBOX_BORDER_WIDTH,
+      radius: 0,
+      opacityPercent: 100,
+      shadowColor: '#000000',
+      shadowBlurPx: 0,
+      shadowAngleDeg: 45,
+    }
+  }
+
+  function replaceTemplatePlaceholderWithTextbox(
+    placeholder: Extract<CanvasObject, { type: 'template_placeholder' }>,
+    listType: 'none' | 'bullet'
+  ) {
+    beginCommandBatch(listType === 'bullet' ? 'Create list from placeholder' : 'Create text from placeholder')
+    deleteObjects([placeholder.id])
+    createObject({
+      id: placeholder.id,
+      type: 'textbox',
+      x: placeholder.x,
+      y: placeholder.y,
+      w: placeholder.w,
+      h: placeholder.h,
+      rotation: placeholder.rotation,
+      scalePercent: placeholder.scalePercent,
+      keepAspectRatio: placeholder.keepAspectRatio,
+      locked: placeholder.locked,
+      zIndex: placeholder.zIndex,
+      parentGroupId: placeholder.parentGroupId,
+      textboxData: createTextboxFromTemplatePlaceholder(placeholder, listType),
+    })
+    commitCommandBatch()
+    selectObjects([placeholder.id])
+    pendingTextboxEditIdRef.current = placeholder.id
+  }
+
+  function activateTemplatePlaceholder(placeholderId: string, forcedChoice?: TemplatePlaceholderChoice) {
+    const placeholder = objectById.get(placeholderId)
+    if (!placeholder || placeholder.type !== 'template_placeholder') {
+      return
+    }
+    if (isObjectEffectivelyLocked(placeholder, objectById)) {
+      selectObjects([placeholder.id])
+      return
+    }
+
+    const choice: TemplatePlaceholderChoice | null =
+      forcedChoice ??
+      (placeholder.templatePlaceholderData.kind === 'list'
+        ? 'list'
+        : placeholder.templatePlaceholderData.kind === 'image'
+          ? 'image'
+          : placeholder.templatePlaceholderData.kind === 'universal'
+            ? null
+            : 'text')
+
+    if (choice === null) {
+      selectObjects([placeholder.id])
+      return
+    }
+
+    if (choice === 'image') {
+      pendingTemplatePlaceholderImageIdRef.current = placeholder.id
+      imageReloadInputRef.current?.click()
+      return
+    }
+    if (choice === 'video') {
+      pendingTemplatePlaceholderVideoIdRef.current = placeholder.id
+      templatePlaceholderVideoInputRef.current?.click()
+      return
+    }
+    replaceTemplatePlaceholderWithTextbox(placeholder, choice === 'list' ? 'bullet' : 'none')
+  }
+
+  function handleTemplatePlaceholderChoice(
+    placeholder: Extract<CanvasObject, { type: 'template_placeholder' }>,
+    choice: TemplatePlaceholderChoice
+  ) {
+    if (isObjectEffectivelyLocked(placeholder, objectById)) {
+      selectObjects([placeholder.id])
+      return
+    }
+    if (!editableObjectIds.has(placeholder.id)) {
+      if (activeGroupId === null && placeholder.parentGroupId) {
+        pendingTemplatePlaceholderActivationIdRef.current = null
+        pendingTemplatePlaceholderChoiceRef.current = {
+          placeholderId: placeholder.id,
+          choice,
+        }
+        enterGroup(placeholder.parentGroupId)
+      }
+      return
+    }
+    activateTemplatePlaceholder(placeholder.id, choice)
+  }
+
+  function fitMediaToPlaceholderFrame(
+    placeholder: Pick<CanvasObject, 'w' | 'h'>,
+    intrinsicWidth: number,
+    intrinsicHeight: number
+  ) {
+    const placeholderWidth = Math.max(1, placeholder.w)
+    const placeholderHeight = Math.max(1, placeholder.h)
+    const mediaWidth = Math.max(1, intrinsicWidth)
+    const mediaHeight = Math.max(1, intrinsicHeight)
+    const placeholderAspect = placeholderWidth / placeholderHeight
+    const mediaAspect = mediaWidth / mediaHeight
+
+    if (mediaAspect > placeholderAspect) {
+      return {
+        w: placeholderWidth,
+        h: Math.max(1, placeholderWidth / mediaAspect),
+      }
+    }
+
+    return {
+      w: Math.max(1, placeholderHeight * mediaAspect),
+      h: placeholderHeight,
+    }
+  }
+
+  function replaceTemplatePlaceholderWithMedia(
+    placeholder: Extract<CanvasObject, { type: 'template_placeholder' }>,
+    options: {
+      kind: 'image' | 'video'
+      assetId: string
+      intrinsicWidth: number
+      intrinsicHeight: number
+    }
+  ) {
+    const fitted = fitMediaToPlaceholderFrame(
+      placeholder,
+      options.intrinsicWidth,
+      options.intrinsicHeight
+    )
+
+    beginCommandBatch(options.kind === 'image' ? 'Fill image placeholder' : 'Fill video placeholder')
+    deleteObjects([placeholder.id])
+    if (options.kind === 'image') {
+      createObject({
+        id: placeholder.id,
+        type: 'image',
+        x: placeholder.x,
+        y: placeholder.y,
+        w: fitted.w,
+        h: fitted.h,
+        rotation: placeholder.rotation,
+        scalePercent: placeholder.scalePercent,
+        keepAspectRatio: true,
+        locked: placeholder.locked,
+        zIndex: placeholder.zIndex,
+        parentGroupId: placeholder.parentGroupId,
+        imageData: {
+          ...createDefaultImageData(
+            options.assetId,
+            Math.max(1, options.intrinsicWidth),
+            Math.max(1, options.intrinsicHeight),
+            stylePreset?.assetStyle.imageBorder ?? stylePreset?.imageBorder
+          ),
+        },
+      })
+    } else {
+      createObject({
+        id: placeholder.id,
+        type: 'video',
+        x: placeholder.x,
+        y: placeholder.y,
+        w: fitted.w,
+        h: fitted.h,
+        rotation: placeholder.rotation,
+        scalePercent: placeholder.scalePercent,
+        keepAspectRatio: true,
+        locked: placeholder.locked,
+        zIndex: placeholder.zIndex,
+        parentGroupId: placeholder.parentGroupId,
+        videoData: createDefaultVideoData(
+          options.assetId,
+          Math.max(1, options.intrinsicWidth),
+          Math.max(1, options.intrinsicHeight),
+          stylePreset?.assetStyle.videoBorder ?? stylePreset?.imageBorder
+        ),
+      })
+    }
+    commitCommandBatch()
+    selectObjects([placeholder.id])
+  }
+
+  function createDroppedMediaFromAsset(
+    kind: 'image' | 'video' | 'sound',
+    assetId: string,
+    intrinsicWidth: number,
+    intrinsicHeight: number,
+    world: Point
+  ) {
+    const objectId = createId()
+    const frame = getDefaultPlacedMediaSize(kind, intrinsicWidth, intrinsicHeight, camera.zoom)
+    if (kind === 'sound') {
+      createObject({
+        id: objectId,
+        type: 'sound',
+        x: world.x,
+        y: world.y,
+        w: frame.w,
+        h: frame.h,
+        rotation: -camera.rotation,
+        scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+        keepAspectRatio: false,
+        locked: false,
+        zIndex: objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1,
+        parentGroupId: activeGroupId,
+        soundData: createDefaultSoundData(
+          assetId,
+          stylePreset?.assetStyle.audioBorder ?? stylePreset?.imageBorder,
+          frame.h / 2
+        ),
+      })
+    } else if (kind === 'video') {
+      createObject({
+        id: objectId,
+        type: 'video',
+        x: world.x,
+        y: world.y,
+        w: frame.w,
+        h: frame.h,
+        rotation: -camera.rotation,
+        scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+        keepAspectRatio: true,
+        locked: false,
+        zIndex: objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1,
+        parentGroupId: activeGroupId,
+        videoData: createDefaultVideoData(
+          assetId,
+          intrinsicWidth,
+          intrinsicHeight,
+          stylePreset?.assetStyle.videoBorder ?? stylePreset?.imageBorder
+        ),
+      })
+    } else {
+      createObject({
+        id: objectId,
+        type: 'image',
+        x: world.x,
+        y: world.y,
+        w: frame.w,
+        h: frame.h,
+        rotation: -camera.rotation,
+        scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+        keepAspectRatio: true,
+        locked: false,
+        zIndex: objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1,
+        parentGroupId: activeGroupId,
+        imageData: {
+          ...createDefaultImageData(
+            assetId,
+            intrinsicWidth,
+            intrinsicHeight,
+            stylePreset?.assetStyle.imageBorder ?? stylePreset?.imageBorder
+          ),
+        },
+      })
+    }
+    selectObjects([objectId])
+  }
+
+  function getDropTargetImageObject(target: EventTarget | null) {
+    const element = target instanceof Element ? target : null
+    const objectElement = element?.closest<HTMLElement>('.canvas-object[data-object-id]')
+    const objectId = objectElement?.dataset.objectId
+    if (!objectId) {
+      return null
+    }
+    const object = objectById.get(objectId)
+    if (!object || object.type !== 'image') {
+      return null
+    }
+    if (isObjectEffectivelyLocked(object, objectById)) {
+      return null
+    }
+    return object
+  }
+
+  function getDropTargetTemplatePlaceholderObject(target: EventTarget | null) {
+    const element = target instanceof Element ? target : null
+    const objectElement = element?.closest<HTMLElement>('.canvas-object[data-object-id]')
+    const objectId = objectElement?.dataset.objectId
+    if (!objectId) {
+      return null
+    }
+    const object = objectById.get(objectId)
+    if (!object || object.type !== 'template_placeholder') {
+      return null
+    }
+    if (isObjectEffectivelyLocked(object, objectById)) {
+      return null
+    }
+    return object
+  }
+
   async function handleViewportDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
     closeContextMenu()
 
-    const files = Array.from(event.dataTransfer.files ?? []).filter(isSupportedImageFile)
+    const assetPayloadRaw = event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME)
+    if (assetPayloadRaw) {
+      try {
+        const assetPayload = JSON.parse(assetPayloadRaw) as AssetLibraryDragPayload
+        const asset = assetById.get(assetPayload.assetId)
+        if (asset) {
+          const dropTargetPlaceholder =
+            (assetPayload.kind === 'image' ||
+              assetPayload.kind === 'video') &&
+            getDropTargetTemplatePlaceholderObject(event.target)
+          if (dropTargetPlaceholder) {
+            const mediaKind = assetPayload.kind === 'video' ? 'video' : 'image'
+            const intrinsicWidth = Math.max(
+              1,
+              assetPayload.intrinsicWidth,
+              asset.intrinsicWidth ?? (mediaKind === 'video' ? 1280 : 1200)
+            )
+            const intrinsicHeight = Math.max(
+              1,
+              assetPayload.intrinsicHeight,
+              asset.intrinsicHeight ?? (mediaKind === 'video' ? 720 : 800)
+            )
+            replaceTemplatePlaceholderWithMedia(dropTargetPlaceholder, {
+              kind: mediaKind,
+              assetId: asset.id,
+              intrinsicWidth,
+              intrinsicHeight,
+            })
+            return
+          }
+          const dropTargetImage =
+            assetPayload.kind === 'image' &&
+            getDropTargetImageObject(event.target)
+          if (dropTargetImage) {
+            setImageData(dropTargetImage.id, {
+              ...dropTargetImage.imageData,
+              assetId: asset.id,
+              intrinsicWidth: Math.max(1, assetPayload.intrinsicWidth),
+              intrinsicHeight: Math.max(1, assetPayload.intrinsicHeight),
+            })
+            selectObjects([dropTargetImage.id])
+            return
+          }
+          const pointer = getViewportRelativePoint(event.clientX, event.clientY)
+          const world = screenToWorld(pointer, camera, viewportSize)
+          createDroppedMediaFromAsset(
+            assetPayload.kind === 'video'
+              ? 'video'
+              : assetPayload.kind === 'audio'
+                ? 'sound'
+                : 'image',
+            asset.id,
+            assetPayload.intrinsicWidth,
+            assetPayload.intrinsicHeight,
+            world
+          )
+          return
+        }
+      } catch {
+        // Ignore malformed drag data and continue with file import fallback.
+      }
+    }
+
+    const files = Array.from(event.dataTransfer.files ?? []).filter(isSupportedLibraryAssetFile)
     if (files.length === 0) {
       return
+    }
+
+    const dropTargetPlaceholder = getDropTargetTemplatePlaceholderObject(event.target)
+    if (dropTargetPlaceholder) {
+      const mediaFile = files.find((file) => {
+        const kind = resolveLibraryAssetKind({ mimeType: file.type, name: file.name })
+        return kind === 'image' || kind === 'video'
+      })
+      if (mediaFile) {
+        try {
+          const asset = ensureLibraryAsset(await buildLibraryAsset(mediaFile, createId()))
+          const mediaKind =
+            resolveLibraryAssetKind({ mimeType: mediaFile.type, name: mediaFile.name }) === 'video'
+              ? 'video'
+              : 'image'
+          replaceTemplatePlaceholderWithMedia(dropTargetPlaceholder, {
+            kind: mediaKind,
+            assetId: asset.id,
+            intrinsicWidth: Math.max(1, asset.intrinsicWidth ?? (mediaKind === 'video' ? 1280 : 1200)),
+            intrinsicHeight: Math.max(1, asset.intrinsicHeight ?? (mediaKind === 'video' ? 720 : 800)),
+          })
+          return
+        } catch {
+          window.alert('Failed to import dropped media file.')
+          return
+        }
+      }
     }
 
     const pointer = getViewportRelativePoint(event.clientX, event.clientY)
@@ -1444,59 +2717,85 @@ export function CanvasViewport({
     const zIndexStart = objects.reduce((max, object) => Math.max(max, object.zIndex), 0) + 1
     const createdIds: string[] = []
 
-    beginCommandBatch('Import images')
+    beginCommandBatch(files.length === 1 ? 'Import asset' : 'Import assets')
     try {
       for (const [index, file] of files.entries()) {
-        const dataUrl = await readFileAsDataUrl(file)
-        const dimensions = await getImageDimensions(dataUrl).catch(() => ({
-          width: 1200,
-          height: 800,
-        }))
-        const asset: Asset = {
-          id: createId(),
-          name: file.name || `image-${index + 1}`,
-          mimeType: file.type,
-          dataBase64: toAssetBase64(dataUrl),
+        const assetKind = resolveLibraryAssetKind({ mimeType: file.type, name: file.name })
+        if (assetKind !== 'image' && assetKind !== 'video' && assetKind !== 'audio') {
+          continue
         }
-        createAsset(asset)
-
-        const aspectRatio = Math.max(0.0001, dimensions.width / Math.max(1, dimensions.height))
-        const width = 260
-        const height = Math.max(40, width / aspectRatio)
+        const asset = ensureLibraryAsset(await buildLibraryAsset(file, createId()))
         const objectId = createId()
-        createObject({
-          id: objectId,
-          type: 'image',
-          x: world.x + index * 20,
-          y: world.y + index * 20,
-          w: width,
-          h: height,
-          rotation: -camera.rotation,
-          locked: false,
-          zIndex: zIndexStart + index,
-          parentGroupId: activeGroupId,
-          imageData: {
-            assetId: asset.id,
-            intrinsicWidth: dimensions.width,
-            intrinsicHeight: dimensions.height,
+        if (assetKind === 'audio') {
+          const frame = getDefaultPlacedMediaSize('sound', 1, 1, camera.zoom)
+          createObject({
+            id: objectId,
+            type: 'sound',
+            x: world.x + index * 20,
+            y: world.y + index * 20,
+            w: frame.w,
+            h: frame.h,
+            rotation: -camera.rotation,
+            scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
             keepAspectRatio: false,
-            borderColor: '#b2c6ee',
-            borderType: 'solid',
-            borderWidth: 0,
-            radius: 0,
-            opacityPercent: 100,
-            cropEnabled: false,
-            cropLeftPercent: 0,
-            cropTopPercent: 0,
-            cropRightPercent: 0,
-            cropBottomPercent: 0,
-            effectsEnabled: false,
-            filterPreset: 'none',
-            shadowColor: '#000000',
-            shadowBlurPx: 0,
-            shadowAngleDeg: 45,
-          },
-        })
+            locked: false,
+            zIndex: zIndexStart + index,
+            parentGroupId: activeGroupId,
+            soundData: createDefaultSoundData(
+              asset.id,
+              stylePreset?.assetStyle.audioBorder ?? stylePreset?.imageBorder,
+              frame.h / 2
+            ),
+          })
+        } else if (assetKind === 'video') {
+          const intrinsicWidth = Math.max(1, asset.intrinsicWidth ?? 1280)
+          const intrinsicHeight = Math.max(1, asset.intrinsicHeight ?? 720)
+          const frame = getDefaultPlacedMediaSize('video', intrinsicWidth, intrinsicHeight, camera.zoom)
+          createObject({
+            id: objectId,
+            type: 'video',
+            x: world.x + index * 20,
+            y: world.y + index * 20,
+            w: frame.w,
+            h: frame.h,
+            rotation: -camera.rotation,
+            scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+            keepAspectRatio: true,
+            locked: false,
+            zIndex: zIndexStart + index,
+            parentGroupId: activeGroupId,
+            videoData: createDefaultVideoData(
+              asset.id,
+              intrinsicWidth,
+              intrinsicHeight,
+              stylePreset?.assetStyle.videoBorder ?? stylePreset?.imageBorder
+            ),
+          })
+        } else {
+          const intrinsicWidth = Math.max(1, asset.intrinsicWidth ?? 1200)
+          const intrinsicHeight = Math.max(1, asset.intrinsicHeight ?? 800)
+          const frame = getDefaultPlacedMediaSize('image', intrinsicWidth, intrinsicHeight, camera.zoom)
+          createObject({
+            id: objectId,
+            type: 'image',
+            x: world.x + index * 20,
+            y: world.y + index * 20,
+            w: frame.w,
+            h: frame.h,
+            rotation: -camera.rotation,
+            scalePercent: getZoomAdjustedObjectScalePercent(camera.zoom),
+            keepAspectRatio: true,
+            locked: false,
+            zIndex: zIndexStart + index,
+            parentGroupId: activeGroupId,
+            imageData: createDefaultImageData(
+              asset.id,
+              intrinsicWidth,
+              intrinsicHeight,
+              stylePreset?.assetStyle.imageBorder ?? stylePreset?.imageBorder
+            ),
+          })
+        }
         createdIds.push(objectId)
       }
       commitCommandBatch()
@@ -1515,11 +2814,54 @@ export function CanvasViewport({
 
   async function handleImageReloadFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
+    const targetTemplatePlaceholderId = pendingTemplatePlaceholderImageIdRef.current
     const targetObjectId = pendingImageReloadObjectIdRef.current
+    pendingTemplatePlaceholderImageIdRef.current = null
     pendingImageReloadObjectIdRef.current = null
     event.target.value = ''
 
-    if (!file || !targetObjectId || !isSupportedImageFile(file)) {
+    if (!file || !isSupportedImageFile(file)) {
+      return
+    }
+
+    if (targetTemplatePlaceholderId) {
+      const targetPlaceholder = objects.find(
+        (entry): entry is Extract<CanvasObject, { type: 'template_placeholder' }> =>
+          entry.id === targetTemplatePlaceholderId &&
+          entry.type === 'template_placeholder'
+      )
+      if (!targetPlaceholder) {
+        return
+      }
+
+      try {
+        const dataUrl = await readFileAsDataUrl(file)
+        const dimensions = await getImageDimensions(dataUrl).catch(() => ({
+          width: 1200,
+          height: 800,
+        }))
+        const asset = ensureLibraryAsset({
+          id: createId(),
+          name: file.name || 'image',
+          mimeType: file.type,
+          dataBase64: toAssetBase64(dataUrl),
+          intrinsicWidth: dimensions.width,
+          intrinsicHeight: dimensions.height,
+          durationSec: null,
+        })
+        replaceTemplatePlaceholderWithMedia(targetPlaceholder, {
+          kind: 'image',
+          assetId: asset.id,
+          intrinsicWidth: dimensions.width,
+          intrinsicHeight: dimensions.height,
+        })
+      } catch {
+        window.alert('Failed to load image file.')
+      }
+      return
+    }
+
+    if (!targetObjectId) {
       return
     }
 
@@ -1537,15 +2879,16 @@ export function CanvasViewport({
         width: targetObject.imageData.intrinsicWidth,
         height: targetObject.imageData.intrinsicHeight,
       }))
-      const asset: Asset = {
+      beginCommandBatch('Reload image')
+      const asset = ensureLibraryAsset({
         id: createId(),
         name: file.name || 'image',
         mimeType: file.type,
         dataBase64: toAssetBase64(dataUrl),
-      }
-
-      beginCommandBatch('Reload image')
-      createAsset(asset)
+        intrinsicWidth: dimensions.width,
+        intrinsicHeight: dimensions.height,
+        durationSec: null,
+      })
       setImageData(targetObject.id, {
         ...targetObject.imageData,
         assetId: asset.id,
@@ -1558,6 +2901,85 @@ export function CanvasViewport({
       commitCommandBatch()
     }
   }
+
+  async function handleTemplatePlaceholderVideoFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    const targetTemplatePlaceholderId = pendingTemplatePlaceholderVideoIdRef.current
+    pendingTemplatePlaceholderVideoIdRef.current = null
+    event.target.value = ''
+
+    if (!file || !targetTemplatePlaceholderId) {
+      return
+    }
+    if (resolveLibraryAssetKind({ mimeType: file.type, name: file.name }) !== 'video') {
+      return
+    }
+
+    const targetPlaceholder = objects.find(
+      (entry): entry is Extract<CanvasObject, { type: 'template_placeholder' }> =>
+        entry.id === targetTemplatePlaceholderId &&
+        entry.type === 'template_placeholder'
+    )
+    if (!targetPlaceholder) {
+      return
+    }
+
+    try {
+      const asset = ensureLibraryAsset(await buildLibraryAsset(file, createId()))
+      const intrinsicWidth = Math.max(1, asset.intrinsicWidth ?? 1280)
+      const intrinsicHeight = Math.max(1, asset.intrinsicHeight ?? 720)
+      replaceTemplatePlaceholderWithMedia(targetPlaceholder, {
+        kind: 'video',
+        assetId: asset.id,
+        intrinsicWidth,
+        intrinsicHeight,
+      })
+    } catch {
+      window.alert('Failed to load video file.')
+    }
+  }
+
+  useEffect(() => {
+    const pendingChoice = pendingTemplatePlaceholderChoiceRef.current
+    if (pendingChoice) {
+      const candidate = objectById.get(pendingChoice.placeholderId)
+      if (
+        candidate &&
+        candidate.type === 'template_placeholder' &&
+        editableObjectIds.has(candidate.id)
+      ) {
+        pendingTemplatePlaceholderChoiceRef.current = null
+        activateTemplatePlaceholder(candidate.id, pendingChoice.choice)
+        return
+      }
+    }
+
+    const pendingActivationId = pendingTemplatePlaceholderActivationIdRef.current
+    if (!pendingActivationId) {
+      return
+    }
+    const candidate = objectById.get(pendingActivationId)
+    if (
+      candidate &&
+      candidate.type === 'template_placeholder' &&
+      editableObjectIds.has(candidate.id)
+    ) {
+      pendingTemplatePlaceholderActivationIdRef.current = null
+      activateTemplatePlaceholder(candidate.id)
+    }
+  }, [editableObjectIds, objectById])
+
+  useEffect(() => {
+    const pendingTextboxId = pendingTextboxEditIdRef.current
+    if (!pendingTextboxId) {
+      return
+    }
+    const candidate = objectById.get(pendingTextboxId)
+    if (candidate?.type === 'textbox') {
+      pendingTextboxEditIdRef.current = null
+      startTextboxEditing(candidate)
+    }
+  }, [objectById])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1573,23 +2995,30 @@ export function CanvasViewport({
         return
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+        if (editableObjects.length > 0) {
+          event.preventDefault()
+          selectObjects(editableObjects.map((object) => object.id))
+        }
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
         event.preventDefault()
         pasteClipboard()
         return
       }
 
-      if (event.key === 'Delete') {
+      if (event.key === 'Delete' || event.key === 'Backspace') {
         if (selectedUnlockedIds.length > 0) {
           event.preventDefault()
           deleteObjects(selectedUnlockedIds)
           setContextMenu(null)
+          return
         }
-        return
-      }
-
-      if (event.key === 'Backspace' && selectedObjectIds.length > 0) {
-        event.preventDefault()
+        if (event.key === 'Backspace' && selectedObjectIds.length > 0) {
+          event.preventDefault()
+        }
         return
       }
 
@@ -1609,12 +3038,14 @@ export function CanvasViewport({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     activeGroupId,
+    editableObjects,
     beginCommandBatch,
     commitCommandBatch,
     createObject,
     deleteObjects,
     enterGroup,
     exitGroup,
+    selectObjects,
     objects,
     selectedGroup,
     selectedObjectIds,
@@ -1672,11 +3103,13 @@ export function CanvasViewport({
     )
 
     beginCommandBatch(interactionTargets.length > 1 ? 'Objects transform' : 'Object transform')
+    setSmartGuides([])
     objectInteractionRef.current = {
       pointerId: event.pointerId,
       targets: interactionTargets.map((target) => ({
         id: target.id,
         objectType: target.type,
+        keepAspectRatio: isObjectAspectRatioLocked(target),
         start: {
           x: target.x,
           y: target.y,
@@ -1798,6 +3231,71 @@ export function CanvasViewport({
     })
   }
 
+  function beginShapeAdjustInteraction(
+    event: PointerEvent<HTMLElement>,
+    target: Extract<CanvasObject, { type: 'shape_rect' | 'shape_circle' }>
+  ) {
+    beginCommandBatch('Adjust shape')
+    shapeAdjustInteractionRef.current = {
+      pointerId: event.pointerId,
+      objectId: target.id,
+      objectType: target.type,
+      cameraStart: camera,
+      objectStart: {
+        x: target.x,
+        y: target.y,
+        w: target.w,
+        h: target.h,
+        rotation: target.rotation,
+      },
+      shapeDataStart: {
+        ...target.shapeData,
+      },
+    }
+    viewportRef.current?.setPointerCapture(event.pointerId)
+  }
+
+  function applyShapeAdjustInteraction(
+    event: PointerEvent<HTMLDivElement>,
+    interaction: ShapeAdjustInteraction
+  ) {
+    const target = objectById.get(interaction.objectId)
+    if (!target || (target.type !== 'shape_rect' && target.type !== 'shape_circle')) {
+      return
+    }
+
+    const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
+    const pointerWorld = screenToWorld(pointerScreen, interaction.cameraStart, viewportSize)
+    const localWorld = rotatePoint(
+      {
+        x: pointerWorld.x - interaction.objectStart.x,
+        y: pointerWorld.y - interaction.objectStart.y,
+      },
+      -interaction.objectStart.rotation
+    )
+    const localX = localWorld.x + interaction.objectStart.w / 2
+    const localY = localWorld.y + interaction.objectStart.h / 2
+    const patch = resolveShapeAdjustmentFromLocalPoint(
+      interaction.objectType,
+      interaction.shapeDataStart,
+      interaction.objectStart.w,
+      interaction.objectStart.h,
+      localX,
+      localY
+    )
+    if (!patch) {
+      return
+    }
+
+    setShapeData(
+      target.id,
+      {
+        ...target.shapeData,
+        ...patch,
+      }
+    )
+  }
+
   function applyObjectInteraction(
     event: PointerEvent<HTMLDivElement>,
     interaction: ObjectInteraction
@@ -1816,12 +3314,16 @@ export function CanvasViewport({
     const canSnapToObjectEdges = canvasSettings.snapToObjectEdges && !event.altKey
     const snapToleranceWorld = canvasSettings.snapTolerancePx / Math.max(0.00001, camera.zoom)
     const interactionIds = new Set(interaction.targets.map((target) => target.id))
+    const snapCandidateObjects = canSnapToObjectEdges
+      ? editableObjects.filter((object) => !interactionIds.has(object.id))
+      : []
     const edgeCandidates = canSnapToObjectEdges
-      ? collectSnapCandidateEdges(editableObjects.filter((object) => !interactionIds.has(object.id)))
+      ? collectSnapCandidateEdges(snapCandidateObjects)
       : { x: [], y: [] }
 
     if (interaction.mode === 'move') {
       let appliedDelta = deltaWorld
+      let nextGuides: SmartGuideLine[] = []
       if (shouldSnapToGrid) {
         const snappedCenter = {
           x: snapToGrid(interaction.centerStart.x + deltaWorld.x, snapGridSize),
@@ -1850,12 +3352,40 @@ export function CanvasViewport({
             } satisfies Rect
           )
         const movedBounds = offsetRect(startBounds, appliedDelta)
-        const snapOffset = getObjectEdgeSnapOffset(movedBounds, edgeCandidates, snapToleranceWorld)
+        const edgeSnap = getObjectEdgeSnapResult(movedBounds, edgeCandidates, snapToleranceWorld)
+        const horizontalSpacingSnap = getHorizontalSpacingSnap(
+          movedBounds,
+          snapCandidateObjects,
+          snapToleranceWorld
+        )
+        const verticalSpacingSnap = getVerticalSpacingSnap(
+          movedBounds,
+          snapCandidateObjects,
+          snapToleranceWorld
+        )
+        const edgeXAbs = edgeSnap.guides.some((guide) => guide.orientation === 'vertical')
+          ? Math.abs(edgeSnap.offset.x)
+          : Number.POSITIVE_INFINITY
+        const edgeYAbs = edgeSnap.guides.some((guide) => guide.orientation === 'horizontal')
+          ? Math.abs(edgeSnap.offset.y)
+          : Number.POSITIVE_INFINITY
+        const resolvedX =
+          Math.abs(horizontalSpacingSnap.offset.x) > 0 &&
+            Math.abs(horizontalSpacingSnap.offset.x) <= edgeXAbs
+            ? { delta: horizontalSpacingSnap.offset.x, guides: horizontalSpacingSnap.guides }
+            : { delta: edgeSnap.offset.x, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'vertical') }
+        const resolvedY =
+          Math.abs(verticalSpacingSnap.offset.y) > 0 &&
+            Math.abs(verticalSpacingSnap.offset.y) <= edgeYAbs
+            ? { delta: verticalSpacingSnap.offset.y, guides: verticalSpacingSnap.guides }
+            : { delta: edgeSnap.offset.y, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'horizontal') }
         appliedDelta = {
-          x: appliedDelta.x + snapOffset.x,
-          y: appliedDelta.y + snapOffset.y,
+          x: appliedDelta.x + resolvedX.delta,
+          y: appliedDelta.y + resolvedY.delta,
         }
+        nextGuides = [...resolvedX.guides, ...resolvedY.guides]
       }
+      setSmartGuides(nextGuides)
 
       interaction.targets.forEach((target) => {
         moveObject(target.id, {
@@ -1879,8 +3409,13 @@ export function CanvasViewport({
     }
 
     if (interaction.mode === 'resize') {
-      const hasImageTarget = interaction.targets.some((target) => target.objectType === 'image')
-      const keepAspectRatio = (event.ctrlKey || event.metaKey) && !hasImageTarget
+      let nextGuides: SmartGuideLine[] = []
+      const keepAspectRatio =
+        (interaction.targets.length === 1
+          ? interaction.targets[0]?.keepAspectRatio
+          : interaction.targets.every((target) => target.keepAspectRatio)) ||
+        event.ctrlKey ||
+        event.metaKey
       if (interaction.targets.length === 1) {
         const target = interaction.targets[0]
         const localDelta = rotatePoint(deltaWorld, -target.start.rotation)
@@ -1888,8 +3423,8 @@ export function CanvasViewport({
         let nextHeight: number
 
         if (keepAspectRatio) {
-          const widthFromDelta = Math.max(20, target.start.w + localDelta.x)
-          const heightFromDelta = Math.max(20, target.start.h + localDelta.y)
+          const widthFromDelta = Math.max(1, target.start.w + localDelta.x)
+          const heightFromDelta = Math.max(1, target.start.h + localDelta.y)
           const widthScale = widthFromDelta / Math.max(1, target.start.w)
           const heightScale = heightFromDelta / Math.max(1, target.start.h)
           const widthDominant =
@@ -1899,41 +3434,41 @@ export function CanvasViewport({
           let uniformScale = widthDominant ? widthScale : heightScale
           uniformScale = Math.max(
             uniformScale,
-            20 / Math.max(1, target.start.w),
-            20 / Math.max(1, target.start.h)
+            1 / Math.max(1, target.start.w),
+            1 / Math.max(1, target.start.h)
           )
 
           if (shouldSnapToGrid) {
             if (widthDominant) {
-              const snappedWidth = Math.max(20, snapToGrid(target.start.w * uniformScale, snapGridSize))
+              const snappedWidth = Math.max(1, snapToGrid(target.start.w * uniformScale, snapGridSize))
               uniformScale = snappedWidth / Math.max(1, target.start.w)
             } else {
-              const snappedHeight = Math.max(20, snapToGrid(target.start.h * uniformScale, snapGridSize))
+              const snappedHeight = Math.max(1, snapToGrid(target.start.h * uniformScale, snapGridSize))
               uniformScale = snappedHeight / Math.max(1, target.start.h)
             }
           }
 
           uniformScale = Math.max(
             uniformScale,
-            20 / Math.max(1, target.start.w),
-            20 / Math.max(1, target.start.h)
+            1 / Math.max(1, target.start.w),
+            1 / Math.max(1, target.start.h)
           )
-          nextWidth = Math.max(20, target.start.w * uniformScale)
-          nextHeight = Math.max(20, target.start.h * uniformScale)
+          nextWidth = Math.max(1, target.start.w * uniformScale)
+          nextHeight = Math.max(1, target.start.h * uniformScale)
         } else {
-          nextWidth = Math.max(20, target.start.w + localDelta.x)
-          nextHeight = Math.max(20, target.start.h + localDelta.y)
+          nextWidth = Math.max(1, target.start.w + localDelta.x)
+          nextHeight = Math.max(1, target.start.h + localDelta.y)
           if (shouldSnapToGrid) {
-            nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
-            nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+            nextWidth = Math.max(1, snapToGrid(nextWidth, snapGridSize))
+            nextHeight = Math.max(1, snapToGrid(nextHeight, snapGridSize))
           }
         }
         if (target.objectType === 'shape_circle') {
           const widthDominant = Math.abs(localDelta.x) >= Math.abs(localDelta.y)
           let nextCircleSize = widthDominant ? nextWidth : nextHeight
-          nextCircleSize = Math.max(20, nextCircleSize)
+          nextCircleSize = Math.max(1, nextCircleSize)
           if (shouldSnapToGrid) {
-            nextCircleSize = Math.max(20, snapToGrid(nextCircleSize, snapGridSize))
+            nextCircleSize = Math.max(1, snapToGrid(nextCircleSize, snapGridSize))
           }
           nextWidth = nextCircleSize
           nextHeight = nextCircleSize
@@ -1953,14 +3488,39 @@ export function CanvasViewport({
             h: nextHeight,
             rotation: target.start.rotation,
           } satisfies TransformSnapshot
-          const snapOffset = getObjectEdgeSnapOffset(
-            getTransformAabb(nextTransform),
-            edgeCandidates,
+          const resizedBounds = getTransformAabb(nextTransform)
+          const edgeSnap = getObjectEdgeSnapResult(resizedBounds, edgeCandidates, snapToleranceWorld)
+          const horizontalSpacingSnap = getHorizontalSpacingSnap(
+            resizedBounds,
+            snapCandidateObjects,
             snapToleranceWorld
           )
-          centerShiftWorld.x += snapOffset.x
-          centerShiftWorld.y += snapOffset.y
+          const verticalSpacingSnap = getVerticalSpacingSnap(
+            resizedBounds,
+            snapCandidateObjects,
+            snapToleranceWorld
+          )
+          const edgeXAbs = edgeSnap.guides.some((guide) => guide.orientation === 'vertical')
+            ? Math.abs(edgeSnap.offset.x)
+            : Number.POSITIVE_INFINITY
+          const edgeYAbs = edgeSnap.guides.some((guide) => guide.orientation === 'horizontal')
+            ? Math.abs(edgeSnap.offset.y)
+            : Number.POSITIVE_INFINITY
+          const resolvedX =
+            Math.abs(horizontalSpacingSnap.offset.x) > 0 &&
+              Math.abs(horizontalSpacingSnap.offset.x) <= edgeXAbs
+              ? { delta: horizontalSpacingSnap.offset.x, guides: horizontalSpacingSnap.guides }
+              : { delta: edgeSnap.offset.x, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'vertical') }
+          const resolvedY =
+            Math.abs(verticalSpacingSnap.offset.y) > 0 &&
+              Math.abs(verticalSpacingSnap.offset.y) <= edgeYAbs
+              ? { delta: verticalSpacingSnap.offset.y, guides: verticalSpacingSnap.guides }
+              : { delta: edgeSnap.offset.y, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'horizontal') }
+          centerShiftWorld.x += resolvedX.delta
+          centerShiftWorld.y += resolvedY.delta
+          nextGuides = [...resolvedX.guides, ...resolvedY.guides]
         }
+        setSmartGuides(nextGuides)
 
         moveObject(target.id, {
           x: target.start.x + centerShiftWorld.x,
@@ -1982,11 +3542,11 @@ export function CanvasViewport({
         1,
         interaction.selectionBoundsStart.maxY - interaction.selectionBoundsStart.minY
       )
-      let nextWidth = Math.max(20, selectionWidth + deltaWorld.x)
-      let nextHeight = Math.max(20, selectionHeight + deltaWorld.y)
+      let nextWidth = Math.max(1, selectionWidth + deltaWorld.x)
+      let nextHeight = Math.max(1, selectionHeight + deltaWorld.y)
       if (shouldSnapToGrid) {
-        nextWidth = Math.max(20, snapToGrid(nextWidth, snapGridSize))
-        nextHeight = Math.max(20, snapToGrid(nextHeight, snapGridSize))
+        nextWidth = Math.max(1, snapToGrid(nextWidth, snapGridSize))
+        nextHeight = Math.max(1, snapToGrid(nextHeight, snapGridSize))
       }
       let scaleX = nextWidth / selectionWidth
       let scaleY = nextHeight / selectionHeight
@@ -1996,24 +3556,24 @@ export function CanvasViewport({
         let uniformScale = widthDominant ? scaleX : scaleY
         uniformScale = Math.max(
           uniformScale,
-          20 / selectionWidth,
-          20 / selectionHeight
+          1 / selectionWidth,
+          1 / selectionHeight
         )
 
         if (shouldSnapToGrid) {
           if (widthDominant) {
-            const snappedWidth = Math.max(20, snapToGrid(selectionWidth * uniformScale, snapGridSize))
+            const snappedWidth = Math.max(1, snapToGrid(selectionWidth * uniformScale, snapGridSize))
             uniformScale = snappedWidth / selectionWidth
           } else {
-            const snappedHeight = Math.max(20, snapToGrid(selectionHeight * uniformScale, snapGridSize))
+            const snappedHeight = Math.max(1, snapToGrid(selectionHeight * uniformScale, snapGridSize))
             uniformScale = snappedHeight / selectionHeight
           }
         }
 
         uniformScale = Math.max(
           uniformScale,
-          20 / selectionWidth,
-          20 / selectionHeight
+          1 / selectionWidth,
+          1 / selectionHeight
         )
         scaleX = uniformScale
         scaleY = uniformScale
@@ -2030,20 +3590,52 @@ export function CanvasViewport({
           maxX: anchorX + nextWidth,
           maxY: anchorY + nextHeight,
         }
-        selectionOffset = getObjectEdgeSnapOffset(resizedBounds, edgeCandidates, snapToleranceWorld)
+        const edgeSnap = getObjectEdgeSnapResult(resizedBounds, edgeCandidates, snapToleranceWorld)
+        const horizontalSpacingSnap = getHorizontalSpacingSnap(
+          resizedBounds,
+          snapCandidateObjects,
+          snapToleranceWorld
+        )
+        const verticalSpacingSnap = getVerticalSpacingSnap(
+          resizedBounds,
+          snapCandidateObjects,
+          snapToleranceWorld
+        )
+        const edgeXAbs = edgeSnap.guides.some((guide) => guide.orientation === 'vertical')
+          ? Math.abs(edgeSnap.offset.x)
+          : Number.POSITIVE_INFINITY
+        const edgeYAbs = edgeSnap.guides.some((guide) => guide.orientation === 'horizontal')
+          ? Math.abs(edgeSnap.offset.y)
+          : Number.POSITIVE_INFINITY
+        const resolvedX =
+          Math.abs(horizontalSpacingSnap.offset.x) > 0 &&
+            Math.abs(horizontalSpacingSnap.offset.x) <= edgeXAbs
+            ? { delta: horizontalSpacingSnap.offset.x, guides: horizontalSpacingSnap.guides }
+            : { delta: edgeSnap.offset.x, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'vertical') }
+        const resolvedY =
+          Math.abs(verticalSpacingSnap.offset.y) > 0 &&
+            Math.abs(verticalSpacingSnap.offset.y) <= edgeYAbs
+            ? { delta: verticalSpacingSnap.offset.y, guides: verticalSpacingSnap.guides }
+            : { delta: edgeSnap.offset.y, guides: edgeSnap.guides.filter((guide) => guide.orientation === 'horizontal') }
+        selectionOffset = {
+          x: resolvedX.delta,
+          y: resolvedY.delta,
+        }
+        nextGuides = [...resolvedX.guides, ...resolvedY.guides]
       }
+      setSmartGuides(nextGuides)
 
       interaction.targets.forEach((target) => {
-        let targetWidth = Math.max(20, target.start.w * scaleX)
-        let targetHeight = Math.max(20, target.start.h * scaleY)
+        let targetWidth = Math.max(1, target.start.w * scaleX)
+        let targetHeight = Math.max(1, target.start.h * scaleY)
         if (target.objectType === 'shape_circle') {
           const widthDominant =
             Math.abs(deltaWorld.x / selectionWidth) >= Math.abs(deltaWorld.y / selectionHeight)
           const dominantScale = widthDominant ? scaleX : scaleY
           const circleStartSize = Math.min(target.start.w, target.start.h)
-          let circleSize = Math.max(20, circleStartSize * dominantScale)
+          let circleSize = Math.max(1, circleStartSize * dominantScale)
           if (shouldSnapToGrid) {
-            circleSize = Math.max(20, snapToGrid(circleSize, snapGridSize))
+            circleSize = Math.max(1, snapToGrid(circleSize, snapGridSize))
           }
           targetWidth = circleSize
           targetHeight = circleSize
@@ -2070,6 +3662,8 @@ export function CanvasViewport({
       }
       return
     }
+
+    setSmartGuides([])
 
     const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
     const currentAngle = Math.atan2(
@@ -2134,6 +3728,8 @@ export function CanvasViewport({
           nextSelection.add(interaction.toggleObjectId)
         }
         selectObjects([...nextSelection])
+      } else {
+        clearSelection()
       }
       return
     }
@@ -2151,7 +3747,78 @@ export function CanvasViewport({
     selectObjects([...nextSelection])
   }
 
+  function beginCreationInteraction(
+    event: PointerEvent<HTMLDivElement>,
+    tool: CreationToolConfig
+  ) {
+    const start = getViewportRelativePoint(event.clientX, event.clientY)
+    creationInteractionRef.current = {
+      pointerId: event.pointerId,
+      tool: tool.type,
+      startScreen: start,
+      currentScreen: start,
+      cameraStart: camera,
+      image: tool.image,
+    }
+    setCreationPreviewRect(toRect(start, start))
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function finalizeCreationInteraction(interaction: CreationInteraction) {
+    if (!onCreateObjectFromTool) {
+      return
+    }
+
+    const deltaScreen = {
+      x: interaction.currentScreen.x - interaction.startScreen.x,
+      y: interaction.currentScreen.y - interaction.startScreen.y,
+    }
+    const safeZoom = Math.max(interaction.cameraStart.zoom, 0.001)
+    const dragDistance = Math.hypot(deltaScreen.x, deltaScreen.y)
+    const defaultWidth = 260 / safeZoom
+    const defaultHeight = 160 / safeZoom
+
+    let width = Math.abs(deltaScreen.x) / safeZoom
+    let height = Math.abs(deltaScreen.y) / safeZoom
+    let centerScreen = {
+      x: (interaction.startScreen.x + interaction.currentScreen.x) / 2,
+      y: (interaction.startScreen.y + interaction.currentScreen.y) / 2,
+    }
+
+    if (dragDistance < 4) {
+      centerScreen = interaction.startScreen
+      width = defaultWidth
+      height =
+        interaction.tool === 'image' && interaction.image
+          ? Math.max(
+            40 / safeZoom,
+            defaultWidth /
+            Math.max(0.0001, interaction.image.intrinsicWidth / Math.max(1, interaction.image.intrinsicHeight))
+          )
+          : defaultHeight
+    }
+
+    if (interaction.tool === 'shape_circle') {
+      const size = Math.max(1 / safeZoom, Math.max(width, height))
+      width = size
+      height = size
+    } else {
+      width = Math.max(1 / safeZoom, width)
+      height = Math.max(1 / safeZoom, height)
+    }
+
+    const centerWorld = screenToWorld(centerScreen, interaction.cameraStart, viewportSize)
+    onCreateObjectFromTool(interaction.tool, {
+      x: centerWorld.x,
+      y: centerWorld.y,
+      w: width,
+      h: height,
+      rotation: -interaction.cameraStart.rotation,
+    })
+  }
+
   function handleViewportPointerDown(event: PointerEvent<HTMLDivElement>) {
+    setSmartGuides([])
     closeContextMenu()
     if (styleCopySourceObjectId && event.button === 0) {
       event.preventDefault()
@@ -2162,53 +3829,78 @@ export function CanvasViewport({
       closeActiveImageEffects(true)
     }
 
-    if (editingTextboxId) {
-      if (event.button === 0) {
-        event.preventDefault()
-      }
-      return
-    }
-
-    if (
-      event.button === 1 &&
-      event.shiftKey &&
-      selectedObject &&
-      !isObjectEffectivelyLocked(selectedObject, objectById)
-    ) {
+    if (editingTextboxId && event.button === 0) {
       event.preventDefault()
-      moveObject(selectedObject.id, {
-        x: selectedObject.x,
-        y: selectedObject.y,
-        w: selectedObject.w,
-        h: selectedObject.h,
-        rotation: -camera.rotation,
-      })
+      finishTextboxEditing(true)
+      clearSelection()
       return
     }
 
-    if (event.button === 0 && event.shiftKey) {
-      if (activeCropObjectId) {
+    if (event.button === 0 && activeCropObjectId) {
+      event.preventDefault()
+      disableActiveCropMode()
+      clearSelection()
+      return
+    }
+
+    if (event.button === 0 && activeGroupObject) {
+      const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
+      const pointerWorld = screenToWorld(pointerScreen, camera, viewportSize)
+      if (!isPointInsideObjectRect(pointerWorld, activeGroupObject)) {
         event.preventDefault()
+        exitGroup()
+        clearSelection()
+        return
+      }
+    }
+
+    if (event.button === 0) {
+      if (creationTool) {
+        event.preventDefault()
+        if (creationTool.type === 'image') {
+          if (onCreateObjectFromTool) {
+            const start = getViewportRelativePoint(event.clientX, event.clientY)
+            const centerWorld = screenToWorld(start, camera, viewportSize)
+            const safeZoom = Math.max(camera.zoom, 0.001)
+            const width = 260 / safeZoom
+            const height = creationTool.image
+              ? Math.max(
+                40 / safeZoom,
+                width /
+                Math.max(
+                  0.0001,
+                  creationTool.image.intrinsicWidth / Math.max(1, creationTool.image.intrinsicHeight)
+                )
+              )
+              : 160 / safeZoom
+            onCreateObjectFromTool('image', {
+              x: centerWorld.x,
+              y: centerWorld.y,
+              w: width,
+              h: height,
+              rotation: -camera.rotation,
+            })
+          }
+          return
+        }
+        beginCreationInteraction(event, creationTool)
         return
       }
       event.preventDefault()
+      if (selectedSlideId !== null) {
+        selectSlide(null)
+      }
       const start = getViewportRelativePoint(event.clientX, event.clientY)
       beginMarqueeSelection(event.pointerId, start, selectedObjectIds)
       event.currentTarget.setPointerCapture(event.pointerId)
       return
     }
 
-    if (event.button !== 0 && event.button !== 1) {
+    if (event.button !== 1) {
       return
     }
 
     event.preventDefault()
-    if (event.button === 0) {
-      if (activeCropObjectId) {
-        return
-      }
-      clearSelection()
-    }
     panRef.current = {
       pointerId: event.pointerId,
       originClient: { x: event.clientX, y: event.clientY },
@@ -2224,9 +3916,23 @@ export function CanvasViewport({
       return
     }
 
+    const shapeAdjustInteraction = shapeAdjustInteractionRef.current
+    if (shapeAdjustInteraction && shapeAdjustInteraction.pointerId === event.pointerId) {
+      applyShapeAdjustInteraction(event, shapeAdjustInteraction)
+      return
+    }
+
     const interaction = objectInteractionRef.current
     if (interaction && interaction.pointerId === event.pointerId) {
       applyObjectInteraction(event, interaction)
+      return
+    }
+
+    const creationInteraction = creationInteractionRef.current
+    if (creationInteraction && creationInteraction.pointerId === event.pointerId) {
+      const current = getViewportRelativePoint(event.clientX, event.clientY)
+      creationInteraction.currentScreen = current
+      setCreationPreviewRect(toRect(creationInteraction.startScreen, current))
       return
     }
 
@@ -2263,10 +3969,56 @@ export function CanvasViewport({
       commitCommandBatch()
     }
 
+    const shapeAdjustInteraction = shapeAdjustInteractionRef.current
+    if (shapeAdjustInteraction && shapeAdjustInteraction.pointerId === event.pointerId) {
+      shapeAdjustInteractionRef.current = null
+      commitCommandBatch()
+    }
+
     const interaction = objectInteractionRef.current
     if (interaction && interaction.pointerId === event.pointerId) {
       objectInteractionRef.current = null
+      setSmartGuides([])
+      const deltaClient = {
+        x: event.clientX - interaction.originClient.x,
+        y: event.clientY - interaction.originClient.y,
+      }
       commitCommandBatch()
+      const wasClick = Math.hypot(deltaClient.x, deltaClient.y) < 4
+      if (
+        wasClick &&
+        interaction.mode === 'move' &&
+        interaction.targets.length === 1 &&
+        (interaction.targets[0]?.objectType === 'video' ||
+          interaction.targets[0]?.objectType === 'sound')
+      ) {
+        if (interaction.targets[0]?.objectType === 'video') {
+          const video = videoElementMapRef.current.get(interaction.targets[0].id)
+          if (video) {
+            if (video.paused) {
+              void video.play().catch(() => undefined)
+            } else {
+              video.pause()
+            }
+          }
+        } else {
+          const audio = soundElementMapRef.current.get(interaction.targets[0].id)
+          if (audio) {
+            if (audio.paused) {
+              void audio.play().catch(() => undefined)
+            } else {
+              audio.pause()
+            }
+          }
+        }
+      }
+    }
+
+    const creationInteraction = creationInteractionRef.current
+    if (creationInteraction && creationInteraction.pointerId === event.pointerId) {
+      creationInteractionRef.current = null
+      setCreationPreviewRect(null)
+      finalizeCreationInteraction(creationInteraction)
     }
 
     const marquee = marqueeRef.current
@@ -2297,7 +4049,8 @@ export function CanvasViewport({
       className="canvas-stage"
       style={{ background: canvasSettings.background }}
       onDragOver={(event) => {
-        if (Array.from(event.dataTransfer.types).includes('Files')) {
+        const dragTypes = Array.from(event.dataTransfer.types)
+        if (dragTypes.includes('Files') || dragTypes.includes(ASSET_LIBRARY_DRAG_MIME)) {
           event.preventDefault()
         }
       }}
@@ -2374,12 +4127,62 @@ export function CanvasViewport({
         </g>
       </svg>
 
+      {smartGuides.length > 0 && (
+        <div className="smart-guides-layer" aria-hidden="true">
+          {smartGuides.map((guide, index) => {
+            if (guide.orientation === 'vertical') {
+              const start = worldToScreen({ x: guide.position, y: guide.start }, camera, viewportSize)
+              const end = worldToScreen({ x: guide.position, y: guide.end }, camera, viewportSize)
+              return (
+                <div
+                  key={`smart-guide-${guide.orientation}-${index}`}
+                  className={`smart-guide-line ${guide.kind}`}
+                  style={{
+                    left: start.x,
+                    top: Math.min(start.y, end.y),
+                    width: 1,
+                    height: Math.abs(end.y - start.y),
+                  }}
+                />
+              )
+            }
+
+            const start = worldToScreen({ x: guide.start, y: guide.position }, camera, viewportSize)
+            const end = worldToScreen({ x: guide.end, y: guide.position }, camera, viewportSize)
+            return (
+              <div
+                key={`smart-guide-${guide.orientation}-${index}`}
+                className={`smart-guide-line ${guide.kind}`}
+                style={{
+                  left: Math.min(start.x, end.x),
+                  top: start.y,
+                  width: Math.abs(end.x - start.x),
+                  height: 1,
+                }}
+              />
+            )
+          })}
+        </div>
+      )}
+
       <div className="objects-layer">
         {orderedObjects.map((object) => {
           const center = worldToScreen({ x: object.x, y: object.y }, camera, viewportSize)
           const widthPx = object.w * camera.zoom
           const heightPx = object.h * camera.zoom
           const isSelected = selectedObjectIds.includes(object.id)
+          const usesHoveredAsset =
+            hoveredAsset !== null &&
+            (
+              (object.type === 'image' && object.imageData.assetId === hoveredAsset.id) ||
+              (object.type === 'video' && object.videoData.assetId === hoveredAsset.id) ||
+              (object.type === 'sound' && object.soundData.assetId === hoveredAsset.id) ||
+              (
+                object.type === 'textbox' &&
+                resolveLibraryAssetKind(hoveredAsset) === 'font' &&
+                textboxUsesFontFamily(object.textboxData, resolveAssetFontFamily(hoveredAsset))
+              )
+            )
           const isEditable = editableObjectIds.has(object.id)
           const isEffectivelyLocked = isObjectEffectivelyLocked(object, objectById)
           const isActiveGroupShell = activeGroupId !== null && object.id === activeGroupId
@@ -2393,11 +4196,23 @@ export function CanvasViewport({
             height: heightPx,
             transform: `rotate(${object.rotation + camera.rotation}rad)`,
           }
+          const templatePlaceholderScale =
+            object.type === 'template_placeholder'
+              ? Math.max(0.01, camera.zoom * resolveObjectBorderScale(object.scalePercent))
+              : 1
+          const templatePlaceholderStyle =
+            object.type === 'template_placeholder'
+              ? ({
+                '--canvas-template-scale': String(templatePlaceholderScale),
+              } as CSSProperties)
+              : {}
 
           const objectClasses = [
             'canvas-object',
             object.type,
             isSelected ? 'selected' : '',
+            editingTextboxId === object.id ? 'editing' : '',
+            usesHoveredAsset ? 'asset-highlighted' : '',
             object.locked ? 'locked' : '',
             isEditable ? '' : 'inactive',
             canEnterViaChildDoubleClick ? 'enterable-child' : '',
@@ -2408,19 +4223,11 @@ export function CanvasViewport({
 
           const shapeStyle =
             object.type === 'shape_rect' ||
-              object.type === 'shape_circle' ||
-              object.type === 'shape_arrow'
+              object.type === 'shape_circle'
               ? {
-                borderColor: object.shapeData.borderColor,
-                borderStyle: object.shapeData.borderType,
-                borderWidth: object.shapeData.borderWidth * camera.zoom,
-                background: getShapeBackground(object.shapeData),
+                background: 'transparent',
                 opacity: object.shapeData.opacityPercent / 100,
-                boxShadow: resolveObjectShadowCss(object.shapeData, camera.zoom),
-                borderRadius:
-                  object.type === 'shape_circle'
-                    ? '9999px'
-                    : `${Math.max(0, object.shapeData.radius) * camera.zoom}px`,
+                filter: resolveObjectDropShadowFilter(object.shapeData, camera.zoom),
               }
               : {}
           const textboxStyle =
@@ -2429,7 +4236,10 @@ export function CanvasViewport({
                 borderColor: object.textboxData.borderColor ?? DEFAULT_TEXTBOX_BORDER_COLOR,
                 borderStyle: object.textboxData.borderType ?? 'solid',
                 borderWidth:
-                  (object.textboxData.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH) * camera.zoom,
+                  (object.textboxData.borderWidth ?? DEFAULT_TEXTBOX_BORDER_WIDTH) *
+                  camera.zoom *
+                  resolveObjectBorderScale(object.scalePercent),
+                borderRadius: Math.max(0, object.textboxData.radius) * camera.zoom,
                 background: getTextboxBackground(object.textboxData),
                 opacity: (object.textboxData.opacityPercent ?? 100) / 100,
                 boxShadow: resolveObjectShadowCss(object.textboxData, camera.zoom),
@@ -2443,9 +4253,40 @@ export function CanvasViewport({
                 background: 'transparent',
               }
               : {}
-          const imageAsset = object.type === 'image' ? assetById.get(object.imageData.assetId) : null
-          const imageSrc = imageAsset
-            ? `data:${imageAsset.mimeType};base64,${imageAsset.dataBase64}`
+          const videoStyle =
+            object.type === 'video'
+              ? {
+                opacity: object.videoData.opacityPercent / 100,
+                filter: resolveObjectDropShadowFilter(object.videoData, camera.zoom),
+                background: 'transparent',
+              }
+              : {}
+          const soundStyle =
+            object.type === 'sound'
+              ? {
+                opacity: object.soundData.opacityPercent / 100,
+                filter: resolveObjectDropShadowFilter(object.soundData, camera.zoom),
+                background:
+                  'linear-gradient(135deg, rgba(32, 52, 92, 0.92), rgba(19, 28, 48, 0.96))',
+                borderColor: object.soundData.borderColor,
+                borderStyle: object.soundData.borderType,
+                borderWidth:
+                  object.soundData.borderWidth *
+                  camera.zoom *
+                  resolveObjectBorderScale(object.scalePercent),
+                borderRadius: Math.max(0, object.soundData.radius) * camera.zoom,
+              }
+              : {}
+          const mediaAsset =
+            object.type === 'image'
+              ? assetById.get(object.imageData.assetId)
+              : object.type === 'video'
+                ? assetById.get(object.videoData.assetId)
+                : object.type === 'sound'
+                  ? assetById.get(object.soundData.assetId)
+                  : null
+          const mediaSrc = mediaAsset
+            ? `data:${mediaAsset.mimeType};base64,${mediaAsset.dataBase64}`
             : null
           const textboxHtml = object.type === 'textbox' ? resolveTextboxRichHtml(object.textboxData) : ''
 
@@ -2453,8 +4294,67 @@ export function CanvasViewport({
             <div
               key={object.id}
               className={objectClasses}
-              style={{ ...baseStyle, ...shapeStyle, ...textboxStyle, ...imageStyle }}
+              data-object-id={object.id}
+              data-object-type={object.type}
+              style={{
+                ...baseStyle,
+                ...templatePlaceholderStyle,
+                ...shapeStyle,
+                ...textboxStyle,
+                ...imageStyle,
+                ...videoStyle,
+                ...soundStyle,
+              }}
               onPointerDown={(event) => {
+                if (event.button === 0 && activeGroupId !== null && !isEditable) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  exitGroup()
+                  clearSelection()
+                  return
+                }
+
+                if (event.button === 0 && event.shiftKey) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+                  if (selectedSlideId !== null) {
+                    selectSlide(null)
+                  }
+                  const start = getViewportRelativePoint(event.clientX, event.clientY)
+                  beginMarqueeSelection(event.pointerId, start, selectedObjectIds, object.id)
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                  return
+                }
+
+                if (
+                  object.type === 'template_placeholder' &&
+                  !isEditable
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+
+                  if (activeGroupId === null && object.parentGroupId) {
+                    pendingTemplatePlaceholderActivationIdRef.current = object.id
+                    enterGroup(object.parentGroupId)
+                  }
+                  return
+                }
+
+                if (
+                  object.type === 'template_placeholder' &&
+                  object.templatePlaceholderData.kind !== 'universal'
+                ) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeContextMenu()
+
+                  activateTemplatePlaceholder(object.id)
+                  return
+                }
+
                 if (styleCopySourceObject && event.button === 0) {
                   event.preventDefault()
                   event.stopPropagation()
@@ -2477,11 +4377,15 @@ export function CanvasViewport({
                 if (editingTextboxId && editingTextboxId !== object.id) {
                   event.preventDefault()
                   event.stopPropagation()
+                  finishTextboxEditing(true)
+                  clearSelection()
                   return
                 }
                 if (activeCropObjectId && object.id !== activeCropObjectId) {
                   event.preventDefault()
                   event.stopPropagation()
+                  disableActiveCropMode()
+                  clearSelection()
                   return
                 }
                 const nowMs = performance.now()
@@ -2542,24 +4446,9 @@ export function CanvasViewport({
                 if (editingTextboxId === object.id) {
                   return
                 }
-                if (event.shiftKey) {
-                  if (activeCropObjectId) {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    return
-                  }
-                  event.preventDefault()
-                  event.stopPropagation()
-                  closeContextMenu()
-                  const start = getViewportRelativePoint(event.clientX, event.clientY)
-                  beginMarqueeSelection(event.pointerId, start, selectedObjectIds, object.id)
-                  viewportRef.current?.setPointerCapture(event.pointerId)
-                  return
-                }
                 if (
                   object.type === 'image' &&
                   object.imageData.cropEnabled &&
-                  !event.shiftKey &&
                   !isEffectivelyLocked
                 ) {
                   event.preventDefault()
@@ -2574,15 +4463,9 @@ export function CanvasViewport({
                   event.preventDefault()
                   event.stopPropagation()
                   closeContextMenu()
-                  if (!selectedObjectIds.includes(object.id) && !event.shiftKey) {
+                  if (!selectedObjectIds.includes(object.id)) {
                     selectObjects([object.id])
                   }
-                  panRef.current = {
-                    pointerId: event.pointerId,
-                    originClient: { x: event.clientX, y: event.clientY },
-                    cameraStart: camera,
-                  }
-                  viewportRef.current?.setPointerCapture(event.pointerId)
                   return
                 }
                 event.preventDefault()
@@ -2679,34 +4562,29 @@ export function CanvasViewport({
                 enterGroup(object.id)
               }}
             >
-              {object.type === 'shape_arrow' ? (
-                <svg
-                  viewBox="0 0 100 20"
-                  preserveAspectRatio="none"
-                  className="arrow-svg"
-                  aria-hidden="true"
-                >
-                  <line x1="0" y1="10" x2="88" y2="10" />
-                  <polygon points="88,3 100,10 88,17" />
-                </svg>
-              ) : object.type === 'image' ? (
+              {object.type === 'image' ? (
                 <div
                   className="canvas-image-clip"
                   style={{
                     borderColor: object.imageData.borderColor,
                     borderStyle: object.imageData.borderType,
-                    borderWidth: `${Math.max(0, object.imageData.borderWidth * camera.zoom)}px`,
+                    borderWidth: `${Math.max(
+                      0,
+                      object.imageData.borderWidth *
+                      camera.zoom *
+                      resolveObjectBorderScale(object.scalePercent)
+                    )}px`,
                     clipPath: `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}% round ${Math.max(0, object.imageData.radius) * camera.zoom}px)`,
                   }}
                 >
-                  {imageSrc ? (
+                  {mediaSrc ? (
                     <img
-                      src={imageSrc}
+                      src={mediaSrc}
                       alt=""
                       draggable={false}
                       style={{
-                        width: '100%',
-                        height: '100%',
+                        width: `${widthPx}px`,
+                        height: `${heightPx}px`,
                         objectFit: 'fill',
                         filter: resolveImageFilterCss(object.imageData),
                       }}
@@ -2715,45 +4593,174 @@ export function CanvasViewport({
                     <span>Image</span>
                   )}
                 </div>
-              ) : object.type === 'textbox' ? (
-                editingTextboxId === object.id ? (
-                  <RichTextboxEditor
-                    editorKey={object.id}
-                    html={editingTextboxHtml}
-                    fontFamily={object.textboxData.fontFamily}
-                    contentScale={Math.max(0.01, camera.zoom)}
-                    onContentChange={({ html, plainText, contentHeight }) => {
-                      setEditingTextboxHtml(html)
-                      setEditingTextboxPlainText(plainText)
-                      applyTextboxAutoHeight(object, plainText, contentHeight)
-                    }}
-                    onEditorBlur={() => {
-                      finishTextboxEditing(true)
-                    }}
-                    onEscape={() => {
-                      finishTextboxEditing(false)
-                    }}
-                    onCommit={() => {
-                      finishTextboxEditing(true)
+              ) : object.type === 'video' ? (
+                <div
+                  className="canvas-image-clip"
+                  style={{
+                    borderColor: object.videoData.borderColor,
+                    borderStyle: object.videoData.borderType,
+                    borderWidth: `${Math.max(
+                      0,
+                      object.videoData.borderWidth *
+                      camera.zoom *
+                      resolveObjectBorderScale(object.scalePercent)
+                    )}px`,
+                    clipPath: `inset(0% 0% 0% 0% round ${Math.max(0, object.videoData.radius) * camera.zoom}px)`,
+                  }}
+                >
+                  {mediaSrc ? (
+                    <CanvasVideoPreview
+                      src={mediaSrc}
+                      muted={object.videoData.muted}
+                      loop={object.videoData.loop}
+                      widthPx={widthPx}
+                      heightPx={heightPx}
+                      onVideoElement={(element) => {
+                        if (element) {
+                          videoElementMapRef.current.set(object.id, element)
+                        } else {
+                          videoElementMapRef.current.delete(object.id)
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span>Video</span>
+                  )}
+                </div>
+              ) : object.type === 'sound' ? (
+                mediaSrc ? (
+                  <CanvasSoundPreview
+                    src={mediaSrc}
+                    label={mediaAsset?.name ?? 'Sound'}
+                    loop={object.soundData.loop}
+                    contentScale={camera.zoom * resolveObjectBorderScale(object.scalePercent)}
+                    onAudioElement={(element) => {
+                      if (element) {
+                        soundElementMapRef.current.set(object.id, element)
+                      } else {
+                        soundElementMapRef.current.delete(object.id)
+                      }
                     }}
                   />
                 ) : (
-                  <div className="textbox-content">
-                    <div
-                      className="textbox-rich-content textbox-content-inner"
-                      style={{
-                        fontFamily: object.textboxData.fontFamily,
-                        transform: `scale(${Math.max(0.01, camera.zoom)})`,
-                        transformOrigin: 'top left',
-                        width: `${100 / Math.max(0.01, camera.zoom)}%`,
-                        height: `${100 / Math.max(0.01, camera.zoom)}%`,
+                  <span>Sound</span>
+                )
+              ) : object.type === 'textbox' ? (
+                (() => {
+                  const textboxBaseTextStyle = resolveTextboxBaseTextStyle(object.textboxData)
+                  const textboxVerticalAlignment = object.textboxData.verticalAlignment ?? 'top'
+                  const renderContentScale = Math.max(
+                    0.01,
+                    camera.zoom * resolveTextboxObjectScale(object.textboxData, object.scalePercent)
+                  )
+                  return editingTextboxId === object.id ? (
+                    <RichTextboxEditor
+                      editorKey={object.id}
+                      html={editingTextboxHtml}
+                      fontFamily={textboxBaseTextStyle.fontFamily}
+                      availableFontFamilies={availableTextboxFonts}
+                      textStyleOptions={stylePreset?.textStyles}
+                      defaultFontSizePx={textboxBaseTextStyle.fontSizePx}
+                      defaultTextColor={textboxBaseTextStyle.textColor}
+                      verticalAlignment={textboxVerticalAlignment}
+                      onVerticalAlignmentChange={(nextVerticalAlignment) => {
+                        if ((object.textboxData.verticalAlignment ?? 'top') === nextVerticalAlignment) {
+                          return
+                        }
+                        setTextboxData(object.id, {
+                          ...object.textboxData,
+                          verticalAlignment: nextVerticalAlignment,
+                        })
                       }}
-                      dangerouslySetInnerHTML={{
-                        __html: textboxHtml,
+                      contentScale={renderContentScale}
+                      onContentChange={({ html, plainText, contentHeight }) => {
+                        setEditingTextboxHtml(html)
+                        setEditingTextboxPlainText(plainText)
+                        editingTextboxMeasuredHeightPxRef.current = contentHeight
+                        applyTextboxAutoHeight(object, plainText, contentHeight)
+                      }}
+                      onEditorBlur={() => {
+                        finishTextboxEditing(true)
+                      }}
+                      onEscape={() => {
+                        finishTextboxEditing(false)
+                      }}
+                      onCommit={() => {
+                        finishTextboxEditing(true)
                       }}
                     />
-                  </div>
-                )
+                  ) : (
+                    <div className="textbox-content">
+                      <div
+                        className={`textbox-rich-content textbox-content-inner textbox-v-align-${textboxVerticalAlignment}`}
+                        style={{
+                          fontFamily: textboxBaseTextStyle.fontFamily,
+                          fontSize: `${textboxBaseTextStyle.fontSizePx}px`,
+                          color: textboxBaseTextStyle.textColor,
+                          transform: `scale(${renderContentScale})`,
+                          transformOrigin: 'top left',
+                          width: `${100 / renderContentScale}%`,
+                          height: `${100 / renderContentScale}%`,
+                        }}
+                        dangerouslySetInnerHTML={{
+                          __html: textboxHtml,
+                        }}
+                      />
+                    </div>
+                  )
+                })()
+              ) : object.type === 'template_placeholder' ? (
+                <div
+                  className={`canvas-template-placeholder kind-${object.templatePlaceholderData.kind} ${object.templatePlaceholderData.kind === 'universal' ? 'universal' : ''}`}
+                >
+                  {object.templatePlaceholderData.kind === 'universal' ? (
+                    <div className="canvas-template-placeholder-choice-grid">
+                      {UNIVERSAL_TEMPLATE_CHOICES.map((entry) => (
+                        <button
+                          key={entry.choice}
+                          type="button"
+                          className={`canvas-template-placeholder-choice ${entry.cornerClassName}`}
+                          onPointerDown={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            closeContextMenu()
+                            handleTemplatePlaceholderChoice(object, entry.choice)
+                          }}
+                          title={entry.label}
+                          aria-label={entry.label}
+                        >
+                          <FontAwesomeIcon icon={entry.icon} />
+                          <span>{entry.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span>{getTemplatePlaceholderBadge(object.templatePlaceholderData.kind)}</span>
+                  )}
+                  <strong>{object.templatePlaceholderData.prompt}</strong>
+                </div>
+              ) : object.type === 'shape_rect' || object.type === 'shape_circle' ? (
+                <ShapeSvg
+                  shapeType={object.type}
+                  shapeData={object.shapeData}
+                  width={object.w}
+                  height={object.h}
+                  borderScale={resolveObjectBorderScale(object.scalePercent)}
+                  fillBackground={getShapeBackground(object.shapeData)}
+                  className="canvas-shape-svg"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    overflow: 'visible',
+                    pointerEvents: 'none',
+                  }}
+                />
               ) : object.type === 'group' ? null : (
                 <span>{getObjectLabel(object)}</span>
               )}
@@ -2789,6 +4796,56 @@ export function CanvasViewport({
           </div>
         ))}
       </div>
+
+      {targetDisplayFrame.isConstrained && (
+        <div className="target-display-overlay" aria-hidden="true">
+          <div
+            className="target-display-mask top"
+            style={{
+              left: 0,
+              top: 0,
+              width: viewportSize.width,
+              height: targetDisplayFrame.top,
+            }}
+          />
+          <div
+            className="target-display-mask bottom"
+            style={{
+              left: 0,
+              top: targetDisplayFrame.top + targetDisplayFrame.height,
+              width: viewportSize.width,
+              height: Math.max(0, viewportSize.height - (targetDisplayFrame.top + targetDisplayFrame.height)),
+            }}
+          />
+          <div
+            className="target-display-mask left"
+            style={{
+              left: 0,
+              top: targetDisplayFrame.top,
+              width: targetDisplayFrame.left,
+              height: targetDisplayFrame.height,
+            }}
+          />
+          <div
+            className="target-display-mask right"
+            style={{
+              left: targetDisplayFrame.left + targetDisplayFrame.width,
+              top: targetDisplayFrame.top,
+              width: Math.max(0, viewportSize.width - (targetDisplayFrame.left + targetDisplayFrame.width)),
+              height: targetDisplayFrame.height,
+            }}
+          />
+          <div
+            className="target-display-frame"
+            style={{
+              left: targetDisplayFrame.left,
+              top: targetDisplayFrame.top,
+              width: targetDisplayFrame.width,
+              height: targetDisplayFrame.height,
+            }}
+          />
+        </div>
+      )}
 
       {activeGroupObject && (
         <div
@@ -2832,6 +4889,26 @@ export function CanvasViewport({
             top: marqueeRect.minY,
             width: marqueeRect.maxX - marqueeRect.minX,
             height: marqueeRect.maxY - marqueeRect.minY,
+          }}
+        />
+      )}
+
+      {creationPreviewRect && (
+        <div
+          className={`creation-preview ${creationTool?.type === 'shape_circle' ? 'circle' : ''}`}
+          style={{
+            left: creationPreviewRect.minX,
+            top: creationPreviewRect.minY,
+            width: creationPreviewRect.maxX - creationPreviewRect.minX,
+            height: creationPreviewRect.maxY - creationPreviewRect.minY,
+            clipPath:
+              creationTool?.type === 'shape_rect'
+                ? getShapeClipPath(normalizeShapeKind(creationTool.shapeKind)) ?? undefined
+                : undefined,
+            borderRadius:
+              creationTool?.type === 'shape_rect'
+                ? getShapeBorderRadius(normalizeShapeKind(creationTool.shapeKind), 14)
+                : undefined,
           }}
         />
       )}
@@ -2920,6 +4997,24 @@ export function CanvasViewport({
                     beginObjectInteraction(event, [selectedObject], 'resize')
                   }}
                 />
+                {selectedShapeAdjustmentHandle &&
+                  (selectedObject.type === 'shape_rect' || selectedObject.type === 'shape_circle') && (
+                    <button
+                      type="button"
+                      className="shape-adjust-handle"
+                      aria-label={selectedShapeAdjustmentHandle.title}
+                      title={selectedShapeAdjustmentHandle.title}
+                      style={{
+                        left: `${selectedShapeAdjustmentHandle.xPercent}%`,
+                        top: `${selectedShapeAdjustmentHandle.yPercent}%`,
+                      }}
+                      onPointerDown={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        beginShapeAdjustInteraction(event, selectedObject)
+                      }}
+                    />
+                  )}
                 <button
                   type="button"
                   className="rotate-handle"
@@ -3312,6 +5407,162 @@ export function CanvasViewport({
             transform: `rotate(${camera.rotation + multiSelectionFrame.rotation}rad)`,
           }}
         >
+          <div className="selection-top-controls">
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Distribute horizontally"
+              title="Distribute horizontally"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('distribute-horizontal')
+              }}
+              disabled={!canDistributeSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faGripLinesVertical} />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align left"
+              title="Align left"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('left')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faAlignLeft} />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align horizontal centers"
+              title="Align horizontal centers"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('center-horizontal')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faAlignCenter} />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align right"
+              title="Align right"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('right')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faAlignRight} />
+            </button>
+            <span className="selection-top-controls-separator" aria-hidden="true" />
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align center"
+              title="Align center"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('center')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faUpDownLeftRight} />
+            </button>
+            <span className="selection-top-controls-separator" aria-hidden="true" />
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align top"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('top')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faArrowsUpToLine} />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align vertical centers"
+              title="Align vertical centers"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('center-vertical')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faAlignCenter} className="alignment-icon-vertical" />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Align bottom"
+              title="Align bottom"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('bottom')
+              }}
+              disabled={!canAlignSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faArrowsDownToLine} />
+            </button>
+            <button
+              type="button"
+              className="alignment-handle"
+              aria-label="Distribute vertically"
+              title="Distribute vertically"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                applyAlignment('distribute-vertical')
+              }}
+              disabled={!canDistributeSelectedObjects}
+            >
+              <FontAwesomeIcon icon={faGripLines} />
+            </button>
+          </div>
           <button
             type="button"
             className="resize-handle"
@@ -3475,6 +5726,13 @@ export function CanvasViewport({
         onChange={handleImageReloadFile}
         style={{ display: 'none' }}
       />
+      <input
+        ref={templatePlaceholderVideoInputRef}
+        type="file"
+        accept={SUPPORTED_VIDEO_ACCEPT}
+        onChange={handleTemplatePlaceholderVideoFile}
+        style={{ display: 'none' }}
+      />
 
       <div className="camera-card" aria-label="Camera position">
         <span className="camera-pos-item">X {camera.x.toFixed(1)}</span>
@@ -3488,6 +5746,67 @@ export function CanvasViewport({
           {((camera.rotation * 180) / Math.PI).toFixed(1)}°
         </span>
       </div>
+
+      {activeSlideBadge ? (
+        <div className="slide-chip-card" aria-label="Selected slide">
+          <span className="slide-chip-label">{activeSlideBadge.label}</span>
+          <span className="slide-chip-name" title={activeSlideBadge.name}>
+            {activeSlideBadge.name}
+          </span>
+        </div>
+      ) : null}
+
+      {targetDisplayPortalNode
+        ? createPortal(
+          <div
+            className="target-display-card target-display-card-panel"
+            aria-label="Target display ratio"
+            onPointerDown={(event) => {
+              event.stopPropagation()
+            }}
+            onContextMenu={(event) => {
+              event.stopPropagation()
+            }}
+            onWheel={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <div className="target-display-card-controls">
+              <span className="target-display-card-label">Target display</span>
+              <select
+                className="target-display-select"
+                value={targetDisplayPreset}
+                onChange={(event) => {
+                  setTargetDisplayPreset(event.target.value as TargetDisplayPreset)
+                }}
+                aria-label="Target display"
+                title="Target display"
+              >
+                {TARGET_DISPLAY_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className={`camera-control-btn ${targetDisplayOrientation === 'portrait' ? 'active' : ''}`}
+                onClick={() => {
+                  setTargetDisplayOrientation((current) =>
+                    current === 'landscape' ? 'portrait' : 'landscape'
+                  )
+                }}
+                disabled={targetDisplayPreset === 'display'}
+                aria-label="Rotate target display"
+                title="Rotate target display"
+              >
+                <FontAwesomeIcon icon={faRotateRight} />
+              </button>
+            </div>
+          </div>,
+          targetDisplayPortalNode
+        )
+        : null}
     </div>
   )
 }

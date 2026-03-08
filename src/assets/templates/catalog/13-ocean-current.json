@@ -1,0 +1,84 @@
+{
+  "id": "ocean-current",
+  "name": "Current Plan",
+  "description": "Diagonal momentum layout for strategy and execution.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": 525,
+        "y": 0,
+        "w": 560,
+        "h": 780
+      },
+      "shapeData": {
+        "kind": "parallelogram",
+        "fillColor": {
+          "blend": {
+            "a": "theme.accent",
+            "b": "theme.surface",
+            "mix": 0.2
+          }
+        },
+        "borderColor": "theme.accentSoft",
+        "borderWidth": 2,
+        "radius": 16
+      }
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -440,
+        "y": -260,
+        "w": 720,
+        "h": 120
+      },
+      "prompt": "Plan title"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -440,
+        "y": -130,
+        "w": 650,
+        "h": 90
+      },
+      "prompt": "Context"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": 120,
+        "w": 620,
+        "h": 420
+      },
+      "prompt": "Main image"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 285,
+        "y": 85,
+        "w": 540,
+        "h": 400
+      },
+      "prompt": "Execution steps"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 285,
+        "y": 300,
+        "w": 540,
+        "h": 90
+      },
+      "prompt": "Outcome"
+    }
+  ]
+}

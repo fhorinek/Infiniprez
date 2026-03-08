@@ -1,0 +1,150 @@
+{
+  "id": "metrics",
+  "name": "Metrics",
+  "description": "KPI cards with supporting details.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -420,
+        "y": -260,
+        "w": 760,
+        "h": 120
+      },
+      "prompt": "Metrics title"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": -410,
+        "y": 150,
+        "w": 320,
+        "h": 250
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": -410,
+        "y": 95,
+        "w": 220,
+        "h": 70
+      },
+      "text": "Revenue",
+      "style": {
+        "fontSize": 20,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "letterSpacingEm": 0.08,
+        "color": "theme.highlight"
+      }
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": -410,
+        "y": 180,
+        "w": 220,
+        "h": 110
+      },
+      "text": "$4.2M",
+      "style": {
+        "fontSize": 58,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "color": "theme.text"
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 150,
+        "w": 320,
+        "h": 250
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": 0,
+        "y": 95,
+        "w": 220,
+        "h": 70
+      },
+      "text": "Users",
+      "style": {
+        "fontSize": 20,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "letterSpacingEm": 0.08,
+        "color": "theme.highlight"
+      }
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": 0,
+        "y": 180,
+        "w": 220,
+        "h": 110
+      },
+      "text": "128K",
+      "style": {
+        "fontSize": 58,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "color": "theme.text"
+      }
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 410,
+        "y": 150,
+        "w": 320,
+        "h": 250
+      },
+      "variant": "surface"
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": 410,
+        "y": 95,
+        "w": 220,
+        "h": 70
+      },
+      "text": "Retention",
+      "style": {
+        "fontSize": 20,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "letterSpacingEm": 0.08,
+        "color": "theme.highlight"
+      }
+    },
+    {
+      "kind": "textbox",
+      "frame": {
+        "x": 410,
+        "y": 180,
+        "w": 220,
+        "h": 110
+      },
+      "text": "91%",
+      "style": {
+        "fontSize": 58,
+        "fontWeight": 700,
+        "textAlign": "center",
+        "color": "theme.text"
+      }
+    }
+  ]
+}

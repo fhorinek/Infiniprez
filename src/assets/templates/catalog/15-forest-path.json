@@ -1,0 +1,109 @@
+{
+  "id": "forest-path",
+  "name": "Forest Path",
+  "description": "Organic lower motif with room for story flow.",
+  "section": "generic",
+  "layout": [
+    {
+      "kind": "baseFrame"
+    },
+    {
+      "kind": "panel",
+      "frame": {
+        "x": 0,
+        "y": 300,
+        "w": 1500,
+        "h": 220
+      },
+      "variant": "muted"
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": -610,
+        "y": 260,
+        "w": 80,
+        "h": 120
+      },
+      "shapeData": {
+        "kind": "pentagon",
+        "fillColor": "theme.accent",
+        "borderColor": "theme.accentSoft",
+        "borderWidth": 1
+      }
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": -500,
+        "y": 250,
+        "w": 98,
+        "h": 138
+      },
+      "shapeData": {
+        "kind": "pentagon",
+        "fillColor": "theme.accentSoft",
+        "borderColor": "theme.accent",
+        "borderWidth": 1
+      }
+    },
+    {
+      "kind": "shape",
+      "shapeType": "shape_rect",
+      "frame": {
+        "x": -360,
+        "y": 245,
+        "w": 86,
+        "h": 124
+      },
+      "shapeData": {
+        "kind": "pentagon",
+        "fillColor": "theme.highlight",
+        "borderColor": "theme.border",
+        "borderWidth": 1
+      }
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -430,
+        "y": -250,
+        "w": 740,
+        "h": 130
+      },
+      "prompt": "Forest brief"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": -380,
+        "y": 10,
+        "w": 640,
+        "h": 380
+      },
+      "prompt": "Primary media"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 330,
+        "y": 10,
+        "w": 620,
+        "h": 390
+      },
+      "prompt": "Highlights"
+    },
+    {
+      "kind": "placeholder",
+      "frame": {
+        "x": 330,
+        "y": 260,
+        "w": 560,
+        "h": 100
+      },
+      "prompt": "Takeaway"
+    }
+  ]
+}
