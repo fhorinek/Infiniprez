@@ -31,9 +31,9 @@ const textRunSchema = z.object({
 
 const fillGradientSchema = z
   .object({
-  colorA: colorSchema,
-  colorB: colorSchema,
-  angleDeg: z.number().min(-360).max(360),
+    colorA: colorSchema,
+    colorB: colorSchema,
+    angleDeg: z.number().min(-360).max(360),
     gradientType: z.enum(['linear', 'radial', 'circles']).default('linear'),
     stops: z.array(gradientStopSchema).max(5).default([]),
   })
@@ -41,19 +41,19 @@ const fillGradientSchema = z
     const normalizedStops =
       value.stops.length >= 2
         ? [...value.stops]
-            .map((stop) => ({
-              color: stop.color,
-              positionPercent: Math.max(0, Math.min(100, stop.positionPercent)),
-              xPercent:
-                stop.xPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.xPercent)),
-              yPercent:
-                stop.yPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.yPercent)),
-            }))
-            .sort((a, b) => a.positionPercent - b.positionPercent)
+          .map((stop) => ({
+            color: stop.color,
+            positionPercent: Math.max(0, Math.min(100, stop.positionPercent)),
+            xPercent:
+              stop.xPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.xPercent)),
+            yPercent:
+              stop.yPercent === undefined ? undefined : Math.max(0, Math.min(100, stop.yPercent)),
+          }))
+          .sort((a, b) => a.positionPercent - b.positionPercent)
         : [
-            { color: value.colorA, positionPercent: 0 },
-            { color: value.colorB, positionPercent: 100 },
-          ]
+          { color: value.colorA, positionPercent: 0 },
+          { color: value.colorB, positionPercent: 100 },
+        ]
 
     const trimmedStops = normalizedStops.slice(0, 5)
     const firstStop = trimmedStops[0] ?? { color: value.colorA, positionPercent: 0 }

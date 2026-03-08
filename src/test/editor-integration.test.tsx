@@ -183,7 +183,7 @@ describe('integration: copy/paste', () => {
     const groupId = useEditorStore.getState().ui.selectedObjectIds[0]
     expect(groupId).toBeTruthy()
     state.selectObjects([groupId!])
-    await act(async () => {})
+    await act(async () => { })
 
     render(<CanvasViewport />)
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
@@ -202,13 +202,13 @@ describe('integration: copy/paste', () => {
     render(<CanvasViewport />)
 
     state.selectObjects(['rect-a'])
-    await act(async () => {})
+    await act(async () => { })
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
 
     state.selectObjects(['circle-b'])
-    await act(async () => {})
+    await act(async () => { })
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
     fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
 
@@ -320,7 +320,7 @@ describe('integration: scale slider', () => {
     const object = createShapeRect({ id: 'scaled-rect', scalePercent: 200, zIndex: 1 })
     createObject(object)
     useEditorStore.getState().selectObjects([object.id])
-    await act(async () => {})
+    await act(async () => { })
 
     fireEvent.change(screen.getByRole('slider', { name: /^Scale\b/ }), {
       target: { value: '300' },
@@ -341,7 +341,7 @@ describe('integration: scale slider', () => {
     const object = createShapeRect({ id: 'wheel-scale-rect', scalePercent: 200, zIndex: 1 })
     createObject(object)
     useEditorStore.getState().selectObjects([object.id])
-    await act(async () => {})
+    await act(async () => { })
 
     const scaleSlider = screen.getByRole('slider', { name: /^Scale\b/ })
     fireEvent.wheel(scaleSlider, { deltaY: -100 })
@@ -362,7 +362,7 @@ describe('integration: object aspect ratio lock', () => {
     const object = createShapeRect({ id: 'ratio-rect', w: 120, h: 80, zIndex: 1 })
     createObject(object)
     useEditorStore.getState().selectObjects([object.id])
-    await act(async () => {})
+    await act(async () => { })
 
     fireEvent.click(screen.getByRole('button', { name: 'Lock aspect ratio' }))
 
@@ -384,7 +384,7 @@ describe('integration: keyboard undo', () => {
 
     const object = createShapeRect({ id: 'undo-rect', zIndex: 1 })
     createObject(object)
-    await act(async () => {})
+    await act(async () => { })
 
     expect(useEditorStore.getState().document.objects.some((entry) => entry.id === object.id)).toBe(true)
 
@@ -399,7 +399,7 @@ describe('integration: keyboard undo', () => {
     const object = createShapeRect({ id: 'backspace-delete-rect', zIndex: 1 })
     createObject(object)
     useEditorStore.getState().selectObjects([object.id])
-    await act(async () => {})
+    await act(async () => { })
 
     fireEvent.keyDown(window, { key: 'Backspace' })
 

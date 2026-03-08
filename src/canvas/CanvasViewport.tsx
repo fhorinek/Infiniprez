@@ -115,7 +115,11 @@ interface GridLine {
   value: number
 }
 
-type TargetDisplayPreset = 'ratio-19-9' | 'ratio-16-10' | 'ratio-20-9' | 'ratio-4-3'
+type TargetDisplayPreset =
+  | 'ratio-16-9'
+  | 'ratio-16-10'
+  | 'ratio-20-9'
+  | 'ratio-4-3'
 type TargetDisplayOrientation = 'landscape' | 'portrait'
 
 interface PanInteraction {
@@ -289,7 +293,7 @@ const TARGET_DISPLAY_PRESETS: Array<{
   width: number | null
   height: number | null
 }> = [
-    { value: 'ratio-19-9', label: '19:9', width: 1900, height: 900 },
+    { value: 'ratio-16-9', label: '16:9', width: 1600, height: 900 },
     { value: 'ratio-16-10', label: '16:10', width: 1600, height: 1000 },
     { value: 'ratio-20-9', label: '20:9', width: 2000, height: 900 },
     { value: 'ratio-4-3', label: '4:3', width: 1600, height: 1200 },
@@ -1288,7 +1292,7 @@ export function CanvasViewport({
   const [styleCopySourceObjectId, setStyleCopySourceObjectId] = useState<string | null>(null)
   const [smartGuides, setSmartGuides] = useState<SmartGuideLine[]>([])
   const [creationPreviewRect, setCreationPreviewRect] = useState<Rect | null>(null)
-  const [targetDisplayPreset, setTargetDisplayPreset] = useState<TargetDisplayPreset>('ratio-16-10')
+  const [targetDisplayPreset, setTargetDisplayPreset] = useState<TargetDisplayPreset>('ratio-16-9')
   const [targetDisplayOrientation, setTargetDisplayOrientation] =
     useState<TargetDisplayOrientation>('landscape')
   const [isTargetDisplayOverlayEnabled, setIsTargetDisplayOverlayEnabled] = useState(true)

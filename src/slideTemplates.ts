@@ -254,9 +254,9 @@ function parseHex(hex: string) {
   const expanded =
     normalized.length === 3
       ? normalized
-          .split('')
-          .map((value) => `${value}${value}`)
-          .join('')
+        .split('')
+        .map((value) => `${value}${value}`)
+        .join('')
       : normalized
   if (!/^[0-9a-f]{6}$/i.test(expanded)) {
     return null

@@ -1,250 +1,385 @@
 [
-  {
-    "type": "asset",
-    "asset": {
-      "name": "MotionMono.woff2",
-      "mimeType": "font/woff2",
-      "dataBase64": "ZHVtbXktZm9udC1kYXRhLW1vdGlvbi1tb25v"
-    }
-  },
-  {
-    "type": "asset",
-    "asset": {
-      "name": "Aurora-Gradient-16x9.png",
-      "mimeType": "image/png",
-      "dataBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5x3foAAAAASUVORK5CYII=",
-      "intrinsicWidth": 1600,
-      "intrinsicHeight": 900
-    }
-  },
-  {
-    "type": "asset",
-    "asset": {
-      "name": "Vector-Trajectory-1x1.gif",
-      "mimeType": "image/gif",
-      "dataBase64": "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
-      "intrinsicWidth": 1200,
-      "intrinsicHeight": 1200
-    }
-  },
-  {
-    "type": "style",
-    "style": {
-      "id": "motion-cinematic-v1",
-      "name": "Motion Cinematic",
-      "inspiration": "Camera-path storytelling optimized for zoom + rotate transitions",
-      "fontFamily": "MotionMono",
-      "canvasBackground": "radial-gradient(circle at 16% 14%, #1d4f80 0%, #1a2350 44%, #0b0f20 100%)",
-      "text": {
-        "primary": "#f1f6ff",
-        "secondary": "#c7dbff",
-        "muted": "#8ca8d8",
-        "accent": "#84c5ff"
-      },
-      "objects": {
-        "foregroundFill": "#2f6ac2",
-        "foregroundBorder": "#b5d7ff",
-        "foregroundText": "#f8fbff",
-        "backgroundFill": "#1a2848",
-        "backgroundBorder": "#6f93cd",
-        "backgroundText": "#e8f1ff",
-        "accentFill": "#4aa4f5",
-        "accentBorder": "#d4ebff",
-        "accentText": "#f8fcff",
-        "mutedFill": "#25365f",
-        "mutedBorder": "#5f7fb8",
-        "mutedText": "#bfd3f3",
-        "highlightFill": "#7dd3fc",
-        "highlightBorder": "#e2f5ff",
-        "highlightText": "#041323"
-      },
-      "assets": {
-        "imageBorder": "#b9dbff",
-        "videoBorder": "#b9dbff",
-        "audioBorder": "#b9dbff",
-        "iconTint": "#c8e5ff"
-      }
-    }
-  },
-  {
-    "type": "template",
-    "template": {
-      "id": "motion-zoom-entry",
-      "name": "Zoom Entry Focus",
-      "description": "Asymmetric composition for dramatic camera zoom-ins.",
-      "section": "generic",
-      "layout": [
-        { "kind": "baseFrame" },
-        {
-          "kind": "shape",
-          "shapeType": "shape_circle",
-          "frame": { "x": 470, "y": -260, "w": 980, "h": 980 },
-          "shapeData": {
-            "fillColor": { "blend": { "a": "theme.accent", "b": "theme.surface", "mix": 0.65 } },
-            "borderColor": "theme.borderSoft",
-            "borderWidth": 2
-          }
-        },
-        {
-          "kind": "panel",
-          "frame": { "x": -560, "y": -300, "w": 760, "h": 640 },
-          "variant": "muted"
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": -520, "y": -260, "w": 680, "h": 160 },
-          "prompt": "Primary narrative title",
-          "placeholderKind": "text"
-        },
-        {
-          "kind": "textbox",
-          "frame": { "x": -520, "y": -40, "w": 620, "h": 280 },
-          "text": "Start close and zoom through this storyline.",
-          "style": { "role": "description" }
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": 420, "y": -220, "w": 820, "h": 520 },
-          "prompt": "Hero image or video",
-          "placeholderKind": "image"
+    {
+        "type": "asset",
+        "asset": {
+            "name": "MotionMono.woff2",
+            "mimeType": "font/woff2",
+            "dataBase64": "ZHVtbXktZm9udC1kYXRhLW1vdGlvbi1tb25v"
         }
-      ]
-    }
-  },
-  {
-    "type": "template",
-    "template": {
-      "id": "motion-rotation-arc",
-      "name": "Rotation Arc Compare",
-      "description": "Diagonal anchors that read well during subtle slide rotation.",
-      "section": "generic",
-      "layout": [
-        { "kind": "baseFrame" },
-        {
-          "kind": "shape",
-          "shapeType": "shape_rect",
-          "frame": { "x": -760, "y": -360, "w": 520, "h": 720 },
-          "shapeData": {
-            "kind": "diamond",
-            "fillColor": { "blend": { "a": "theme.surfaceAlt", "b": "theme.accent", "mix": 0.35 } },
-            "borderColor": "theme.border",
-            "borderWidth": 2
-          }
-        },
-        {
-          "kind": "repeat",
-          "count": 3,
-          "step": { "x": 140, "y": 78 },
-          "node": {
-            "kind": "shape",
-            "shapeType": "shape_circle",
-            "frame": { "x": -90, "y": -210, "w": 36, "h": 36 },
-            "shapeData": {
-              "fillColor": "theme.highlight",
-              "borderColor": "theme.borderSoft",
-              "borderWidth": 2
-            }
-          }
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": -250, "y": -260, "w": 820, "h": 150 },
-          "prompt": "Comparison headline",
-          "placeholderKind": "text"
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": -250, "y": -40, "w": 380, "h": 360 },
-          "prompt": "Left visual",
-          "placeholderKind": "image"
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": 210, "y": -40, "w": 380, "h": 360 },
-          "prompt": "Right visual",
-          "placeholderKind": "image"
-        },
-        {
-          "kind": "textbox",
-          "frame": { "x": 640, "y": -220, "w": 300, "h": 540 },
-          "text": "Rotate 3°–8° between slides for kinetic compare flow.",
-          "style": { "role": "caption" },
-          "box": { "backgroundColor": { "blend": { "a": "theme.surface", "b": "#000000", "mix": 0.2 } }, "borderColor": "theme.border", "borderWidth": 2 }
+    },
+    {
+        "type": "asset",
+        "asset": {
+            "name": "Aurora-Gradient-16x9.png",
+            "mimeType": "image/png",
+            "dataBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5x3foAAAAASUVORK5CYII=",
+            "intrinsicWidth": 1600,
+            "intrinsicHeight": 900
         }
-      ]
-    }
-  },
-  {
-    "type": "template",
-    "template": {
-      "id": "motion-transition-timeline",
-      "name": "Transition Timeline Path",
-      "description": "Step-by-step sequence designed for timed transitions and zoom travel.",
-      "section": "generic",
-      "layout": [
-        { "kind": "baseFrame" },
-        {
-          "kind": "panel",
-          "frame": { "x": -680, "y": -290, "w": 1360, "h": 580 },
-          "variant": "surface"
-        },
-        {
-          "kind": "placeholder",
-          "frame": { "x": -620, "y": -250, "w": 940, "h": 120 },
-          "prompt": "Process / journey title",
-          "placeholderKind": "text"
-        },
-        {
-          "kind": "repeat",
-          "count": 4,
-          "step": { "x": 295, "y": 0 },
-          "node": {
-            "kind": "shape",
-            "shapeType": "shape_circle",
-            "frame": { "x": -520, "y": 30, "w": 72, "h": 72 },
-            "shapeData": {
-              "fillColor": "theme.accent",
-              "borderColor": "theme.borderSoft",
-              "borderWidth": 3
-            }
-          }
-        },
-        {
-          "kind": "repeat",
-          "count": 3,
-          "step": { "x": 295, "y": 0 },
-          "node": {
-            "kind": "shape",
-            "shapeType": "shape_rect",
-            "frame": { "x": -410, "y": 62, "w": 200, "h": 8 },
-            "shapeData": {
-              "kind": "roundedRect",
-              "fillColor": "theme.highlight",
-              "borderColor": "theme.highlight",
-              "borderWidth": 0,
-              "radius": 8
-            }
-          }
-        },
-        {
-          "kind": "repeat",
-          "count": 4,
-          "step": { "x": 295, "y": 0 },
-          "node": {
-            "kind": "placeholder",
-            "frame": { "x": -560, "y": 130, "w": 150, "h": 170 },
-            "prompt": "Step detail",
-            "placeholderKind": "list"
-          }
-        },
-        {
-          "kind": "textbox",
-          "frame": { "x": 380, "y": -230, "w": 260, "h": 220 },
-          "text": "Use 1200-2000ms ease transitions between timeline beats.",
-          "style": { "role": "caption" },
-          "box": { "backgroundColor": "theme.surfaceAlt", "borderColor": "theme.border", "borderWidth": 2 }
+    },
+    {
+        "type": "asset",
+        "asset": {
+            "name": "Vector-Trajectory-1x1.gif",
+            "mimeType": "image/gif",
+            "dataBase64": "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+            "intrinsicWidth": 1200,
+            "intrinsicHeight": 1200
         }
-      ]
+    },
+    {
+        "type": "style",
+        "style": {
+            "id": "motion-cinematic-v1",
+            "name": "Motion Cinematic",
+            "inspiration": "Camera-path storytelling optimized for zoom + rotate transitions",
+            "fontFamily": "MotionMono",
+            "canvasBackground": "radial-gradient(circle at 16% 14%, #1d4f80 0%, #1a2350 44%, #0b0f20 100%)",
+            "text": {
+                "primary": "#f1f6ff",
+                "secondary": "#c7dbff",
+                "muted": "#8ca8d8",
+                "accent": "#84c5ff"
+            },
+            "objects": {
+                "foregroundFill": "#2f6ac2",
+                "foregroundBorder": "#b5d7ff",
+                "foregroundText": "#f8fbff",
+                "backgroundFill": "#1a2848",
+                "backgroundBorder": "#6f93cd",
+                "backgroundText": "#e8f1ff",
+                "accentFill": "#4aa4f5",
+                "accentBorder": "#d4ebff",
+                "accentText": "#f8fcff",
+                "mutedFill": "#25365f",
+                "mutedBorder": "#5f7fb8",
+                "mutedText": "#bfd3f3",
+                "highlightFill": "#7dd3fc",
+                "highlightBorder": "#e2f5ff",
+                "highlightText": "#041323"
+            },
+            "assets": {
+                "imageBorder": "#b9dbff",
+                "videoBorder": "#b9dbff",
+                "audioBorder": "#b9dbff",
+                "iconTint": "#c8e5ff"
+            }
+        }
+    },
+    {
+        "type": "template",
+        "template": {
+            "id": "motion-zoom-entry",
+            "name": "Zoom Entry Focus",
+            "description": "Asymmetric composition for dramatic camera zoom-ins.",
+            "section": "generic",
+            "layout": [
+                {
+                    "kind": "baseFrame"
+                },
+                {
+                    "kind": "shape",
+                    "shapeType": "shape_circle",
+                    "frame": {
+                        "x": 470,
+                        "y": -260,
+                        "w": 980,
+                        "h": 980
+                    },
+                    "shapeData": {
+                        "fillColor": {
+                            "blend": {
+                                "a": "theme.accent",
+                                "b": "theme.surface",
+                                "mix": 0.65
+                            }
+                        },
+                        "borderColor": "theme.borderSoft",
+                        "borderWidth": 2
+                    }
+                },
+                {
+                    "kind": "panel",
+                    "frame": {
+                        "x": -560,
+                        "y": -300,
+                        "w": 760,
+                        "h": 640
+                    },
+                    "variant": "muted"
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": -520,
+                        "y": -260,
+                        "w": 680,
+                        "h": 160
+                    },
+                    "prompt": "Primary narrative title",
+                    "placeholderKind": "text"
+                },
+                {
+                    "kind": "textbox",
+                    "frame": {
+                        "x": -520,
+                        "y": -40,
+                        "w": 620,
+                        "h": 280
+                    },
+                    "text": "Start close and zoom through this storyline.",
+                    "style": {
+                        "role": "description"
+                    }
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": 420,
+                        "y": -220,
+                        "w": 820,
+                        "h": 520
+                    },
+                    "prompt": "Hero image or video",
+                    "placeholderKind": "image"
+                }
+            ]
+        }
+    },
+    {
+        "type": "template",
+        "template": {
+            "id": "motion-rotation-arc",
+            "name": "Rotation Arc Compare",
+            "description": "Diagonal anchors that read well during subtle slide rotation.",
+            "section": "generic",
+            "layout": [
+                {
+                    "kind": "baseFrame"
+                },
+                {
+                    "kind": "shape",
+                    "shapeType": "shape_rect",
+                    "frame": {
+                        "x": -760,
+                        "y": -360,
+                        "w": 520,
+                        "h": 720
+                    },
+                    "shapeData": {
+                        "kind": "diamond",
+                        "fillColor": {
+                            "blend": {
+                                "a": "theme.surfaceAlt",
+                                "b": "theme.accent",
+                                "mix": 0.35
+                            }
+                        },
+                        "borderColor": "theme.border",
+                        "borderWidth": 2
+                    }
+                },
+                {
+                    "kind": "repeat",
+                    "count": 3,
+                    "step": {
+                        "x": 140,
+                        "y": 78
+                    },
+                    "node": {
+                        "kind": "shape",
+                        "shapeType": "shape_circle",
+                        "frame": {
+                            "x": -90,
+                            "y": -210,
+                            "w": 36,
+                            "h": 36
+                        },
+                        "shapeData": {
+                            "fillColor": "theme.highlight",
+                            "borderColor": "theme.borderSoft",
+                            "borderWidth": 2
+                        }
+                    }
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": -250,
+                        "y": -260,
+                        "w": 820,
+                        "h": 150
+                    },
+                    "prompt": "Comparison headline",
+                    "placeholderKind": "text"
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": -250,
+                        "y": -40,
+                        "w": 380,
+                        "h": 360
+                    },
+                    "prompt": "Left visual",
+                    "placeholderKind": "image"
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": 210,
+                        "y": -40,
+                        "w": 380,
+                        "h": 360
+                    },
+                    "prompt": "Right visual",
+                    "placeholderKind": "image"
+                },
+                {
+                    "kind": "textbox",
+                    "frame": {
+                        "x": 640,
+                        "y": -220,
+                        "w": 300,
+                        "h": 540
+                    },
+                    "text": "Rotate 3°–8° between slides for kinetic compare flow.",
+                    "style": {
+                        "role": "caption"
+                    },
+                    "box": {
+                        "backgroundColor": {
+                            "blend": {
+                                "a": "theme.surface",
+                                "b": "#000000",
+                                "mix": 0.2
+                            }
+                        },
+                        "borderColor": "theme.border",
+                        "borderWidth": 2
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "type": "template",
+        "template": {
+            "id": "motion-transition-timeline",
+            "name": "Transition Timeline Path",
+            "description": "Step-by-step sequence designed for timed transitions and zoom travel.",
+            "section": "generic",
+            "layout": [
+                {
+                    "kind": "baseFrame"
+                },
+                {
+                    "kind": "panel",
+                    "frame": {
+                        "x": -680,
+                        "y": -290,
+                        "w": 1360,
+                        "h": 580
+                    },
+                    "variant": "surface"
+                },
+                {
+                    "kind": "placeholder",
+                    "frame": {
+                        "x": -620,
+                        "y": -250,
+                        "w": 940,
+                        "h": 120
+                    },
+                    "prompt": "Process / journey title",
+                    "placeholderKind": "text"
+                },
+                {
+                    "kind": "repeat",
+                    "count": 4,
+                    "step": {
+                        "x": 295,
+                        "y": 0
+                    },
+                    "node": {
+                        "kind": "shape",
+                        "shapeType": "shape_circle",
+                        "frame": {
+                            "x": -520,
+                            "y": 30,
+                            "w": 72,
+                            "h": 72
+                        },
+                        "shapeData": {
+                            "fillColor": "theme.accent",
+                            "borderColor": "theme.borderSoft",
+                            "borderWidth": 3
+                        }
+                    }
+                },
+                {
+                    "kind": "repeat",
+                    "count": 3,
+                    "step": {
+                        "x": 295,
+                        "y": 0
+                    },
+                    "node": {
+                        "kind": "shape",
+                        "shapeType": "shape_rect",
+                        "frame": {
+                            "x": -410,
+                            "y": 62,
+                            "w": 200,
+                            "h": 8
+                        },
+                        "shapeData": {
+                            "kind": "roundedRect",
+                            "fillColor": "theme.highlight",
+                            "borderColor": "theme.highlight",
+                            "borderWidth": 0,
+                            "radius": 8
+                        }
+                    }
+                },
+                {
+                    "kind": "repeat",
+                    "count": 4,
+                    "step": {
+                        "x": 295,
+                        "y": 0
+                    },
+                    "node": {
+                        "kind": "placeholder",
+                        "frame": {
+                            "x": -560,
+                            "y": 130,
+                            "w": 150,
+                            "h": 170
+                        },
+                        "prompt": "Step detail",
+                        "placeholderKind": "list"
+                    }
+                },
+                {
+                    "kind": "textbox",
+                    "frame": {
+                        "x": 380,
+                        "y": -230,
+                        "w": 260,
+                        "h": 220
+                    },
+                    "text": "Use 1200-2000ms ease transitions between timeline beats.",
+                    "style": {
+                        "role": "caption"
+                    },
+                    "box": {
+                        "backgroundColor": "theme.surfaceAlt",
+                        "borderColor": "theme.border",
+                        "borderWidth": 2
+                    }
+                }
+            ]
+        }
     }
-  }
 ]
