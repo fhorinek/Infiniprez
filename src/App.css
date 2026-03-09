@@ -3462,37 +3462,6 @@ button:disabled {
   gap: 0.36rem;
 }
 
-.slide-chip-card {
-  position: absolute;
-  top: 0.9rem;
-  right: 0.9rem;
-  z-index: 20;
-  min-width: 10rem;
-  max-width: min(18rem, calc(100% - 1.8rem));
-  border-radius: 0.55rem;
-  border: 1px solid rgba(183, 209, 255, 0.25);
-  background: rgba(10, 16, 30, 0.86);
-  padding: 0.42rem 0.55rem;
-  display: grid;
-  gap: 0.14rem;
-}
-
-.slide-chip-label {
-  color: #8fa6cb;
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.slide-chip-name {
-  color: #edf5ff;
-  font-size: 0.82rem;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .target-display-select {
   font: inherit;
   min-width: 0;

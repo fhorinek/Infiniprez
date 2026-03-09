@@ -18,6 +18,13 @@ interface BuildPresentationSceneOptions {
     objectClassPrefix: 'present' | 'export'
     textboxHtmlResolver: (object: any) => string
     textboxBaseStyleResolver: (object: any) => TextboxBaseStyle | null
+    enableCulling?: boolean
+    cullingBounds?: {
+        minX: number
+        minY: number
+        maxX: number
+        maxY: number
+    } | null
 }
 
 export function buildPresentationScene(options: BuildPresentationSceneOptions): void {
@@ -309,7 +316,19 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
         objectClassPrefix,
         textboxHtmlResolver,
         textboxBaseStyleResolver,
+        enableCulling,
+        cullingBounds,
     } = options
+
+    const effectiveCullingBounds =
+        enableCulling &&
+            cullingBounds &&
+            Number.isFinite(cullingBounds.minX) &&
+            Number.isFinite(cullingBounds.minY) &&
+            Number.isFinite(cullingBounds.maxX) &&
+            Number.isFinite(cullingBounds.maxY)
+            ? cullingBounds
+            : null
 
     layer.innerHTML = ''
     const orderedObjects = (Array.isArray(objects) ? [...objects] : [])
@@ -321,6 +340,18 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
         const objectH = Math.max(1, toNumber(object?.h, 1))
         const objectX = toNumber(object?.x, 0)
         const objectY = toNumber(object?.y, 0)
+        if (effectiveCullingBounds) {
+            // Use a conservative bounding circle test so rotated objects are not clipped out.
+            const objectRadius = Math.hypot(objectW, objectH) / 2
+            if (
+                objectX + objectRadius < effectiveCullingBounds.minX ||
+                objectX - objectRadius > effectiveCullingBounds.maxX ||
+                objectY + objectRadius < effectiveCullingBounds.minY ||
+                objectY - objectRadius > effectiveCullingBounds.maxY
+            ) {
+                continue
+            }
+        }
 
         const element = documentRef.createElement('div')
         element.className = objectClassPrefix + '-object ' + String(object.type)

@@ -228,6 +228,36 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       y: clientY - bounds.top,
     };
   };
+  const getVisibleWorldBounds = (camera) => {
+    const viewport = getViewport();
+    const corners = [
+      screenToWorld({ x: 0, y: 0 }, camera, viewport),
+      screenToWorld({ x: viewport.width, y: 0 }, camera, viewport),
+      screenToWorld({ x: 0, y: viewport.height }, camera, viewport),
+      screenToWorld({ x: viewport.width, y: viewport.height }, camera, viewport),
+    ];
+    return {
+      minX: Math.min(...corners.map((corner) => corner.x)),
+      minY: Math.min(...corners.map((corner) => corner.y)),
+      maxX: Math.max(...corners.map((corner) => corner.x)),
+      maxY: Math.max(...corners.map((corner) => corner.y)),
+    };
+  };
+  const mergeWorldBounds = (a, b) => ({
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  });
+  const expandWorldBounds = (bounds, padding) => {
+    const safePadding = Math.max(0, padding);
+    return {
+      minX: bounds.minX - safePadding,
+      minY: bounds.minY - safePadding,
+      maxX: bounds.maxX + safePadding,
+      maxY: bounds.maxY + safePadding,
+    };
+  };
 
   const applyCameraTransform = (camera) => {
     const viewport = getViewport();
@@ -238,7 +268,7 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       'translate(' + String(-camera.x) + 'px, ' + String(-camera.y) + 'px)';
   };
 
-  const renderScene = () => {
+  const renderScene = (cullingBounds, enableCulling) => {
     buildPresentationScene({
       documentRef: document,
       layer: objectsLayer,
@@ -263,6 +293,8 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
           textColor: String(object?.textboxData?.textColor || '#f0f3fc'),
         };
       },
+      enableCulling: Boolean(enableCulling),
+      cullingBounds: enableCulling ? cullingBounds : null,
     });
   };
 
@@ -272,11 +304,22 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
 
   const transitionToSlide = (slide, forceInstant) => {
     const targetCamera = getSlideCamera(slide);
+    const startCamera = currentCamera;
     const transitionType = forceInstant ? 'instant' : slide?.transitionType || 'ease';
     const durationMs =
       transitionType === 'instant'
         ? 0
         : resolveTransitionDurationMs(transitionType, slide?.transitionDurationMs ?? 2000);
+    const shouldCullForTransition = !freeMoveEnabled && durationMs <= 0;
+    const mergedBounds = mergeWorldBounds(
+      getVisibleWorldBounds(startCamera),
+      getVisibleWorldBounds(targetCamera)
+    );
+    const viewport = getViewport();
+    const minZoom = Math.max(0.01, Math.min(startCamera.zoom, targetCamera.zoom));
+    const transitionPadding = Math.hypot(viewport.width, viewport.height) / (2 * minZoom);
+    const cullingBounds = expandWorldBounds(mergedBounds, transitionPadding);
+    renderScene(cullingBounds, shouldCullForTransition);
 
     applyCameraTransition(transitionType, durationMs);
     currentCamera = targetCamera;
@@ -331,6 +374,9 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     applyCameraTransition('instant', 0);
     stage.classList.toggle('free-move-enabled', freeMoveEnabled);
     stage.classList.remove('dragging');
+    if (freeMoveEnabled) {
+      renderScene(null, false);
+    }
     if (freeBtn) {
       freeBtn.classList.toggle('active', freeMoveEnabled);
       freeBtn.setAttribute('aria-pressed', freeMoveEnabled ? 'true' : 'false');
@@ -490,7 +536,6 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     }
   });
   window.addEventListener('resize', () => renderCamera(currentCamera));
-  renderScene();
   tryEnterFullscreen();
   setupFullscreenFallback();
   setFreeMoveEnabled(false);

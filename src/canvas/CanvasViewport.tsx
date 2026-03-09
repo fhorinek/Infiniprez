@@ -1935,21 +1935,6 @@ export function CanvasViewport({
     })
   }, [camera, hoveredSlideId, orderedSlides, selectedSlideId, targetDisplayFrame, targetDisplayLogicalFrame])
 
-  const activeSlideBadge = useMemo(() => {
-    if (!selectedSlideId) {
-      return null
-    }
-    const index = orderedSlides.findIndex((slide) => slide.id === selectedSlideId)
-    if (index < 0) {
-      return null
-    }
-    const slide = orderedSlides[index]
-    return {
-      label: `Slide ${index + 1} / ${orderedSlides.length}`,
-      name: slide.name || `Slide ${index + 1}`,
-    }
-  }, [orderedSlides, selectedSlideId])
-
   function getViewportRelativePoint(clientX: number, clientY: number): Point {
     const element = viewportRef.current
     if (!element) {
@@ -5955,15 +5940,6 @@ export function CanvasViewport({
           {((camera.rotation * 180) / Math.PI).toFixed(1)}°
         </span>
       </div>
-
-      {activeSlideBadge ? (
-        <div className="slide-chip-card" aria-label="Selected slide">
-          <span className="slide-chip-label">{activeSlideBadge.label}</span>
-          <span className="slide-chip-name" title={activeSlideBadge.name}>
-            {activeSlideBadge.name}
-          </span>
-        </div>
-      ) : null}
 
       {targetDisplayPortalNode
         ? createPortal(

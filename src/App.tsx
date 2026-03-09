@@ -347,6 +347,49 @@ function screenToWorldPresent(
   }
 }
 
+function getPresentVisibleWorldBounds(
+  camera: CameraState,
+  viewport: { width: number; height: number }
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  const corners = [
+    screenToWorldPresent({ x: 0, y: 0 }, camera, viewport),
+    screenToWorldPresent({ x: viewport.width, y: 0 }, camera, viewport),
+    screenToWorldPresent({ x: 0, y: viewport.height }, camera, viewport),
+    screenToWorldPresent({ x: viewport.width, y: viewport.height }, camera, viewport),
+  ]
+  return {
+    minX: Math.min(...corners.map((corner) => corner.x)),
+    minY: Math.min(...corners.map((corner) => corner.y)),
+    maxX: Math.max(...corners.map((corner) => corner.x)),
+    maxY: Math.max(...corners.map((corner) => corner.y)),
+  }
+}
+
+function mergePresentWorldBounds(
+  a: { minX: number; minY: number; maxX: number; maxY: number },
+  b: { minX: number; minY: number; maxX: number; maxY: number }
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  }
+}
+
+function expandPresentWorldBounds(
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+  padding: number
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  const safePadding = Math.max(0, padding)
+  return {
+    minX: bounds.minX - safePadding,
+    minY: bounds.minY - safePadding,
+    maxX: bounds.maxX + safePadding,
+    maxY: bounds.maxY + safePadding,
+  }
+}
+
 function toFiniteNumber(value: number, fallback: number) {
   return Number.isFinite(value) ? value : fallback
 }
@@ -1079,6 +1122,7 @@ function PresentStage({
     : { x: 0, y: 0, zoom: 1, rotation: 0 }
   const currentCameraRef = useRef<CameraState>(targetCamera)
   const previousFreeMoveEnabledRef = useRef(freeMoveEnabled)
+  const cameraTransitionUntilRef = useRef(0)
   const applyCameraTransition = (transitionType: Slide['transitionType'], durationMs: number) => {
     const cameraLayer = cameraLayerRef.current
     if (!cameraLayer) {
@@ -1086,10 +1130,12 @@ function PresentStage({
     }
     if (transitionType === 'instant' || durationMs <= 0) {
       cameraLayer.style.transition = 'none'
+      cameraTransitionUntilRef.current = 0
       return
     }
     const easing = transitionType === 'linear' ? 'linear' : 'cubic-bezier(0.645, 0.045, 0.355, 1)'
     cameraLayer.style.transition = `transform ${durationMs}ms ${easing}`
+    cameraTransitionUntilRef.current = performance.now() + durationMs
   }
   const applyCameraTransform = (camera: CameraState) => {
     const cameraLayer = cameraLayerRef.current
@@ -1147,6 +1193,16 @@ function PresentStage({
     const assetsById = Object.fromEntries(
       model.assets.map((asset) => [asset.id, asset])
     ) as Record<string, { name: string; mimeType: string; dataBase64: string }>
+    const isTransitioning = !freeMoveEnabled && performance.now() < cameraTransitionUntilRef.current
+    const startBounds = getPresentVisibleWorldBounds(currentCameraRef.current, safeViewport)
+    const endBounds = getPresentVisibleWorldBounds(targetCamera, safeViewport)
+    const mergedBounds = mergePresentWorldBounds(startBounds, endBounds)
+    const minZoom = Math.max(
+      0.01,
+      Math.min(currentCameraRef.current.zoom, targetCamera.zoom)
+    )
+    const transitionPadding = Math.hypot(safeViewport.width, safeViewport.height) / (2 * minZoom)
+    const cullingBounds = expandPresentWorldBounds(mergedBounds, transitionPadding)
     buildPresentationScene({
       documentRef: objectsLayer.ownerDocument,
       layer: objectsLayer,
@@ -1155,9 +1211,21 @@ function PresentStage({
       objectClassPrefix: 'present',
       textboxHtmlResolver: (object) => resolveTextboxRichHtml(object.textboxData),
       textboxBaseStyleResolver: (object) => resolveTextboxBaseTextStyle(object.textboxData),
+      enableCulling: !freeMoveEnabled && !isTransitioning,
+      cullingBounds: !freeMoveEnabled && !isTransitioning ? cullingBounds : null,
     })
     applyCameraTransform(currentCameraRef.current)
-  }, [model.assets, model.objects])
+  }, [
+    freeMoveEnabled,
+    model.assets,
+    model.objects,
+    safeViewport.height,
+    safeViewport.width,
+    targetCamera.rotation,
+    targetCamera.x,
+    targetCamera.y,
+    targetCamera.zoom,
+  ])
 
   function handlePresentStagePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.defaultPrevented) {
