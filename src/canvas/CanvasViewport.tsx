@@ -278,7 +278,6 @@ interface AlignmentSelectionUnit {
 type TemplatePlaceholderChoice = 'text' | 'list' | 'image' | 'video'
 
 const DOUBLE_CLICK_MS = 500
-const CAMERA_ROTATION_STEP_RAD = (10 * Math.PI) / 180
 const TEXTBOX_CAMERA_ROTATION_TRANSITION_MS = 220
 const CAMERA_RESET_TRANSITION_MS = 260
 const DEFAULT_TEXTBOX_BACKGROUND = '#1f3151'
@@ -1274,6 +1273,12 @@ export function CanvasViewport({
   const creationInteractionRef = useRef<CreationInteraction | null>(null)
   const clipboardRef = useRef<ClipboardState | null>(null)
   const cameraRef = useRef<CameraState | null>(null)
+  const lastReportedTargetDisplayFrameRef = useRef<{
+    width: number
+    height: number
+    fittedWidth: number
+    fittedHeight: number
+  } | null>(null)
   const videoElementMapRef = useRef<Map<string, HTMLVideoElement>>(new Map())
   const soundElementMapRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const cameraRotationAnimationFrameRef = useRef<number | null>(null)
@@ -1810,12 +1815,24 @@ export function CanvasViewport({
   }, [camera, targetDisplayFrame])
 
   useEffect(() => {
-    onTargetDisplayFrameChange?.({
+    const nextFrame = {
       width: targetDisplayLogicalFrame.width,
       height: targetDisplayLogicalFrame.height,
       fittedWidth: targetDisplayFrame.width,
       fittedHeight: targetDisplayFrame.height,
-    })
+    }
+    const previousFrame = lastReportedTargetDisplayFrameRef.current
+    if (
+      previousFrame &&
+      previousFrame.width === nextFrame.width &&
+      previousFrame.height === nextFrame.height &&
+      previousFrame.fittedWidth === nextFrame.fittedWidth &&
+      previousFrame.fittedHeight === nextFrame.fittedHeight
+    ) {
+      return
+    }
+    lastReportedTargetDisplayFrameRef.current = nextFrame
+    onTargetDisplayFrameChange?.(nextFrame)
   }, [
     onTargetDisplayFrameChange,
     targetDisplayFrame.height,

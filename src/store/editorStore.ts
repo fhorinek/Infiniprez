@@ -423,14 +423,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   ...createInitialState(),
 
   setCamera: (camera) =>
-    set((state) => ({
-      ...state,
-      camera: {
+    set((state) => {
+      const nextCamera = {
         ...camera,
         zoom: normalizeCameraZoom(camera.zoom),
         rotation: normalizeCameraRotation(camera.rotation),
-      },
-    })),
+      }
+      const currentCamera = state.camera
+      if (
+        currentCamera.x === nextCamera.x &&
+        currentCamera.y === nextCamera.y &&
+        currentCamera.zoom === nextCamera.zoom &&
+        currentCamera.rotation === nextCamera.rotation
+      ) {
+        return state
+      }
+      return {
+        ...state,
+        camera: nextCamera,
+      }
+    }),
 
   setCanvasBackground: (background) => {
     const nextBackground = background.trim()

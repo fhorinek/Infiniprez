@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -82,11 +83,12 @@ import {
   buildPresentationExportHtml,
 } from './persistence'
 import {
+  buildPresentationScene,
+  interpolateCamera,
   isBackwardPresentationKey,
   isForwardPresentationKey,
   shouldAutoAdvanceSlide,
   resolveTransitionDurationMs,
-  resolveTransitionProgress,
 } from './presentation'
 import { useEditorStore } from './store'
 import type { CameraState } from './store/types'
@@ -113,7 +115,6 @@ import {
   toAssetBase64,
 } from './imageFile'
 import { cameraDragDeltaToWorld } from './canvas/math'
-import { resolveImageFilterCss } from './imageEffects'
 import {
   createDefaultImageData,
   createDefaultSoundData,
@@ -123,7 +124,6 @@ import {
   isObjectAspectRatioLocked,
   resolveObjectBorderScale,
 } from './objectDefaults'
-import { resolveObjectDropShadowFilter, resolveObjectShadowCss } from './objectShadow'
 import {
   buildSlideTemplateInstance,
   getSlideTemplateCatalogEntries,
@@ -141,7 +141,6 @@ import {
   SHAPE_KIND_OPTIONS,
   clampShapeAdjustment,
   getDefaultShapeAdjustment,
-  getShapeSvgDescriptor,
   normalizeShapeKind,
   shapeSupportsRadius,
 } from './shapeStyle'
@@ -198,6 +197,10 @@ type DesignAssetContextMenu =
     x: number
     y: number
   }
+
+function camerasAreEqual(a: CameraState, b: CameraState): boolean {
+  return a.x === b.x && a.y === b.y && a.zoom === b.zoom && a.rotation === b.rotation
+}
 
 interface ObjectScaleBaseline {
   id: string
@@ -325,22 +328,6 @@ function rotatePoint(point: { x: number; y: number }, radians: number) {
   return {
     x: point.x * cos - point.y * sin,
     y: point.x * sin + point.y * cos,
-  }
-}
-
-function worldToScreenPresent(
-  world: { x: number; y: number },
-  camera: CameraState,
-  viewport: { width: number; height: number }
-) {
-  const translated = {
-    x: (world.x - camera.x) * camera.zoom,
-    y: (world.y - camera.y) * camera.zoom,
-  }
-  const rotated = rotatePoint(translated, camera.rotation)
-  return {
-    x: rotated.x + viewport.width / 2,
-    y: rotated.y + viewport.height / 2,
   }
 }
 
@@ -1025,8 +1012,8 @@ function PresentStage({
   onNavigatePrevious: () => void
 }) {
   const stageRef = useRef<HTMLDivElement>(null)
+  const cameraLayerRef = useRef<HTMLDivElement>(null)
   const objectsLayerRef = useRef<HTMLDivElement>(null)
-  const animationFrameRef = useRef<number | null>(null)
   const panRef = useRef<{
     pointerId: number
     startClientX: number
@@ -1092,76 +1079,56 @@ function PresentStage({
     : { x: 0, y: 0, zoom: 1, rotation: 0 }
   const currentCameraRef = useRef<CameraState>(targetCamera)
   const previousFreeMoveEnabledRef = useRef(freeMoveEnabled)
-  const [renderCamera, setRenderCamera] = useState<CameraState>(targetCamera)
-
-  useEffect(() => {
-    currentCameraRef.current = renderCamera
-  }, [renderCamera])
+  const applyCameraTransition = (transitionType: Slide['transitionType'], durationMs: number) => {
+    const cameraLayer = cameraLayerRef.current
+    if (!cameraLayer) {
+      return
+    }
+    if (transitionType === 'instant' || durationMs <= 0) {
+      cameraLayer.style.transition = 'none'
+      return
+    }
+    const easing = transitionType === 'linear' ? 'linear' : 'cubic-bezier(0.645, 0.045, 0.355, 1)'
+    cameraLayer.style.transition = `transform ${durationMs}ms ${easing}`
+  }
+  const applyCameraTransform = (camera: CameraState) => {
+    const cameraLayer = cameraLayerRef.current
+    if (!cameraLayer) {
+      return
+    }
+    cameraLayer.style.transform =
+      `translate(${safeViewport.width / 2}px, ${safeViewport.height / 2}px) ` +
+      `rotate(${camera.rotation}rad) scale(${camera.zoom}) ` +
+      `translate(${-camera.x}px, ${-camera.y}px)`
+  }
 
   useEffect(() => {
     const wasFreeMoveEnabled = previousFreeMoveEnabledRef.current
     previousFreeMoveEnabledRef.current = freeMoveEnabled
+    if (freeMoveEnabled) {
+      applyCameraTransition('instant', 0)
+      return
+    }
     if (!freeMoveEnabled && wasFreeMoveEnabled) {
+      applyCameraTransition('instant', 0)
       currentCameraRef.current = targetCamera
-      setRenderCamera(targetCamera)
+      applyCameraTransform(targetCamera)
     }
   }, [freeMoveEnabled, targetCamera])
 
   useEffect(() => {
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = null
-      }
-    }
-  }, [])
+    applyCameraTransition('instant', 0)
+    applyCameraTransform(currentCameraRef.current)
+  }, [safeViewport.height, safeViewport.width])
 
   useEffect(() => {
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
-    }
-
     const transitionType = slide?.transitionType ?? 'instant'
     const durationMs = slide
       ? resolveTransitionDurationMs(slide.transitionType, slide.transitionDurationMs)
       : 0
-    const startCamera = currentCameraRef.current
-    const endCamera = targetCamera
-    const hasCameraChange =
-      startCamera.x !== endCamera.x ||
-      startCamera.y !== endCamera.y ||
-      startCamera.zoom !== endCamera.zoom ||
-      startCamera.rotation !== endCamera.rotation
-
-    if (!hasCameraChange || transitionType === 'instant' || durationMs <= 0) {
-      currentCameraRef.current = endCamera
-      setRenderCamera(endCamera)
-      return
-    }
-
-    const startedAtMs = performance.now()
-    const tick = (nowMs: number) => {
-      const rawProgress = (nowMs - startedAtMs) / durationMs
-      const progress = Math.max(0, Math.min(1, rawProgress))
-      const eased = resolveTransitionProgress(transitionType, progress)
-      const nextCamera = interpolateCamera(startCamera, endCamera, eased)
-      currentCameraRef.current = nextCamera
-      setRenderCamera(nextCamera)
-      if (progress < 1) {
-        animationFrameRef.current = requestAnimationFrame(tick)
-      } else {
-        animationFrameRef.current = null
-      }
-    }
-
-    animationFrameRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = null
-      }
-    }
+    applyCameraTransition(transitionType, durationMs)
+    currentCameraRef.current = targetCamera
+    applyCameraTransform(targetCamera)
   }, [
     slide?.transitionDurationMs,
     slide?.transitionType,
@@ -1177,310 +1144,20 @@ function PresentStage({
       return
     }
 
-    objectsLayer.innerHTML = ''
-    const dom = objectsLayer.ownerDocument
-    const assetById = new Map(model.assets.map((asset) => [asset.id, asset]))
-    const orderedObjects = [...model.objects]
-      .sort((a, b) => a.zIndex - b.zIndex)
-      .filter((object) => object.type !== 'group')
-
-    for (const object of orderedObjects) {
-      const objectX = toFiniteNumber(object.x, 0)
-      const objectY = toFiniteNumber(object.y, 0)
-      const objectW = Math.max(1, toFiniteNumber(object.w, 1))
-      const objectH = Math.max(1, toFiniteNumber(object.h, 1))
-      const objectRotation = toFiniteNumber(object.rotation, 0)
-
-      const center = worldToScreenPresent({ x: objectX, y: objectY }, renderCamera, safeViewport)
-      const width = Math.max(1, objectW * renderCamera.zoom)
-      const height = Math.max(1, objectH * renderCamera.zoom)
-
-      if (
-        !Number.isFinite(center.x) ||
-        !Number.isFinite(center.y) ||
-        !Number.isFinite(width) ||
-        !Number.isFinite(height)
-      ) {
-        continue
-      }
-
-      const element = dom.createElement('div')
-      element.className = `present-object ${object.type}`
-      element.style.left = `${center.x - width / 2}px`
-      element.style.top = `${center.y - height / 2}px`
-      element.style.width = `${width}px`
-      element.style.height = `${height}px`
-      element.style.transform = `rotate(${objectRotation + renderCamera.rotation}rad)`
-
-      if (object.type === 'shape_rect' || object.type === 'shape_circle') {
-        const borderWidth =
-          Math.max(0, toFiniteNumber(object.shapeData.borderWidth, 1)) *
-          resolveObjectBorderScale(object.scalePercent)
-        element.style.opacity = `${Math.max(0, Math.min(100, object.shapeData.opacityPercent)) / 100}`
-        element.style.filter = resolveObjectDropShadowFilter(object.shapeData, renderCamera.zoom)
-        const svgNamespace = 'http://www.w3.org/2000/svg'
-        const shapeSvg = dom.createElementNS(svgNamespace, 'svg')
-        shapeSvg.setAttribute('viewBox', `0 0 ${objectW} ${objectH}`)
-        shapeSvg.setAttribute('preserveAspectRatio', 'none')
-        shapeSvg.setAttribute('class', 'present-shape-outline')
-        shapeSvg.style.position = 'absolute'
-        shapeSvg.style.inset = '0'
-        shapeSvg.style.width = '100%'
-        shapeSvg.style.height = '100%'
-        shapeSvg.style.overflow = 'visible'
-        const descriptor = getShapeSvgDescriptor(object.type, object.shapeData, objectW, objectH)
-        const borderShape =
-          descriptor.kind === 'ellipse'
-            ? dom.createElementNS(svgNamespace, 'ellipse')
-            : dom.createElementNS(svgNamespace, 'path')
-        if (descriptor.kind === 'ellipse') {
-          borderShape.setAttribute('cx', String(descriptor.cx))
-          borderShape.setAttribute('cy', String(descriptor.cy))
-          borderShape.setAttribute('rx', String(descriptor.rx))
-          borderShape.setAttribute('ry', String(descriptor.ry))
-        } else {
-          borderShape.setAttribute('d', String(descriptor.d))
-        }
-        const clipPathId = `present-shape-fill-${String(object.id).replace(/[^a-zA-Z0-9_-]/g, '')}`
-        const defs = dom.createElementNS(svgNamespace, 'defs')
-        const clipPath = dom.createElementNS(svgNamespace, 'clipPath')
-        clipPath.setAttribute('id', clipPathId)
-        clipPath.setAttribute('clipPathUnits', 'userSpaceOnUse')
-        const clipShape =
-          descriptor.kind === 'ellipse'
-            ? dom.createElementNS(svgNamespace, 'ellipse')
-            : dom.createElementNS(svgNamespace, 'path')
-        if (descriptor.kind === 'ellipse') {
-          clipShape.setAttribute('cx', String(descriptor.cx))
-          clipShape.setAttribute('cy', String(descriptor.cy))
-          clipShape.setAttribute('rx', String(descriptor.rx))
-          clipShape.setAttribute('ry', String(descriptor.ry))
-        } else {
-          clipShape.setAttribute('d', String(descriptor.d))
-        }
-        clipPath.appendChild(clipShape)
-        defs.appendChild(clipPath)
-        shapeSvg.appendChild(defs)
-        const fillLayer = dom.createElementNS(svgNamespace, 'foreignObject')
-        fillLayer.setAttribute('x', '0')
-        fillLayer.setAttribute('y', '0')
-        fillLayer.setAttribute('width', String(objectW))
-        fillLayer.setAttribute('height', String(objectH))
-        fillLayer.setAttribute('clip-path', `url(#${clipPathId})`)
-        const fillLayerContent = dom.createElementNS('http://www.w3.org/1999/xhtml', 'div')
-        fillLayerContent.style.width = '100%'
-        fillLayerContent.style.height = '100%'
-        fillLayerContent.style.background = getShapeBackground(object.shapeData)
-        fillLayer.appendChild(fillLayerContent)
-        borderShape.setAttribute('fill', 'none')
-        borderShape.setAttribute('stroke', object.shapeData.borderColor)
-        borderShape.setAttribute('stroke-width', String(borderWidth))
-        borderShape.setAttribute('stroke-linejoin', 'round')
-        borderShape.setAttribute('stroke-linecap', 'round')
-        if (object.shapeData.borderType === 'dashed') {
-          borderShape.setAttribute('stroke-dasharray', `${borderWidth * 4} ${borderWidth * 2}`)
-        } else if (object.shapeData.borderType === 'dotted') {
-          borderShape.setAttribute('stroke-dasharray', `${borderWidth} ${borderWidth * 1.8}`)
-        }
-        shapeSvg.appendChild(fillLayer)
-        shapeSvg.appendChild(borderShape)
-        element.appendChild(shapeSvg)
-      } else if (object.type === 'image') {
-        const imageBorderWidth =
-          Math.max(0, toFiniteNumber(object.imageData.borderWidth, 0)) *
-          resolveObjectBorderScale(object.scalePercent)
-        const imageOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.imageData.opacityPercent, 100))) / 100
-        const imageRadiusPx =
-          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.imageData.radius, 0))) * renderCamera.zoom
-        element.style.opacity = `${imageOpacity}`
-        element.style.background = 'transparent'
-        element.style.filter = resolveObjectDropShadowFilter(object.imageData, renderCamera.zoom)
-        const clipLayer = dom.createElement('div')
-        clipLayer.className = 'present-image-clip'
-        clipLayer.style.borderWidth = `${imageBorderWidth * renderCamera.zoom}px`
-        clipLayer.style.borderStyle = object.imageData.borderType
-        clipLayer.style.borderColor = object.imageData.borderColor
-        clipLayer.style.clipPath = `inset(${object.imageData.cropTopPercent}% ${object.imageData.cropRightPercent}% ${object.imageData.cropBottomPercent}% ${object.imageData.cropLeftPercent}% round ${imageRadiusPx}px)`
-        const asset = assetById.get(object.imageData.assetId)
-        if (asset) {
-          const image = dom.createElement('img')
-          image.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
-          image.alt = ''
-          image.style.width = '100%'
-          image.style.height = '100%'
-          image.style.objectFit = 'fill'
-          image.style.filter = resolveImageFilterCss(object.imageData)
-          image.draggable = false
-          clipLayer.appendChild(image)
-        }
-        element.appendChild(clipLayer)
-      } else if (object.type === 'video') {
-        const videoBorderWidth =
-          Math.max(0, toFiniteNumber(object.videoData.borderWidth, 0)) *
-          resolveObjectBorderScale(object.scalePercent)
-        const videoOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.videoData.opacityPercent, 100))) / 100
-        const videoRadiusPx =
-          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.videoData.radius, 0))) * renderCamera.zoom
-        element.style.opacity = `${videoOpacity}`
-        element.style.background = 'transparent'
-        element.style.filter = resolveObjectDropShadowFilter(object.videoData, renderCamera.zoom)
-        element.style.cursor = 'pointer'
-        element.addEventListener('pointerdown', (event) => {
-          event.stopPropagation()
-        })
-        const clipLayer = dom.createElement('div')
-        clipLayer.className = 'present-image-clip'
-        clipLayer.style.borderWidth = `${videoBorderWidth * renderCamera.zoom}px`
-        clipLayer.style.borderStyle = object.videoData.borderType
-        clipLayer.style.borderColor = object.videoData.borderColor
-        clipLayer.style.clipPath = `inset(0% 0% 0% 0% round ${videoRadiusPx}px)`
-        const asset = assetById.get(object.videoData.assetId)
-        if (asset) {
-          const video = dom.createElement('video')
-          video.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
-          video.muted = object.videoData.muted
-          video.loop = object.videoData.loop
-          video.autoplay = false
-          video.playsInline = true
-          video.controls = false
-          video.preload = 'metadata'
-          video.style.width = '100%'
-          video.style.height = '100%'
-          video.style.objectFit = 'fill'
-          clipLayer.appendChild(video)
-          element.addEventListener('click', (event) => {
-            event.stopPropagation()
-            if (video.paused) {
-              void video.play().catch(() => undefined)
-            } else {
-              video.pause()
-            }
-          })
-        }
-        element.appendChild(clipLayer)
-      } else if (object.type === 'sound') {
-        const soundBorderWidth =
-          Math.max(0, toFiniteNumber(object.soundData.borderWidth, 0)) *
-          resolveObjectBorderScale(object.scalePercent)
-        const soundContentScale = resolveObjectBorderScale(object.scalePercent)
-        const soundOpacity = Math.max(0, Math.min(100, toFiniteNumber(object.soundData.opacityPercent, 100))) / 100
-        const soundRadiusPx =
-          Math.max(0, Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.soundData.radius, 0))) * renderCamera.zoom
-        element.style.opacity = `${soundOpacity}`
-        element.style.background =
-          'linear-gradient(135deg, rgba(32, 52, 92, 0.92), rgba(19, 28, 48, 0.96))'
-        element.style.filter = resolveObjectDropShadowFilter(object.soundData, renderCamera.zoom)
-        element.style.borderWidth = `${soundBorderWidth * renderCamera.zoom}px`
-        element.style.borderStyle = object.soundData.borderType
-        element.style.borderColor = object.soundData.borderColor
-        element.style.borderRadius = `${soundRadiusPx}px`
-        element.style.cursor = 'pointer'
-        element.addEventListener('pointerdown', (event) => {
-          event.stopPropagation()
-        })
-        element.style.padding = `${12 * renderCamera.zoom * soundContentScale}px ${16 * renderCamera.zoom * soundContentScale}px`
-        element.style.display = 'grid'
-        element.style.gridTemplateColumns = `${18 * renderCamera.zoom * soundContentScale}px minmax(0, 1fr)`
-        element.style.alignItems = 'center'
-        element.style.gap = `${12 * renderCamera.zoom * soundContentScale}px`
-        const asset = assetById.get(object.soundData.assetId)
-        const icon = dom.createElement('span')
-        icon.textContent = '▶'
-        icon.style.fontSize = `${Math.max(14, 18 * renderCamera.zoom * soundContentScale)}px`
-        icon.style.lineHeight = '1'
-        const label = dom.createElement('strong')
-        label.textContent = asset?.name || 'Sound'
-        label.style.overflow = 'hidden'
-        label.style.textOverflow = 'ellipsis'
-        label.style.whiteSpace = 'nowrap'
-        label.style.fontSize = `${Math.max(11, 13 * renderCamera.zoom * soundContentScale)}px`
-        const audio = dom.createElement('audio')
-        if (asset) {
-          audio.src = `data:${asset.mimeType};base64,${asset.dataBase64}`
-        }
-        audio.loop = object.soundData.loop
-        audio.preload = 'metadata'
-        audio.addEventListener('play', () => {
-          icon.textContent = '❚❚'
-        })
-        audio.addEventListener('pause', () => {
-          icon.textContent = '▶'
-        })
-        element.addEventListener('click', (event) => {
-          event.stopPropagation()
-          if (audio.paused) {
-            void audio.play().catch(() => undefined)
-          } else {
-            audio.pause()
-          }
-        })
-        element.appendChild(icon)
-        element.appendChild(label)
-        element.appendChild(audio)
-      } else if (object.type === 'template_placeholder') {
-        const templateScale =
-          renderCamera.zoom * resolveObjectBorderScale(object.scalePercent)
-        element.style.setProperty(
-          '--present-template-scale',
-          `${Math.max(0.01, templateScale)}`
-        )
-        element.classList.add('template-placeholder')
-        element.innerHTML =
-          '<div class="present-template-placeholder kind-' +
-          object.templatePlaceholderData.kind +
-          '"><span>' +
-          getTemplatePlaceholderBadge(object.templatePlaceholderData.kind) +
-          '</span><strong>' +
-          object.templatePlaceholderData.prompt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') +
-          '</strong></div>'
-      } else if (object.type === 'textbox') {
-        const borderWidth = Math.max(
-          0,
-          toFiniteNumber(object.textboxData.borderWidth, DEFAULT_TEXTBOX_BORDER_WIDTH)
-        ) * resolveObjectBorderScale(object.scalePercent)
-        const textboxBaseTextStyle = resolveTextboxBaseTextStyle(object.textboxData)
-        const renderTextboxScale = Math.max(
-          0.01,
-          renderCamera.zoom * resolveTextboxObjectScale(object.textboxData, object.scalePercent)
-        )
-        element.style.borderWidth = `${borderWidth * renderCamera.zoom}px`
-        element.style.borderStyle = object.textboxData.borderType
-        element.style.borderColor = object.textboxData.borderColor
-        element.style.borderRadius = `${Math.max(
-          0,
-          Math.min(MAX_SHAPE_RADIUS, toFiniteNumber(object.textboxData.radius, 0))
-        ) * renderCamera.zoom}px`
-        element.style.background = getTextboxBackground(object.textboxData)
-        element.style.opacity = `${Math.max(0, Math.min(100, toFiniteNumber(object.textboxData.opacityPercent, 100))) / 100
-          }`
-        element.style.boxShadow = resolveObjectShadowCss(object.textboxData, renderCamera.zoom)
-        const textboxVerticalAlignment = object.textboxData.verticalAlignment ?? 'top'
-        const richContent = dom.createElement('div')
-        richContent.className = `present-textbox-content textbox-rich-content textbox-v-align-${textboxVerticalAlignment}`
-        richContent.style.transform = `scale(${renderTextboxScale})`
-        richContent.style.transformOrigin = 'top left'
-        richContent.style.width = `${100 / renderTextboxScale}%`
-        richContent.style.height = `${100 / renderTextboxScale}%`
-        richContent.style.fontFamily = textboxBaseTextStyle.fontFamily
-        richContent.style.fontSize = `${textboxBaseTextStyle.fontSizePx}px`
-        richContent.style.color = textboxBaseTextStyle.textColor
-        richContent.innerHTML = resolveTextboxRichHtml(object.textboxData)
-        element.appendChild(richContent)
-      }
-
-      objectsLayer.appendChild(element)
-    }
-  }, [model.assets, model.objects, renderCamera, safeViewport])
-  const safeZoom = Math.max(0.01, toFiniteNumber(renderCamera.zoom, 1))
-  const backgroundLayerWidth = Math.max(1, safeViewport.width) * 3
-  const backgroundLayerHeight = Math.max(1, safeViewport.height) * 3
-  const backgroundLayerStyle: CSSProperties = {
-    background: model.canvas.background,
-    width: `${backgroundLayerWidth}px`,
-    height: `${backgroundLayerHeight}px`,
-    backgroundPosition: `${-renderCamera.x * safeZoom}px ${-renderCamera.y * safeZoom}px`,
-    transform: `translate(-50%, -50%) rotate(${renderCamera.rotation}rad)`,
-  }
+    const assetsById = Object.fromEntries(
+      model.assets.map((asset) => [asset.id, asset])
+    ) as Record<string, { name: string; mimeType: string; dataBase64: string }>
+    buildPresentationScene({
+      documentRef: objectsLayer.ownerDocument,
+      layer: objectsLayer,
+      objects: model.objects,
+      assetsById,
+      objectClassPrefix: 'present',
+      textboxHtmlResolver: (object) => resolveTextboxRichHtml(object.textboxData),
+      textboxBaseStyleResolver: (object) => resolveTextboxBaseTextStyle(object.textboxData),
+    })
+    applyCameraTransform(currentCameraRef.current)
+  }, [model.assets, model.objects])
 
   function handlePresentStagePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.defaultPrevented) {
@@ -1536,7 +1213,7 @@ function PresentStage({
       y: pan.startCamera.y - deltaWorld.y,
     }
     currentCameraRef.current = nextCamera
-    setRenderCamera(nextCamera)
+    applyCameraTransform(nextCamera)
   }
 
   function handlePresentStagePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1553,91 +1230,108 @@ function PresentStage({
     }
   }
 
-  function handlePresentStageWheel(event: WheelEvent<HTMLDivElement>) {
-    if (event.defaultPrevented) {
-      return
-    }
-    event.preventDefault()
-
-    if (freeMoveEnabled) {
-      const stageBounds = stageRef.current?.getBoundingClientRect()
-      const pointerScreen = stageBounds
-        ? {
-          x: event.clientX - stageBounds.left,
-          y: event.clientY - stageBounds.top,
-        }
-        : {
-          x: safeViewport.width / 2,
-          y: safeViewport.height / 2,
-        }
-      const startCamera = currentCameraRef.current
-      const worldBefore = screenToWorldPresent(pointerScreen, startCamera, safeViewport)
-      if (event.altKey) {
-        const rotationDelta = Math.max(
-          -PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
-          Math.min(
-            PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
-            (event.deltaY / 120) * PRESENT_FREE_MOVE_ROTATION_STEP_RAD
-          )
-        )
-        if (Math.abs(rotationDelta) < 0.0001) {
-          return
-        }
-        const rotatedCamera: CameraState = {
-          ...startCamera,
-          rotation: startCamera.rotation + rotationDelta,
-        }
-        const worldAfter = screenToWorldPresent(pointerScreen, rotatedCamera, safeViewport)
-        const nextCamera: CameraState = {
-          ...rotatedCamera,
-          x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
-          y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
-        }
-        currentCameraRef.current = nextCamera
-        setRenderCamera(nextCamera)
+  const handlePresentStageWheel = useCallback(
+    (event: globalThis.WheelEvent) => {
+      if (event.defaultPrevented) {
         return
       }
-      const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08
-      const nextZoom = Math.max(0.05, Math.min(100, startCamera.zoom * zoomFactor))
-      const nextCamera: CameraState = {
-        ...startCamera,
-        zoom: nextZoom,
+      event.preventDefault()
+
+      if (freeMoveEnabled) {
+        const stageBounds = stageRef.current?.getBoundingClientRect()
+        const pointerScreen = stageBounds
+          ? {
+            x: event.clientX - stageBounds.left,
+            y: event.clientY - stageBounds.top,
+          }
+          : {
+            x: safeViewport.width / 2,
+            y: safeViewport.height / 2,
+          }
+        const startCamera = currentCameraRef.current
+        const worldBefore = screenToWorldPresent(pointerScreen, startCamera, safeViewport)
+        if (event.altKey) {
+          const rotationDelta = Math.max(
+            -PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
+            Math.min(
+              PRESENT_FREE_MOVE_ROTATION_STEP_RAD * 6,
+              (event.deltaY / 120) * PRESENT_FREE_MOVE_ROTATION_STEP_RAD
+            )
+          )
+          if (Math.abs(rotationDelta) < 0.0001) {
+            return
+          }
+          const rotatedCamera: CameraState = {
+            ...startCamera,
+            rotation: startCamera.rotation + rotationDelta,
+          }
+          const worldAfter = screenToWorldPresent(pointerScreen, rotatedCamera, safeViewport)
+          const nextCamera: CameraState = {
+            ...rotatedCamera,
+            x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
+            y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
+          }
+          currentCameraRef.current = nextCamera
+          applyCameraTransform(nextCamera)
+          return
+        }
+        const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08
+        const nextZoom = Math.max(0.05, Math.min(100, startCamera.zoom * zoomFactor))
+        const nextCamera: CameraState = {
+          ...startCamera,
+          zoom: nextZoom,
+        }
+        const worldAfter = screenToWorldPresent(pointerScreen, nextCamera, safeViewport)
+        const anchoredCamera: CameraState = {
+          ...nextCamera,
+          x: nextCamera.x + (worldBefore.x - worldAfter.x),
+          y: nextCamera.y + (worldBefore.y - worldAfter.y),
+        }
+        currentCameraRef.current = anchoredCamera
+        applyCameraTransform(anchoredCamera)
+        return
       }
-      const worldAfter = screenToWorldPresent(pointerScreen, nextCamera, safeViewport)
-      const anchoredCamera: CameraState = {
-        ...nextCamera,
-        x: nextCamera.x + (worldBefore.x - worldAfter.x),
-        y: nextCamera.y + (worldBefore.y - worldAfter.y),
+
+      const now = performance.now()
+      if (now < wheelNavigateThrottleUntilRef.current) {
+        return
       }
-      currentCameraRef.current = anchoredCamera
-      setRenderCamera(anchoredCamera)
+      if (Math.abs(event.deltaY) < 6) {
+        return
+      }
+      wheelNavigateThrottleUntilRef.current = now + 220
+      if (event.deltaY > 0) {
+        onNavigateNext()
+        return
+      }
+      onNavigatePrevious()
+    },
+    [freeMoveEnabled, onNavigateNext, onNavigatePrevious, safeViewport.height, safeViewport.width]
+  )
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) {
       return
     }
 
-    const now = performance.now()
-    if (now < wheelNavigateThrottleUntilRef.current) {
-      return
+    const onWheel = (event: globalThis.WheelEvent) => {
+      handlePresentStageWheel(event)
     }
-    if (Math.abs(event.deltaY) < 6) {
-      return
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      stage.removeEventListener('wheel', onWheel)
     }
-    wheelNavigateThrottleUntilRef.current = now + 220
-    if (event.deltaY > 0) {
-      onNavigateNext()
-      return
-    }
-    onNavigatePrevious()
-  }
+  }, [handlePresentStageWheel])
 
   return (
     <div
       ref={stageRef}
       className={`present-stage ${freeMoveEnabled ? 'free-move-enabled' : ''}`}
+      style={{ background: model.canvas.background }}
       onPointerDown={handlePresentStagePointerDown}
       onPointerMove={handlePresentStagePointerMove}
       onPointerUp={handlePresentStagePointerUp}
-      onPointerCancel={handlePresentStagePointerUp}
-      onWheel={handlePresentStageWheel}
       onContextMenu={(event) => {
         if (event.defaultPrevented) {
           return
@@ -1647,8 +1341,9 @@ function PresentStage({
         }
       }}
     >
-      <div className="present-stage-background" style={backgroundLayerStyle} />
-      <div ref={objectsLayerRef} className="present-stage-objects" />
+      <div ref={cameraLayerRef} className="present-stage-camera">
+        <div ref={objectsLayerRef} className="present-stage-objects" />
+      </div>
     </div>
   )
 }
@@ -1982,11 +1677,11 @@ function decodeAssetBase64ToText(dataBase64: string): string {
 }
 
 function isInteractivePointerTarget(target: EventTarget | null): boolean {
-  const element = target instanceof HTMLElement ? target : null
+  const element = target instanceof Element ? target : null
   if (!element) {
     return false
   }
-  if (element.isContentEditable) {
+  if (element instanceof HTMLElement && element.isContentEditable) {
     return true
   }
   if (element.closest('.present-object.video, .present-object.sound, video, audio')) {
@@ -2000,7 +1695,7 @@ function isInteractivePointerTarget(target: EventTarget | null): boolean {
 }
 
 function isTextInputTarget(target: EventTarget | null): boolean {
-  const element = target instanceof HTMLElement ? target : null
+  const element = target instanceof Element ? target : null
   if (!element) {
     return false
   }
@@ -2010,7 +1705,7 @@ function isTextInputTarget(target: EventTarget | null): boolean {
     return true
   }
 
-  return element.isContentEditable
+  return element instanceof HTMLElement ? element.isContentEditable : false
 }
 
 function hasLockedAncestor(object: CanvasObject, objectById: Map<string, CanvasObject>): boolean {
@@ -2066,15 +1761,6 @@ function readLatestAutosavePayload(): AutosavePayload | null {
     }
   } catch {
     return null
-  }
-}
-
-function interpolateCamera(start: CameraState, end: CameraState, t: number): CameraState {
-  return {
-    x: start.x + (end.x - start.x) * t,
-    y: start.y + (end.y - start.y) * t,
-    zoom: start.zoom + (end.zoom - start.zoom) * t,
-    rotation: start.rotation + (end.rotation - start.rotation) * t,
   }
 }
 
@@ -2823,6 +2509,16 @@ function App() {
     width: 1600,
     height: 900,
   })
+  const handleTargetDisplayFrameChange = useCallback(
+    (frame: { width: number; height: number; fittedWidth: number; fittedHeight: number }) => {
+      setTemplateTargetDisplayFrame({ width: frame.width, height: frame.height })
+      setTemplateTargetDisplayFittedFrame({
+        width: frame.fittedWidth,
+        height: frame.fittedHeight,
+      })
+    },
+    []
+  )
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false)
   const shapeMenuRef = useRef<HTMLDivElement | null>(null)
   const stylePresetCatalogEntries = useMemo(() => getStylePresetCatalogEntries(), [designAssetRevision])
@@ -3934,6 +3630,10 @@ function App() {
       zoom: resolveSlideZoom(slide),
       rotation: slide.rotation,
     }
+    const startCamera = camera
+    if (camerasAreEqual(startCamera, targetCamera)) {
+      return
+    }
 
     const transitionType = forceInstant ? 'instant' : slide.transitionType
     const durationMs =
@@ -3946,17 +3646,24 @@ function App() {
     }
 
     const easing = transitionType === 'linear' ? (t: number) => t : easeInOutCubic
-    const startCamera = camera
     const startedAtMs = performance.now()
+    let lastAppliedCamera = startCamera
 
     const tick = (nowMs: number) => {
       const elapsed = nowMs - startedAtMs
       const progress = Math.min(1, Math.max(0, elapsed / durationMs))
       const eased = easing(progress)
-      setCamera(interpolateCamera(startCamera, targetCamera, eased))
+      const nextCamera = interpolateCamera(startCamera, targetCamera, eased)
+      if (!camerasAreEqual(nextCamera, lastAppliedCamera)) {
+        setCamera(nextCamera)
+        lastAppliedCamera = nextCamera
+      }
       if (progress < 1) {
         transitionFrameRef.current = requestAnimationFrame(tick)
       } else {
+        if (!camerasAreEqual(lastAppliedCamera, targetCamera)) {
+          setCamera(targetCamera)
+        }
         transitionFrameRef.current = null
       }
     }
@@ -6077,6 +5784,10 @@ function App() {
   }
 
   function handlePresentShellPointerDownCapture(event: ReactPointerEvent<HTMLDivElement>) {
+    const targetElement = event.target instanceof Element ? event.target : null
+    if (targetElement?.closest('.present-stage')) {
+      return
+    }
     if (mode !== 'present' || presentFreeMoveEnabled || isInteractivePointerTarget(event.target)) {
       return
     }
@@ -6092,6 +5803,10 @@ function App() {
   }
 
   function handlePresentShellWheelCapture(event: WheelEvent<HTMLDivElement>) {
+    const targetElement = event.target instanceof Element ? event.target : null
+    if (targetElement?.closest('.present-stage')) {
+      return
+    }
     if (mode !== 'present' || presentFreeMoveEnabled || isInteractivePointerTarget(event.target)) {
       return
     }
@@ -9522,13 +9237,7 @@ function App() {
             creationTool={currentCreationTool}
             onCreateObjectFromTool={handleCreateObjectFromTool}
             targetDisplayPortalNode={slidesTargetDisplayPortalNode}
-            onTargetDisplayFrameChange={(frame) => {
-              setTemplateTargetDisplayFrame({ width: frame.width, height: frame.height })
-              setTemplateTargetDisplayFittedFrame({
-                width: frame.fittedWidth,
-                height: frame.fittedHeight,
-              })
-            }}
+            onTargetDisplayFrameChange={handleTargetDisplayFrameChange}
           />
         )}
       </main>

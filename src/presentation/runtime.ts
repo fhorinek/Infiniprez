@@ -1,5 +1,12 @@
 import type { Slide } from '../model'
 
+export interface CameraLike {
+  x: number
+  y: number
+  zoom: number
+  rotation: number
+}
+
 export const PRESENTATION_FORWARD_KEYS = ['Right', 'ArrowRight', 'ArrowDown', 'PageDown', ' '] as const
 export const PRESENTATION_BACKWARD_KEYS = ['Left', 'ArrowLeft', 'ArrowUp', 'PageUp'] as const
 
@@ -21,7 +28,10 @@ export function resolveTransitionProgress(
   if (transitionType === 'instant') {
     return clamped >= 1 ? 1 : 0
   }
-  return easeInOutCubic(clamped)
+  if (clamped < 0.5) {
+    return 4 * clamped * clamped * clamped
+  }
+  return 1 - (-2 * clamped + 2) ** 3 / 2
 }
 
 export function resolveTransitionDurationMs(
@@ -47,6 +57,16 @@ export function shouldAutoAdvanceSlide(
     return false
   }
   return slideIndex >= 0 && slideIndex < totalSlides - 1
+}
+
+export function interpolateCamera<T extends CameraLike>(start: T, end: T, t: number): T {
+  return {
+    ...start,
+    x: start.x + (end.x - start.x) * t,
+    y: start.y + (end.y - start.y) * t,
+    zoom: start.zoom + (end.zoom - start.zoom) * t,
+    rotation: start.rotation + (end.rotation - start.rotation) * t,
+  }
 }
 
 export function isForwardPresentationKey(key: string): boolean {

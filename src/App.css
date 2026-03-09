@@ -2054,6 +2054,7 @@ button:disabled {
   position: relative;
   flex: 1 1 auto;
   min-height: 100%;
+  overflow: hidden;
 }
 
 .present-stage.free-move-enabled {
@@ -2064,20 +2065,17 @@ button:disabled {
   cursor: grabbing;
 }
 
-.present-stage-background {
+.present-stage-camera {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 300%;
-  height: 300%;
-  transform-origin: center center;
-  z-index: 0;
-  pointer-events: none;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .present-stage-objects {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   z-index: 1;
 }
 
