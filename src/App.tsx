@@ -2096,6 +2096,68 @@ function normalizeShadowAngleDeg(value: number): number {
   return normalized
 }
 
+function normalizeRotationRadians(value: number): number {
+  let normalized = Number.isFinite(value) ? value : 0
+  const fullTurn = Math.PI * 2
+  while (normalized > Math.PI) {
+    normalized -= fullTurn
+  }
+  while (normalized <= -Math.PI) {
+    normalized += fullTurn
+  }
+  return normalized
+}
+
+function getObjectWorldAabb(object: CanvasObject) {
+  const halfW = object.w / 2
+  const halfH = object.h / 2
+  const localCorners = [
+    { x: -halfW, y: -halfH },
+    { x: halfW, y: -halfH },
+    { x: halfW, y: halfH },
+    { x: -halfW, y: halfH },
+  ]
+
+  const worldCorners = localCorners.map((corner) => {
+    const rotated = rotatePoint(corner, object.rotation)
+    return {
+      x: object.x + rotated.x,
+      y: object.y + rotated.y,
+    }
+  })
+
+  return {
+    minX: Math.min(...worldCorners.map((point) => point.x)),
+    minY: Math.min(...worldCorners.map((point) => point.y)),
+    maxX: Math.max(...worldCorners.map((point) => point.x)),
+    maxY: Math.max(...worldCorners.map((point) => point.y)),
+  }
+}
+
+function getObjectsWorldAabb(objects: CanvasObject[]) {
+  if (objects.length === 0) {
+    return null
+  }
+
+  const first = getObjectWorldAabb(objects[0])
+  const bounds = {
+    minX: first.minX,
+    minY: first.minY,
+    maxX: first.maxX,
+    maxY: first.maxY,
+  }
+
+  for (const object of objects.slice(1)) {
+    const objectBounds = getObjectWorldAabb(object)
+    bounds.minX = Math.min(bounds.minX, objectBounds.minX)
+    bounds.minY = Math.min(bounds.minY, objectBounds.minY)
+    bounds.maxX = Math.max(bounds.maxX, objectBounds.maxX)
+    bounds.maxY = Math.max(bounds.maxY, objectBounds.maxY)
+  }
+
+  return bounds
+}
+
 function ColorPickerChip({
   value,
   fallback,
@@ -3642,6 +3704,9 @@ function App() {
       object.type === 'sound'
   ) ?? null
   const multiEditTransformLocked = hasMultiSelection && selectedUnlockedObjects.length === 0
+  const multiEditRotationDeg = multiEditReferenceObject
+    ? normalizeShadowAngleDeg((multiEditReferenceObject.rotation * 180) / Math.PI)
+    : 0
   const multiEditOpacityPercent = multiEditReferenceObject
     ? multiEditReferenceObject.type === 'textbox'
       ? Math.max(0, Math.min(100, toFiniteNumber(multiEditReferenceObject.textboxData.opacityPercent, 100)))
@@ -5036,6 +5101,50 @@ function App() {
     setMultiSelectionScalePercent(nextScalePercent)
   }
 
+  function updateMultiSelectedRotation(rotationDeg: number) {
+    if (multiEditTransformLocked || selectedUnlockedObjects.length === 0 || !multiEditReferenceObject) {
+      return
+    }
+
+    const nextRotationDeg = Math.max(-180, Math.min(180, Math.round(rotationDeg / 10) * 10))
+    const referenceRotationDeg = normalizeShadowAngleDeg((multiEditReferenceObject.rotation * 180) / Math.PI)
+    const deltaRad = ((nextRotationDeg - referenceRotationDeg) * Math.PI) / 180
+
+    if (Math.abs(deltaRad) < 0.000001) {
+      return
+    }
+
+    const selectionBounds = getObjectsWorldAabb(selectedUnlockedObjects)
+    const selectionCenter = selectionBounds
+      ? {
+        x: (selectionBounds.minX + selectionBounds.maxX) / 2,
+        y: (selectionBounds.minY + selectionBounds.maxY) / 2,
+      }
+      : {
+        x: multiEditReferenceObject.x,
+        y: multiEditReferenceObject.y,
+      }
+
+    beginCommandBatch(selectedUnlockedObjects.length > 1 ? 'Rotate selected objects' : 'Rotate selected object')
+    selectedUnlockedObjects.forEach((object) => {
+      const rotatedOffset = rotatePoint(
+        {
+          x: object.x - selectionCenter.x,
+          y: object.y - selectionCenter.y,
+        },
+        deltaRad
+      )
+      moveObject(object.id, {
+        x: selectionCenter.x + rotatedOffset.x,
+        y: selectionCenter.y + rotatedOffset.y,
+        w: object.w,
+        h: object.h,
+        rotation: normalizeRotationRadians(object.rotation + deltaRad),
+      })
+    })
+    commitCommandBatch()
+  }
+
   function updateSelectedObjectTransform(
     patch: Partial<Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>>
   ) {
@@ -5065,6 +5174,85 @@ function App() {
             : nextHeight
       nextWidth = enforcedSize
       nextHeight = enforcedSize
+    }
+
+    if (
+      selectedObject.type === 'group' &&
+      (patch.x !== undefined || patch.y !== undefined || patch.rotation !== undefined)
+    ) {
+      const targetCenter = {
+        x: patch.x ?? selectedObject.x,
+        y: patch.y ?? selectedObject.y,
+      }
+      const targetRotation = patch.rotation ?? selectedObject.rotation
+      let rotationDelta = targetRotation - selectedObject.rotation
+      while (rotationDelta > Math.PI) {
+        rotationDelta -= Math.PI * 2
+      }
+      while (rotationDelta < -Math.PI) {
+        rotationDelta += Math.PI * 2
+      }
+
+      const groupCenter = { x: selectedObject.x, y: selectedObject.y }
+      const descendantIds: string[] = []
+      const stack = [...selectedObject.groupData.childIds]
+      const visited = new Set<string>()
+
+      while (stack.length > 0) {
+        const nextId = stack.pop()
+        if (!nextId || visited.has(nextId)) {
+          continue
+        }
+        visited.add(nextId)
+        descendantIds.push(nextId)
+        const child = objectById.get(nextId)
+        if (child?.type === 'group') {
+          stack.push(...child.groupData.childIds)
+        }
+      }
+
+      const hasTranslation =
+        Math.abs(targetCenter.x - selectedObject.x) > 0.000001 ||
+        Math.abs(targetCenter.y - selectedObject.y) > 0.000001
+      const hasRotation = Math.abs(rotationDelta) > 0.000001
+      const batchLabel =
+        hasTranslation && hasRotation
+          ? 'Transform group'
+          : hasTranslation
+            ? 'Move group'
+            : 'Rotate group'
+
+      beginCommandBatch(batchLabel)
+      moveObject(selectedObject.id, {
+        x: targetCenter.x,
+        y: targetCenter.y,
+        w: nextWidth,
+        h: nextHeight,
+        rotation: normalizeRotationRadians(targetRotation),
+      })
+
+      descendantIds.forEach((childId) => {
+        const child = objectById.get(childId)
+        if (!child) {
+          return
+        }
+        const rotatedOffset = rotatePoint(
+          {
+            x: child.x - groupCenter.x,
+            y: child.y - groupCenter.y,
+          },
+          rotationDelta
+        )
+        moveObject(child.id, {
+          x: targetCenter.x + rotatedOffset.x,
+          y: targetCenter.y + rotatedOffset.y,
+          w: child.w,
+          h: child.h,
+          rotation: normalizeRotationRadians(child.rotation + rotationDelta),
+        })
+      })
+      commitCommandBatch()
+      return
     }
 
     moveObject(selectedObject.id, {
@@ -8026,7 +8214,8 @@ function App() {
                     selectedTextboxObject ||
                     selectedImageObject ||
                     selectedVideoObject ||
-                    selectedSoundObject) && (
+                    selectedSoundObject ||
+                    selectedGroupObject) && (
                       <label className="object-param-slider">
                         <span>Rotation</span>
                         <div className="object-param-slider-control">
@@ -8719,6 +8908,33 @@ function App() {
                           }}
                         />
                         <strong>{multiSelectionScalePercent}%</strong>
+                      </div>
+                    </label>
+                  )}
+
+                  {multiEditReferenceObject && (
+                    <label className="object-param-slider">
+                      <span>Rotation</span>
+                      <div className="object-param-slider-control">
+                        <input
+                          type="range"
+                          min={-180}
+                          max={180}
+                          step={10}
+                          value={multiEditRotationDeg}
+                          disabled={multiEditTransformLocked}
+                          onWheel={handleRangeWheel}
+                          onDoubleClick={() => {
+                            updateMultiSelectedRotation(0)
+                          }}
+                          onChange={(event) => {
+                            const parsed = parseNumberInput(event.target.value)
+                            if (parsed !== null) {
+                              updateMultiSelectedRotation(parsed)
+                            }
+                          }}
+                        />
+                        <strong>{multiEditRotationDeg.toFixed(0)}°</strong>
                       </div>
                     </label>
                   )}

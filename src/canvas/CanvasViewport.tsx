@@ -1972,25 +1972,9 @@ export function CanvasViewport({
         return
       }
 
-      if (event.altKey) {
-        const rotationDirection = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0
-        if (rotationDirection === 0) {
-          return
-        }
-        const rotationDelta = rotationDirection * CAMERA_ROTATION_STEP_RAD
-        const nextRotation = camera.rotation + rotationDelta
-        const rotatedCamera = { ...camera, rotation: nextRotation }
-        const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewportSize)
-
-        setCamera({
-          ...rotatedCamera,
-          x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
-          y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
-        })
-        return
-      }
-
-      const zoomFactor = Math.exp(-event.deltaY * 0.0015)
+      // Alt + wheel performs fine zooming at 1/10 speed for precision.
+      const zoomSensitivity = event.altKey ? 0.00015 : 0.0015
+      const zoomFactor = Math.exp(-event.deltaY * zoomSensitivity)
       const nextZoom = clamp(camera.zoom * zoomFactor, 0.01, 100)
       const zoomedCamera = { ...camera, zoom: nextZoom }
       const worldAfter = screenToWorld(pointerScreen, zoomedCamera, viewportSize)
@@ -3079,6 +3063,42 @@ export function CanvasViewport({
         return
       }
 
+      if (
+        (event.key === 'ArrowLeft' ||
+          event.key === 'ArrowRight' ||
+          event.key === 'ArrowUp' ||
+          event.key === 'ArrowDown') &&
+        selectedUnlockedObjects.length > 0
+      ) {
+        event.preventDefault()
+        const baseStep = Math.max(0.0001, canvasSettings.baseGridSize)
+        const step = event.altKey ? baseStep / 10 : baseStep
+        let deltaX = 0
+        let deltaY = 0
+        if (event.key === 'ArrowLeft') {
+          deltaX = -step
+        } else if (event.key === 'ArrowRight') {
+          deltaX = step
+        } else if (event.key === 'ArrowUp') {
+          deltaY = -step
+        } else if (event.key === 'ArrowDown') {
+          deltaY = step
+        }
+
+        beginCommandBatch(selectedUnlockedObjects.length > 1 ? 'Nudge objects' : 'Nudge object')
+        selectedUnlockedObjects.forEach((object) => {
+          moveObject(object.id, {
+            x: object.x + deltaX,
+            y: object.y + deltaY,
+            w: object.w,
+            h: object.h,
+            rotation: object.rotation,
+          })
+        })
+        commitCommandBatch()
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
         if (selectedObjectIds.length > 0) {
           event.preventDefault()
@@ -3130,6 +3150,7 @@ export function CanvasViewport({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     activeGroupId,
+    canvasSettings.baseGridSize,
     editableObjects,
     beginCommandBatch,
     commitCommandBatch,
@@ -3141,7 +3162,9 @@ export function CanvasViewport({
     objects,
     selectedGroup,
     selectedObjectIds,
+    selectedUnlockedObjects,
     selectedUnlockedIds,
+    moveObject,
   ])
 
   function beginObjectInteraction(
@@ -3989,6 +4012,27 @@ export function CanvasViewport({
     }
 
     if (event.button !== 1) {
+      return
+    }
+
+    if (event.shiftKey && selectedUnlockedObjects.length > 0) {
+      event.preventDefault()
+      const targetRotation = normalizeRotationRadians(-camera.rotation)
+      beginCommandBatch(
+        selectedUnlockedObjects.length > 1
+          ? 'Align objects to screen'
+          : 'Align object to screen'
+      )
+      selectedUnlockedObjects.forEach((object) => {
+        moveObject(object.id, {
+          x: object.x,
+          y: object.y,
+          w: object.w,
+          h: object.h,
+          rotation: targetRotation,
+        })
+      })
+      commitCommandBatch()
       return
     }
 

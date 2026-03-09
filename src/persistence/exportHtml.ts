@@ -920,8 +920,10 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
           0.01,
           300
         );
+        const textboxVerticalAlignment = String(object?.textboxData?.verticalAlignment || 'top');
         const richContent = document.createElement('div');
-        richContent.className = 'export-textbox-content textbox-rich-content';
+        richContent.className =
+          'export-textbox-content textbox-rich-content textbox-v-align-' + textboxVerticalAlignment;
         richContent.style.transform = 'scale(' + String(renderTextboxScale) + ')';
         richContent.style.transformOrigin = 'top left';
         richContent.style.width = String(100 / renderTextboxScale) + '%';
@@ -1350,6 +1352,9 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
       white-space: pre-wrap;
     }
     .export-textbox-content {
+      position: absolute;
+      top: 0;
+      left: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
@@ -1387,6 +1392,16 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     }
     .textbox-rich-content.textbox-align-right {
       text-align: right;
+    }
+    .textbox-rich-content.textbox-v-align-middle {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .textbox-rich-content.textbox-v-align-bottom {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
     }
     .export-object img {
       pointer-events: none;
