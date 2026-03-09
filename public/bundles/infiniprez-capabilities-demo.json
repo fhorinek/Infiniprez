@@ -4,7 +4,7 @@
       "version": "1.0",
       "title": "Infiniprez Capability Showcase",
       "createdAt": "2026-03-09T20:12:25.432Z",
-      "updatedAt": "2026-03-09T20:25:18.829Z"
+      "updatedAt": "2026-03-09T23:12:56.224Z"
     },
     "canvas": {
       "gridVisible": true,
@@ -25,7 +25,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 1800,
+        "transitionDurationMs": 1000,
         "orderIndex": 0
       },
       {
@@ -38,7 +38,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 1
       },
       {
@@ -51,7 +51,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 2
       },
       {
@@ -64,7 +64,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2500,
+        "transitionDurationMs": 1000,
         "orderIndex": 3
       },
       {
@@ -77,7 +77,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2500,
+        "transitionDurationMs": 1000,
         "orderIndex": 4
       },
       {
@@ -90,7 +90,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 5
       },
       {
@@ -103,7 +103,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 6
       },
       {
@@ -116,7 +116,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 7
       },
       {
@@ -129,7 +129,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2200,
+        "transitionDurationMs": 1000,
         "orderIndex": 8
       },
       {
@@ -142,7 +142,7 @@
         "triggerMode": "manual",
         "triggerDelayMs": 0,
         "transitionType": "ease",
-        "transitionDurationMs": 2000,
+        "transitionDurationMs": 1000,
         "orderIndex": 9
       },
       {
@@ -155,7 +155,7 @@
         "triggerMode": "timed",
         "triggerDelayMs": 3500,
         "transitionType": "ease",
-        "transitionDurationMs": 2600,
+        "transitionDurationMs": 1000,
         "orderIndex": 10
       }
     ],
@@ -1675,7 +1675,6 @@
       },
       {
         "id": "1f9bfae0-a3e6-453e-85eb-af85ea37481e",
-        "type": "group",
         "x": -2200,
         "y": 0,
         "w": 1500,
@@ -1686,6 +1685,7 @@
         "locked": false,
         "zIndex": 4,
         "parentGroupId": null,
+        "type": "group",
         "groupData": {
           "childIds": [
             "shape_rect-8",
