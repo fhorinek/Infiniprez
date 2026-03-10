@@ -59,6 +59,7 @@ import {
   faUndo,
   faVideo,
   faVolumeHigh,
+  faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { CanvasViewport } from './canvas'
@@ -1874,6 +1875,7 @@ function easeInOutCubic(t: number) {
 const AUTOSAVE_LATEST_KEY = 'infiniprez.autosave.latest'
 const AUTOSAVE_BACKUPS_KEY = 'infiniprez.autosave.backups'
 const AUTOSAVE_BACKUP_LIMIT = 200
+const DEFAULT_DEMO_PRESENTATION_BUNDLE_PATH = `${import.meta.env.BASE_URL}bundles/infiniprez-capabilities-demo.json`
 const BORDER_WIDTH_OPTIONS = [0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 20] as const
 const BORDER_STYLE_OPTIONS: Array<{
   value: ShapeData['borderType']
@@ -1906,6 +1908,10 @@ function readLatestAutosavePayload(): AutosavePayload | null {
   } catch {
     return null
   }
+}
+
+function isDocumentEmpty(document: DocumentModel): boolean {
+  return document.slides.length === 0 && document.objects.length === 0 && document.assets.length === 0
 }
 
 function getBorderWidthLabel(width: number): string {
@@ -2667,6 +2673,34 @@ function App() {
   )
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false)
   const shapeMenuRef = useRef<HTMLDivElement | null>(null)
+  const loadDemoDocument = useCallback(
+    async (options?: { onlyWhenEmpty?: boolean }) => {
+      const onlyWhenEmpty = options?.onlyWhenEmpty ?? false
+      if (onlyWhenEmpty && !isDocumentEmpty(useEditorStore.getState().document)) {
+        return
+      }
+      try {
+        const response = await window.fetch(DEFAULT_DEMO_PRESENTATION_BUNDLE_PATH)
+        if (!response.ok) {
+          return
+        }
+        const snapshot = await response.text()
+        if (onlyWhenEmpty && !isDocumentEmpty(useEditorStore.getState().document)) {
+          return
+        }
+        const loaded = parseStoredFile(snapshot)
+        replaceDocument(loaded.document)
+        if (loaded.camera) {
+          setCamera(loaded.camera)
+        }
+        latestDocumentSnapshotRef.current = snapshot
+        latestAutosavedSnapshotRef.current = snapshot
+      } catch {
+        // Ignore demo-load failures when offline or path is unavailable.
+      }
+    },
+    [replaceDocument, setCamera]
+  )
   const stylePresetCatalogEntries = useMemo(() => getStylePresetCatalogEntries(), [designAssetRevision])
   const availableStylePresets = useMemo(
     () => stylePresetCatalogEntries.map((entry) => entry.preset),
@@ -6355,6 +6389,16 @@ function App() {
 
     const payload = readLatestAutosavePayload()
     if (!payload) {
+      let aborted = false
+      void (async () => {
+        if (aborted) {
+          return
+        }
+        await loadDemoDocument({ onlyWhenEmpty: true })
+      })()
+      return () => {
+        aborted = true
+      }
       return
     }
     try {
@@ -6368,7 +6412,7 @@ function App() {
     } catch {
       // Ignore invalid autosave payloads.
     }
-  }, [replaceDocument, setCamera])
+  }, [document, loadDemoDocument, replaceDocument, setCamera])
 
   useEffect(() => {
     latestDocumentSnapshotRef.current = serializeDocument(document)
@@ -6668,9 +6712,20 @@ function App() {
     }
   }
 
+  const documentIsEmpty = isDocumentEmpty(document)
+
   const projectActions = [
     { label: 'New Document', icon: faFileCirclePlus, onClick: handleNewDocument, disabled: false },
     { label: 'Load', icon: faFileImport, onClick: handleLoadClick, disabled: false },
+    {
+      label: 'Load Example',
+      icon: faWandMagicSparkles,
+      onClick: () => {
+        void loadDemoDocument()
+      },
+      disabled: false,
+      className: `project-action-accent ${documentIsEmpty ? 'project-action-pulse' : ''}`,
+    },
     { label: 'Save', icon: faFileArrowDown, onClick: handleSaveDocument, disabled: false },
     {
       label: 'Export HTML',
@@ -6888,7 +6943,7 @@ function App() {
               <button
                 key={action.label}
                 type="button"
-                className={`tool-btn icon-btn ${action.rightAnchor ? 'project-action-right-anchor' : ''}`}
+                className={`tool-btn icon-btn ${action.rightAnchor ? 'project-action-right-anchor' : ''} ${action.className ?? ''}`}
                 aria-label={action.label}
                 title={
                   action.disabled
