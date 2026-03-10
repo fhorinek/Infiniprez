@@ -38,7 +38,6 @@ import {
   faPlay,
   faPause,
   faRotateLeft,
-  faRotateRight,
   faSliders,
   faTrashCan,
   faGripLinesVertical,
