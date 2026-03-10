@@ -128,6 +128,7 @@ interface PanInteraction {
   pointerId: number
   originClient: Point
   cameraStart: CameraState
+  pendingSelectObjectId?: string | null
 }
 
 type TransformSnapshot = Pick<CanvasObject, 'x' | 'y' | 'w' | 'h' | 'rotation'>
@@ -4148,11 +4149,21 @@ export function CanvasViewport({
         return
       }
       event.preventDefault()
-      if (selectedSlideId !== null) {
-        selectSlide(null)
+      if (event.shiftKey) {
+        if (selectedSlideId !== null) {
+          selectSlide(null)
+        }
+        const start = getViewportRelativePoint(event.clientX, event.clientY)
+        beginMarqueeSelection(event.pointerId, start, selectedObjectIds)
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
       }
-      const start = getViewportRelativePoint(event.clientX, event.clientY)
-      beginMarqueeSelection(event.pointerId, start, selectedObjectIds)
+      panRef.current = {
+        pointerId: event.pointerId,
+        originClient: { x: event.clientX, y: event.clientY },
+        cameraStart: camera,
+        pendingSelectObjectId: null,
+      }
       event.currentTarget.setPointerCapture(event.pointerId)
       return
     }
@@ -4313,6 +4324,21 @@ export function CanvasViewport({
     const pan = panRef.current
     if (pan && pan.pointerId === event.pointerId) {
       panRef.current = null
+      const deltaClient = {
+        x: event.clientX - pan.originClient.x,
+        y: event.clientY - pan.originClient.y,
+      }
+      const wasClick = Math.hypot(deltaClient.x, deltaClient.y) < 4
+      if (wasClick) {
+        if (pan.pendingSelectObjectId) {
+          selectObjects([pan.pendingSelectObjectId])
+        } else {
+          if (selectedSlideId !== null) {
+            selectSlide(null)
+          }
+          clearSelection()
+        }
+      }
     }
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -4763,8 +4789,19 @@ export function CanvasViewport({
                   return
                 }
 
-                selectObjects([object.id])
-                beginObjectInteraction(event, [object], 'move')
+                if (isSelected) {
+                  beginObjectInteraction(event, [object], 'move')
+                  return
+                }
+
+                // Object not yet selected: pan with a pending selection confirmed on tap
+                panRef.current = {
+                  pointerId: event.pointerId,
+                  originClient: { x: event.clientX, y: event.clientY },
+                  cameraStart: camera,
+                  pendingSelectObjectId: object.id,
+                }
+                viewportRef.current?.setPointerCapture(event.pointerId)
               }}
               onContextMenu={(event) => {
                 if (editingTextboxId && editingTextboxId !== object.id) {

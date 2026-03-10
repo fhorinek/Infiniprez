@@ -22,7 +22,9 @@ https://fhorinek.github.io/Infiniprez/
 ## Shortcuts
 
 - `Middle mouse drag` -> Pan canvas
-- `Left mouse drag on empty canvas` -> Marquee select (in edit mode)
+- `Left mouse drag on empty canvas` -> Pan canvas (in edit mode)
+- `Shift + Left mouse drag on empty canvas` -> Marquee select (in edit mode)
+- `Left click on object` -> Select object (on pointer up, if no drag occurred)
 - `Wheel` -> Zoom canvas
 - `Alt + Wheel` -> Rotate camera (10deg steps)
 - `Ctrl/Cmd + Wheel` -> Scale selected object(s)
