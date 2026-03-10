@@ -222,7 +222,6 @@ describe('presentation scene builder parity', () => {
             textboxBaseStyleResolver: () => ({ fontFamily: 'Arial', fontSizePx: 24, textColor: '#fff' }),
         })
 
-        const shell = presentLayer.querySelector('.present-object.video') as HTMLElement
         const preview = presentLayer.querySelector('.canvas-video-preview') as HTMLElement
         const video = presentLayer.querySelector('video') as HTMLVideoElement
         const controls = presentLayer.querySelector('.canvas-video-controls') as HTMLElement
