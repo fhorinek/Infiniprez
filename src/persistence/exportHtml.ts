@@ -213,9 +213,18 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     if (document.fullscreenElement) {
       return;
     }
-    const onFirstInteraction = () => {
+    const onFirstInteraction = (event) => {
       window.removeEventListener('pointerdown', onFirstInteraction, true);
       window.removeEventListener('keydown', onFirstInteraction, true);
+      if (event && typeof event.preventDefault === 'function' && event.cancelable) {
+        event.preventDefault();
+      }
+      if (event && typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation();
+      }
+      if (event && typeof event.stopPropagation === 'function') {
+        event.stopPropagation();
+      }
       tryEnterFullscreen();
     };
     window.addEventListener('pointerdown', onFirstInteraction, true);
@@ -536,7 +545,6 @@ export function buildPresentationExportHtml(document: DocumentModel): string {
     }
   });
   window.addEventListener('resize', () => renderCamera(currentCamera));
-  tryEnterFullscreen();
   setupFullscreenFallback();
   setFreeMoveEnabled(false);
   setSlideIndex(START_SLIDE_INDEX, true);

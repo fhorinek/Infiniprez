@@ -1966,8 +1966,8 @@ export function CanvasViewport({
 
         const selectedGroup =
           activeGroupId === null &&
-          selectedUnlockedObjects.length === 1 &&
-          selectedUnlockedObjects[0]?.type === 'group'
+            selectedUnlockedObjects.length === 1 &&
+            selectedUnlockedObjects[0]?.type === 'group'
             ? selectedUnlockedObjects[0]
             : null
 
