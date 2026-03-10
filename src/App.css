@@ -654,10 +654,12 @@
 }
 
 @keyframes project-action-pulse-glow {
+
   0%,
   100% {
     box-shadow: 0 0 0 0 rgba(125, 178, 255, 0.18);
   }
+
   50% {
     box-shadow: 0 0 0 4px rgba(125, 178, 255, 0.34);
   }
