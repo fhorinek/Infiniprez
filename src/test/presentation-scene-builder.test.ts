@@ -169,4 +169,127 @@ describe('presentation scene builder parity', () => {
         expect(present.style.height).toBe(exported.style.height)
         expect(present.style.transform).toBe(exported.style.transform)
     })
+
+    it('annotates autoplay target slide and shows edit-mode style controls on hover in presentation mode', () => {
+        const dom = new JSDOM('<!doctype html><body><div id="p"></div></body>')
+        const documentRef = dom.window.document
+        const presentLayer = documentRef.getElementById('p') as HTMLElement
+
+        const videoObject = {
+            id: 'video-1',
+            type: 'video',
+            x: 0,
+            y: 0,
+            w: 320,
+            h: 180,
+            rotation: 0,
+            scalePercent: 100,
+            keepAspectRatio: true,
+            locked: false,
+            zIndex: 1,
+            parentGroupId: null,
+            videoData: {
+                assetId: 'video-asset',
+                intrinsicWidth: 1280,
+                intrinsicHeight: 720,
+                borderColor: '#b2c6ee',
+                borderType: 'solid',
+                borderWidth: 0,
+                radius: 0,
+                opacityPercent: 100,
+                autoplay: true,
+                autoplaySlideId: 'slide-2',
+                loop: true,
+                muted: true,
+                shadowColor: '#000000',
+                shadowBlurPx: 0,
+                shadowAngleDeg: 45,
+            },
+        }
+
+        buildPresentationScene({
+            documentRef,
+            layer: presentLayer,
+            objects: [videoObject],
+            assetsById: {
+                'video-asset': {
+                    mimeType: 'video/mp4',
+                    dataBase64: 'AAAA',
+                },
+            },
+            objectClassPrefix: 'present',
+            textboxHtmlResolver: () => '<p><br /></p>',
+            textboxBaseStyleResolver: () => ({ fontFamily: 'Arial', fontSizePx: 24, textColor: '#fff' }),
+        })
+
+        const shell = presentLayer.querySelector('.present-object.video') as HTMLElement
+        const preview = presentLayer.querySelector('.canvas-video-preview') as HTMLElement
+        const video = presentLayer.querySelector('video') as HTMLVideoElement
+        const controls = presentLayer.querySelector('.canvas-video-controls') as HTMLElement
+        const buttons = presentLayer.querySelectorAll('.canvas-video-control-btn')
+        expect(video.dataset.autoplaySlideId).toBe('slide-2')
+        expect(controls).toBeTruthy()
+        expect(buttons).toHaveLength(2)
+        expect(preview.classList.contains('hovered')).toBe(false)
+
+        preview.dispatchEvent(new dom.window.Event('pointerenter', { bubbles: true }))
+        expect(preview.classList.contains('hovered')).toBe(true)
+        preview.dispatchEvent(new dom.window.Event('pointerleave', { bubbles: true }))
+        expect(preview.classList.contains('hovered')).toBe(false)
+    })
+
+    it('supports hidden sound objects while keeping autoplay-capable audio in presentation mode', () => {
+        const dom = new JSDOM('<!doctype html><body><div id="p"></div></body>')
+        const documentRef = dom.window.document
+        const presentLayer = documentRef.getElementById('p') as HTMLElement
+
+        const soundObject = {
+            id: 'sound-1',
+            type: 'sound',
+            x: 0,
+            y: 0,
+            w: 220,
+            h: 56,
+            rotation: 0,
+            scalePercent: 100,
+            keepAspectRatio: false,
+            locked: false,
+            zIndex: 1,
+            parentGroupId: null,
+            soundData: {
+                assetId: 'sound-asset',
+                borderColor: '#b2c6ee',
+                borderType: 'solid',
+                borderWidth: 0,
+                radius: 18,
+                opacityPercent: 100,
+                autoplaySlideId: 'slide-3',
+                loop: true,
+                hiddenInPresentation: true,
+                shadowColor: '#000000',
+                shadowBlurPx: 0,
+                shadowAngleDeg: 45,
+            },
+        }
+
+        buildPresentationScene({
+            documentRef,
+            layer: presentLayer,
+            objects: [soundObject],
+            assetsById: {
+                'sound-asset': {
+                    mimeType: 'audio/mpeg',
+                    dataBase64: 'AAAA',
+                },
+            },
+            objectClassPrefix: 'present',
+            textboxHtmlResolver: () => '<p><br /></p>',
+            textboxBaseStyleResolver: () => ({ fontFamily: 'Arial', fontSizePx: 24, textColor: '#fff' }),
+        })
+
+        expect(presentLayer.querySelector('.present-object.sound')).toBeNull()
+        const audio = presentLayer.querySelector('audio[data-autoplay-slide-id="slide-3"]') as HTMLAudioElement
+        expect(audio).toBeTruthy()
+        expect(audio.style.display).toBe('none')
+    })
 })

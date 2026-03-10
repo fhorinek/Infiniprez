@@ -394,6 +394,14 @@ function toFiniteNumber(value: number, fallback: number) {
   return Number.isFinite(value) ? value : fallback
 }
 
+function normalizeOptionalId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
 function asHexColor(value: string, fallback = '#0f1523') {
   return /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
 }
@@ -1064,6 +1072,7 @@ function PresentStage({
     startCamera: CameraState
   } | null>(null)
   const wheelNavigateThrottleUntilRef = useRef(0)
+  const autoplayTimeoutRef = useRef<number | null>(null)
   const [viewport, setViewport] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
@@ -1185,6 +1194,70 @@ function PresentStage({
   ])
 
   useEffect(() => {
+    return () => {
+      if (autoplayTimeoutRef.current !== null) {
+        window.clearTimeout(autoplayTimeoutRef.current)
+        autoplayTimeoutRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (autoplayTimeoutRef.current !== null) {
+      window.clearTimeout(autoplayTimeoutRef.current)
+      autoplayTimeoutRef.current = null
+    }
+
+    if (!slide) {
+      return
+    }
+
+    const delayMs = freeMoveEnabled
+      ? 0
+      : resolveTransitionDurationMs(slide.transitionType, slide.transitionDurationMs)
+    autoplayTimeoutRef.current = window.setTimeout(() => {
+      const objectsLayer = objectsLayerRef.current
+      if (!objectsLayer) {
+        return
+      }
+      const slideId = slide.id
+
+      const videos = Array.from(objectsLayer.querySelectorAll('video[data-autoplay-slide-id]'))
+      videos.forEach((video) => {
+        if (!(video instanceof HTMLVideoElement) || video.dataset.autoplaySlideId !== slideId) {
+          return
+        }
+        try {
+          video.currentTime = 0
+        } catch {
+          // Ignore if setting currentTime is blocked.
+        }
+        void video.play().catch(() => undefined)
+      })
+
+      const audios = Array.from(objectsLayer.querySelectorAll('audio[data-autoplay-slide-id]'))
+      audios.forEach((audio) => {
+        if (!(audio instanceof HTMLAudioElement) || audio.dataset.autoplaySlideId !== slideId) {
+          return
+        }
+        try {
+          audio.currentTime = 0
+        } catch {
+          // Ignore if setting currentTime is blocked.
+        }
+        void audio.play().catch(() => undefined)
+      })
+    }, Math.max(0, delayMs))
+
+    return () => {
+      if (autoplayTimeoutRef.current !== null) {
+        window.clearTimeout(autoplayTimeoutRef.current)
+        autoplayTimeoutRef.current = null
+      }
+    }
+  }, [freeMoveEnabled, model.objects, slide])
+
+  useEffect(() => {
     const objectsLayer = objectsLayerRef.current
     if (!objectsLayer) {
       return
@@ -1229,6 +1302,9 @@ function PresentStage({
 
   function handlePresentStagePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.defaultPrevented) {
+      return
+    }
+    if (!freeMoveEnabled && isInteractivePointerTarget(event.target)) {
       return
     }
     if (freeMoveEnabled) {
@@ -2502,6 +2578,8 @@ function App() {
   const beginCommandBatch = useEditorStore((state) => state.beginCommandBatch)
   const commitCommandBatch = useEditorStore((state) => state.commitCommandBatch)
   const moveObject = useEditorStore((state) => state.moveObject)
+  const groupObjects = useEditorStore((state) => state.groupObjects)
+  const ungroupObjects = useEditorStore((state) => state.ungroupObjects)
   const toggleObjectLock = useEditorStore((state) => state.toggleObjectLock)
   const setObjectKeepAspectRatio = useEditorStore((state) => state.setObjectKeepAspectRatio)
   const setCanvasBackground = useEditorStore((state) => state.setCanvasBackground)
@@ -3201,10 +3279,25 @@ function App() {
   const selectedObjectLockedByAncestor = selectedObject
     ? hasLockedAncestor(selectedObject, objectById)
     : false
+  const canGroupSelectionFromToolbar =
+    selectedObjects.length > 1 &&
+    selectedObjects.every(
+      (object) =>
+        object.parentGroupId === null &&
+        object.type !== 'group' &&
+        !object.locked &&
+        !hasLockedAncestor(object, objectById)
+    )
+  const canUngroupSelectionFromToolbar =
+    selectedObjects.length === 1 && selectedObjects[0]?.type === 'group'
   const canToggleGroupFromSelection = Boolean(selectedGroupObject && activeGroupId === null)
   const orderedSlides = useMemo(
     () => [...document.slides].sort((a, b) => a.orderIndex - b.orderIndex),
     [document.slides]
+  )
+  const mediaAutoplaySlideOptions = useMemo(
+    () => orderedSlides.map((slide) => ({ id: slide.id, label: slide.name || `Slide ${slide.orderIndex + 1}` })),
+    [orderedSlides]
   )
   const selectedSlide =
     selectedSlideId !== null
@@ -4196,6 +4289,16 @@ function App() {
         setActiveCreationTool(null)
         soundInputRef.current?.click()
         break
+      case 'Group':
+        if (canGroupSelectionFromToolbar) {
+          groupObjects(selectedObjectIds)
+        }
+        break
+      case 'Ungroup':
+        if (canUngroupSelectionFromToolbar) {
+          ungroupObjects(selectedObjectIds)
+        }
+        break
       default:
         break
     }
@@ -4700,9 +4803,12 @@ function App() {
     videoData: VideoData,
     patch: Partial<VideoData>
   ): VideoData {
+    const autoplaySlideId = normalizeOptionalId(patch.autoplaySlideId ?? videoData.autoplaySlideId)
     return {
       ...videoData,
       ...patch,
+      autoplaySlideId,
+      autoplay: autoplaySlideId !== null,
       borderWidth: Math.max(
         0,
         Math.min(
@@ -4742,9 +4848,12 @@ function App() {
     soundData: SoundData,
     patch: Partial<SoundData>
   ): SoundData {
+    const autoplaySlideId = normalizeOptionalId(patch.autoplaySlideId ?? soundData.autoplaySlideId)
     return {
       ...soundData,
       ...patch,
+      autoplaySlideId,
+      hiddenInPresentation: Boolean(patch.hiddenInPresentation ?? soundData.hiddenInPresentation),
       borderWidth: Math.max(
         0,
         Math.min(
@@ -5973,14 +6082,12 @@ function App() {
   }
 
   function handleCreateSlide() {
-    const frameFitScale = resolveTargetFrameFitScale()
-    const initialZoom = camera.zoom * frameFitScale
     const slide: Slide = {
       id: createId(),
       name: `Slide ${orderedSlides.length + 1}`,
       x: camera.x,
       y: camera.y,
-      diagonal: resolveSlideDiagonal(initialZoom),
+      diagonal: resolveSlideDiagonal(camera.zoom),
       rotation: camera.rotation,
       triggerMode: 'manual',
       triggerDelayMs: 0,
@@ -6398,6 +6505,29 @@ function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [mode, selectedSlideId, activeSlideIndex, orderedSlides.length])
+
+  useEffect(() => {
+    if (mode !== 'present') {
+      return
+    }
+
+    const onFullscreenChange = () => {
+      if (window.document.fullscreenElement) {
+        return
+      }
+      setMode('edit')
+      stopSlideTransition()
+      if (timedAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(timedAdvanceTimeoutRef.current)
+        timedAdvanceTimeoutRef.current = null
+      }
+    }
+
+    window.document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => {
+      window.document.removeEventListener('fullscreenchange', onFullscreenChange)
+    }
+  }, [mode, setMode])
 
   useEffect(() => {
     return () => {
@@ -7095,7 +7225,11 @@ function App() {
                   key={tool.label}
                   type="button"
                   className="tool-btn icon-btn"
-                  disabled
+                  disabled={
+                    tool.label === 'Group'
+                      ? !canGroupSelectionFromToolbar
+                      : !canUngroupSelectionFromToolbar
+                  }
                   onClick={() => handleObjectTool(tool.label)}
                   aria-label={tool.label}
                   title={tool.label}
@@ -8394,6 +8528,112 @@ function App() {
                           ) : null}
                         </div>
                       ) : null}
+                    </div>
+                  )}
+
+                  {(selectedVideoObject || selectedSoundObject) && (
+                    <div className="object-param-row">
+                      <span>Autoplay on slide</span>
+                      <div className="object-param-inputs-single">
+                        <select
+                          value={
+                            selectedVideoObject
+                              ? (selectedVideoObject.videoData.autoplaySlideId ?? '')
+                              : (selectedSoundObject?.soundData.autoplaySlideId ?? '')
+                          }
+                          disabled={selectedObjectTransformLocked}
+                          onChange={(event) => {
+                            const nextSlideId = normalizeOptionalId(event.target.value)
+                            if (selectedVideoObject) {
+                              updateSelectedVideoData({
+                                autoplaySlideId: nextSlideId,
+                                autoplay: nextSlideId !== null,
+                              })
+                            } else if (selectedSoundObject) {
+                              updateSelectedSoundData({
+                                autoplaySlideId: nextSlideId,
+                              })
+                            }
+                          }}
+                          aria-label="Autoplay on slide"
+                          title="Choose which slide starts playback automatically"
+                        >
+                          <option value="">Off</option>
+                          {mediaAutoplaySlideOptions.map((entry) => (
+                            <option key={entry.id} value={entry.id}>
+                              {entry.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {(selectedVideoObject || selectedSoundObject) && (
+                    <div className="object-param-row">
+                      <span>Loop</span>
+                      <div className="slide-param-switch" role="group" aria-label="Loop playback">
+                        <button
+                          type="button"
+                          className={
+                            selectedVideoObject
+                              ? (selectedVideoObject.videoData.loop ? 'active' : '')
+                              : (selectedSoundObject?.soundData.loop ? 'active' : '')
+                          }
+                          disabled={selectedObjectTransformLocked}
+                          onClick={() => {
+                            if (selectedVideoObject) {
+                              updateSelectedVideoData({ loop: true })
+                            } else if (selectedSoundObject) {
+                              updateSelectedSoundData({ loop: true })
+                            }
+                          }}
+                        >
+                          On
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            selectedVideoObject
+                              ? (!selectedVideoObject.videoData.loop ? 'active' : '')
+                              : (!selectedSoundObject?.soundData.loop ? 'active' : '')
+                          }
+                          disabled={selectedObjectTransformLocked}
+                          onClick={() => {
+                            if (selectedVideoObject) {
+                              updateSelectedVideoData({ loop: false })
+                            } else if (selectedSoundObject) {
+                              updateSelectedSoundData({ loop: false })
+                            }
+                          }}
+                        >
+                          Off
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedSoundObject && (
+                    <div className="object-param-row">
+                      <span>Visible in presentation</span>
+                      <div className="slide-param-switch" role="group" aria-label="Sound visibility in presentation">
+                        <button
+                          type="button"
+                          className={!selectedSoundObject.soundData.hiddenInPresentation ? 'active' : ''}
+                          disabled={selectedObjectTransformLocked}
+                          onClick={() => updateSelectedSoundData({ hiddenInPresentation: false })}
+                        >
+                          On
+                        </button>
+                        <button
+                          type="button"
+                          className={selectedSoundObject.soundData.hiddenInPresentation ? 'active' : ''}
+                          disabled={selectedObjectTransformLocked}
+                          onClick={() => updateSelectedSoundData({ hiddenInPresentation: true })}
+                        >
+                          Off
+                        </button>
+                      </div>
                     </div>
                   )}
 

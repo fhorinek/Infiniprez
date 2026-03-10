@@ -1958,19 +1958,73 @@ export function CanvasViewport({
       const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
       const worldBefore = screenToWorld(pointerScreen, camera, viewportSize)
 
-      if (
-        event.shiftKey &&
-        selectedObject &&
-        !isObjectEffectivelyLocked(selectedObject, objectById)
-      ) {
+      if (event.shiftKey && selectedUnlockedObjects.length > 0) {
         const rotationDelta = event.deltaY * 0.002
-        moveObject(selectedObject.id, {
-          x: selectedObject.x,
-          y: selectedObject.y,
-          w: selectedObject.w,
-          h: selectedObject.h,
-          rotation: normalizeRotationRadians(selectedObject.rotation + rotationDelta),
+        if (Math.abs(rotationDelta) < 0.000001) {
+          return
+        }
+
+        const selectedGroup =
+          activeGroupId === null &&
+          selectedUnlockedObjects.length === 1 &&
+          selectedUnlockedObjects[0]?.type === 'group'
+            ? selectedUnlockedObjects[0]
+            : null
+
+        if (selectedGroup) {
+          const transformTargets = collectGroupTransformTargets(selectedGroup, objectById)
+          beginCommandBatch('Rotate group')
+          transformTargets.forEach((target) => {
+            const rotatedOffset = rotatePoint(
+              {
+                x: target.x - selectedGroup.x,
+                y: target.y - selectedGroup.y,
+              },
+              rotationDelta
+            )
+            moveObject(target.id, {
+              x: selectedGroup.x + rotatedOffset.x,
+              y: selectedGroup.y + rotatedOffset.y,
+              w: target.w,
+              h: target.h,
+              rotation: normalizeRotationRadians(target.rotation + rotationDelta),
+            })
+          })
+          commitCommandBatch()
+          return
+        }
+
+        const selectionBounds = getObjectsWorldAabb(selectedUnlockedObjects)
+        const selectionCenter = selectionBounds
+          ? {
+            x: (selectionBounds.minX + selectionBounds.maxX) / 2,
+            y: (selectionBounds.minY + selectionBounds.maxY) / 2,
+          }
+          : {
+            x: selectedUnlockedObjects[0]!.x,
+            y: selectedUnlockedObjects[0]!.y,
+          }
+
+        beginCommandBatch(
+          selectedUnlockedObjects.length > 1 ? 'Rotate selected objects' : 'Rotate selected object'
+        )
+        selectedUnlockedObjects.forEach((target) => {
+          const rotatedOffset = rotatePoint(
+            {
+              x: target.x - selectionCenter.x,
+              y: target.y - selectionCenter.y,
+            },
+            rotationDelta
+          )
+          moveObject(target.id, {
+            x: selectionCenter.x + rotatedOffset.x,
+            y: selectionCenter.y + rotatedOffset.y,
+            w: target.w,
+            h: target.h,
+            rotation: normalizeRotationRadians(target.rotation + rotationDelta),
+          })
         })
+        commitCommandBatch()
         return
       }
 
@@ -1990,7 +2044,17 @@ export function CanvasViewport({
 
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => element.removeEventListener('wheel', onWheel)
-  }, [camera, moveObject, objectById, selectedObject, setCamera, viewportSize])
+  }, [
+    activeGroupId,
+    beginCommandBatch,
+    camera,
+    commitCommandBatch,
+    moveObject,
+    objectById,
+    selectedUnlockedObjects,
+    setCamera,
+    viewportSize,
+  ])
 
   const contextSelectionIds = contextMenu?.selectionIds ?? selectedObjectIds
   const contextSelectionObjects = useMemo(() => {

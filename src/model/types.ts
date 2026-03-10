@@ -118,6 +118,7 @@ export interface VideoData {
   radius: number
   opacityPercent: number
   autoplay: boolean
+  autoplaySlideId: string | null
   loop: boolean
   muted: boolean
   shadowColor: string
@@ -132,7 +133,9 @@ export interface SoundData {
   borderWidth: number
   radius: number
   opacityPercent: number
+  autoplaySlideId: string | null
   loop: boolean
+  hiddenInPresentation: boolean
   shadowColor: string
   shadowBlurPx: number
   shadowAngleDeg: number

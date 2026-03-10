@@ -499,6 +499,10 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
             element.appendChild(clipLayer)
         } else if (object.type === 'video') {
             const videoData = object?.videoData || {}
+            const autoplaySlideId =
+                typeof videoData?.autoplaySlideId === 'string' && String(videoData.autoplaySlideId).trim().length > 0
+                    ? String(videoData.autoplaySlideId).trim()
+                    : ''
             const borderScale = getObjectBorderScale(object)
             element.style.opacity = String(clamp(toNumber(videoData?.opacityPercent, 100), 0, 100) / 100)
             element.style.background = 'transparent'
@@ -524,6 +528,11 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
 
             const asset = assetsById[String(videoData?.assetId || '')]
             if (asset?.mimeType && asset?.dataBase64) {
+                const preview = documentRef.createElement('div')
+                preview.className = 'canvas-video-preview'
+                preview.style.width = '100%'
+                preview.style.height = '100%'
+
                 const video = documentRef.createElement('video')
                 video.src = 'data:' + asset.mimeType + ';base64,' + asset.dataBase64
                 video.muted = Boolean(videoData?.muted)
@@ -535,19 +544,105 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
                 video.style.width = '100%'
                 video.style.height = '100%'
                 video.style.objectFit = 'fill'
-                clipLayer.appendChild(video)
-                element.addEventListener('click', (event) => {
-                    event.stopPropagation()
-                    if (video.paused) {
-                        void video.play().catch(() => undefined)
-                    } else {
-                        video.pause()
+                if (autoplaySlideId.length > 0) {
+                    video.dataset.autoplaySlideId = autoplaySlideId
+                }
+                if (objectClassPrefix === 'present') {
+                    const controls = documentRef.createElement('div')
+                    controls.className = 'canvas-video-controls'
+
+                    const toggleButton = documentRef.createElement('button')
+                    toggleButton.type = 'button'
+                    toggleButton.className = 'canvas-video-control-btn'
+                    toggleButton.textContent = '▶'
+                    toggleButton.setAttribute('aria-label', 'Play video')
+                    toggleButton.title = 'Play video'
+
+                    const restartButton = documentRef.createElement('button')
+                    restartButton.type = 'button'
+                    restartButton.className = 'canvas-video-control-btn'
+                    restartButton.textContent = '↺'
+                    restartButton.setAttribute('aria-label', 'Restart video')
+                    restartButton.title = 'Restart video'
+
+                    const syncPlayButton = () => {
+                        if (video.paused) {
+                            toggleButton.textContent = '▶'
+                            toggleButton.setAttribute('aria-label', 'Play video')
+                            toggleButton.title = 'Play video'
+                        } else {
+                            toggleButton.textContent = '❚❚'
+                            toggleButton.setAttribute('aria-label', 'Pause video')
+                            toggleButton.title = 'Pause video'
+                        }
                     }
-                })
+
+                    video.addEventListener('play', syncPlayButton)
+                    video.addEventListener('pause', syncPlayButton)
+                    video.addEventListener('loadedmetadata', () => {
+                        video.pause()
+                        try {
+                            video.currentTime = 0
+                        } catch {
+                            // Ignore currentTime assignment failures before metadata is ready.
+                        }
+                        syncPlayButton()
+                    })
+
+                    toggleButton.addEventListener('pointerdown', (event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                    })
+                    toggleButton.addEventListener('click', (event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        if (video.paused) {
+                            void video.play().catch(() => undefined)
+                        } else {
+                            video.pause()
+                        }
+                    })
+
+                    restartButton.addEventListener('pointerdown', (event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                    })
+                    restartButton.addEventListener('click', (event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        try {
+                            video.currentTime = 0
+                        } catch {
+                            // Ignore currentTime assignment failures before metadata is ready.
+                        }
+                        if (!video.paused) {
+                            void video.play().catch(() => undefined)
+                        }
+                    })
+
+                    controls.appendChild(toggleButton)
+                    controls.appendChild(restartButton)
+                    preview.appendChild(controls)
+
+                    preview.addEventListener('pointerenter', () => {
+                        preview.classList.add('hovered')
+                    })
+                    preview.addEventListener('pointerleave', () => {
+                        preview.classList.remove('hovered')
+                    })
+                    syncPlayButton()
+                }
+                preview.appendChild(video)
+                clipLayer.appendChild(preview)
             }
             element.appendChild(clipLayer)
         } else if (object.type === 'sound') {
             const soundData = object?.soundData || {}
+            const autoplaySlideId =
+                typeof soundData?.autoplaySlideId === 'string' && String(soundData.autoplaySlideId).trim().length > 0
+                    ? String(soundData.autoplaySlideId).trim()
+                    : ''
+            const hiddenInPresentation = objectClassPrefix === 'present' && Boolean(soundData?.hiddenInPresentation)
             const borderScale = getObjectBorderScale(object)
             const soundContentScale = borderScale
             element.style.opacity = String(clamp(toNumber(soundData?.opacityPercent, 100), 0, 100) / 100)
@@ -591,12 +686,23 @@ export function buildPresentationScene(options: BuildPresentationSceneOptions): 
             }
             audio.loop = Boolean(soundData?.loop)
             audio.preload = 'metadata'
+            if (autoplaySlideId.length > 0) {
+                audio.dataset.autoplaySlideId = autoplaySlideId
+            }
             audio.addEventListener('play', () => {
                 icon.textContent = '❚❚'
             })
             audio.addEventListener('pause', () => {
                 icon.textContent = '▶'
             })
+            if (hiddenInPresentation) {
+                audio.style.display = 'none'
+                audio.style.position = 'absolute'
+                audio.style.width = '0'
+                audio.style.height = '0'
+                layer.appendChild(audio)
+                continue
+            }
             element.addEventListener('click', (event) => {
                 event.stopPropagation()
                 if (audio.paused) {

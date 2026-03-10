@@ -174,6 +174,94 @@ describe('integration: group deletion', () => {
   })
 })
 
+describe('integration: shift+wheel rotation', () => {
+  it('rotates a selected group together with descendants', () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'group-a', x: 0, y: 0, zIndex: 1 }))
+    createObject(createShapeRect({ id: 'group-b', x: 200, y: 0, zIndex: 2 }))
+    state.groupObjects(['group-a', 'group-b'])
+
+    const groupId = useEditorStore.getState().ui.selectedObjectIds[0]
+    expect(groupId).toBeTruthy()
+    state.selectObjects([groupId!])
+
+    render(<CanvasViewport />)
+
+    const before = useEditorStore.getState().document.objects.reduce<Record<string, CanvasObject>>(
+      (accumulator, object) => {
+        accumulator[object.id] = object
+        return accumulator
+      },
+      {}
+    )
+
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+    fireEvent.wheel(stage, { deltaY: 100, shiftKey: true })
+
+    const after = useEditorStore.getState().document.objects.reduce<Record<string, CanvasObject>>(
+      (accumulator, object) => {
+        accumulator[object.id] = object
+        return accumulator
+      },
+      {}
+    )
+
+    expect(Math.abs((after[groupId!]?.rotation ?? 0) - (before[groupId!]?.rotation ?? 0))).toBeGreaterThan(0.15)
+    expect(Math.abs((after['group-a']?.rotation ?? 0) - (before['group-a']?.rotation ?? 0))).toBeGreaterThan(0.15)
+    expect(Math.abs((after['group-b']?.rotation ?? 0) - (before['group-b']?.rotation ?? 0))).toBeGreaterThan(0.15)
+    expect(after['group-a']?.y).not.toBe(before['group-a']?.y)
+    expect(after['group-b']?.y).not.toBe(before['group-b']?.y)
+  })
+
+  it('rotates all selected objects when multiple objects are selected', () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'multi-a', x: -120, y: 0, zIndex: 1 }))
+    createObject(createShapeRect({ id: 'multi-b', x: 120, y: 0, zIndex: 2 }))
+    state.selectObjects(['multi-a', 'multi-b'])
+
+    render(<CanvasViewport />)
+
+    const beforeA = useEditorStore.getState().document.objects.find((object) => object.id === 'multi-a')
+    const beforeB = useEditorStore.getState().document.objects.find((object) => object.id === 'multi-b')
+
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+    fireEvent.wheel(stage, { deltaY: 100, shiftKey: true })
+
+    const afterA = useEditorStore.getState().document.objects.find((object) => object.id === 'multi-a')
+    const afterB = useEditorStore.getState().document.objects.find((object) => object.id === 'multi-b')
+
+    expect(Math.abs((afterA?.rotation ?? 0) - (beforeA?.rotation ?? 0))).toBeGreaterThan(0.15)
+    expect(Math.abs((afterB?.rotation ?? 0) - (beforeB?.rotation ?? 0))).toBeGreaterThan(0.15)
+    expect(afterA?.y).not.toBe(beforeA?.y)
+    expect(afterB?.y).not.toBe(beforeB?.y)
+  })
+})
+
+describe('integration: object tools group actions', () => {
+  it('groups and ungroups selected objects from the object tools buttons', async () => {
+    render(<App />)
+
+    createObject(createShapeRect({ id: 'toolbar-a', x: 0, y: 0, zIndex: 1 }))
+    createObject(createShapeRect({ id: 'toolbar-b', x: 200, y: 0, zIndex: 2 }))
+    useEditorStore.getState().selectObjects(['toolbar-a', 'toolbar-b'])
+    await act(async () => { })
+
+    const groupButton = screen.getByRole('button', { name: 'Group' })
+    expect(groupButton.getAttribute('disabled')).toBeNull()
+    fireEvent.click(groupButton)
+
+    const grouped = useEditorStore.getState().document.objects.filter((entry) => entry.type === 'group')
+    expect(grouped).toHaveLength(1)
+
+    const ungroupButton = screen.getByRole('button', { name: 'Ungroup' })
+    expect(ungroupButton.getAttribute('disabled')).toBeNull()
+    fireEvent.click(ungroupButton)
+
+    const ungrouped = useEditorStore.getState().document.objects.filter((entry) => entry.type === 'group')
+    expect(ungrouped).toHaveLength(0)
+  })
+})
+
 describe('integration: copy/paste', () => {
   it('copies and pastes groups with child remapping', async () => {
     const state = useEditorStore.getState()
