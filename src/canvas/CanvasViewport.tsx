@@ -29,6 +29,9 @@ import {
   faLock,
   faLockOpen,
   faMagnifyingGlass,
+  faMobileScreenButton,
+  faEye,
+  faEyeSlash,
   faImage,
   faObjectUngroup,
   faPenToSquare,
@@ -1958,8 +1961,69 @@ export function CanvasViewport({
       const pointerScreen = getViewportRelativePoint(event.clientX, event.clientY)
       const worldBefore = screenToWorld(pointerScreen, camera, viewportSize)
 
+      if ((event.ctrlKey || event.metaKey) && selectedUnlockedObjects.length > 0) {
+        const scaleSensitivity = event.altKey ? 0.00015 : 0.0015
+        const scaleFactor = Math.exp(-event.deltaY * scaleSensitivity)
+        if (!Number.isFinite(scaleFactor) || Math.abs(scaleFactor - 1) < 0.000001) {
+          return
+        }
+
+        const selectedGroup =
+          activeGroupId === null &&
+            selectedUnlockedObjects.length === 1 &&
+            selectedUnlockedObjects[0]?.type === 'group'
+            ? selectedUnlockedObjects[0]
+            : null
+
+        if (selectedGroup) {
+          const transformTargets = collectGroupTransformTargets(selectedGroup, objectById)
+          beginCommandBatch('Scale group')
+          transformTargets.forEach((target) => {
+            moveObject(target.id, {
+              x: selectedGroup.x + (target.x - selectedGroup.x) * scaleFactor,
+              y: selectedGroup.y + (target.y - selectedGroup.y) * scaleFactor,
+              w: Math.max(1, target.w * scaleFactor),
+              h: Math.max(1, target.h * scaleFactor),
+              rotation: target.rotation,
+              scalePercent: Math.max(1, Math.min(10000, Math.round(target.scalePercent * scaleFactor))),
+            })
+          })
+          commitCommandBatch()
+          return
+        }
+
+        const selectionBounds = getObjectsWorldAabb(selectedUnlockedObjects)
+        const selectionCenter = selectionBounds
+          ? {
+            x: (selectionBounds.minX + selectionBounds.maxX) / 2,
+            y: (selectionBounds.minY + selectionBounds.maxY) / 2,
+          }
+          : {
+            x: selectedUnlockedObjects[0]!.x,
+            y: selectedUnlockedObjects[0]!.y,
+          }
+
+        beginCommandBatch(
+          selectedUnlockedObjects.length > 1 ? 'Scale selected objects' : 'Scale selected object'
+        )
+        selectedUnlockedObjects.forEach((target) => {
+          moveObject(target.id, {
+            x: selectionCenter.x + (target.x - selectionCenter.x) * scaleFactor,
+            y: selectionCenter.y + (target.y - selectionCenter.y) * scaleFactor,
+            w: Math.max(1, target.w * scaleFactor),
+            h: Math.max(1, target.h * scaleFactor),
+            rotation: target.rotation,
+            scalePercent: Math.max(1, Math.min(10000, Math.round(target.scalePercent * scaleFactor))),
+          })
+        })
+        commitCommandBatch()
+        return
+      }
+
       if (event.shiftKey && selectedUnlockedObjects.length > 0) {
-        const rotationDelta = event.deltaY * 0.002
+        const wheelDirection = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0
+        const rotationStepDeg = event.altKey ? 1 : 10
+        const rotationDelta = wheelDirection * ((rotationStepDeg * Math.PI) / 180)
         if (Math.abs(rotationDelta) < 0.000001) {
           return
         }
@@ -2028,9 +2092,26 @@ export function CanvasViewport({
         return
       }
 
-      // Alt + wheel performs fine zooming at 1/10 speed for precision.
-      const zoomSensitivity = event.altKey ? 0.00015 : 0.0015
-      const zoomFactor = Math.exp(-event.deltaY * zoomSensitivity)
+      if (event.altKey) {
+        const wheelDirection = event.deltaY > 0 ? 1 : event.deltaY < 0 ? -1 : 0
+        const rotationDelta = wheelDirection * ((10 * Math.PI) / 180)
+        if (Math.abs(rotationDelta) < 0.000001) {
+          return
+        }
+        const rotatedCamera = {
+          ...camera,
+          rotation: normalizeRotationRadians(camera.rotation + rotationDelta),
+        }
+        const worldAfter = screenToWorld(pointerScreen, rotatedCamera, viewportSize)
+        setCamera({
+          ...rotatedCamera,
+          x: rotatedCamera.x + (worldBefore.x - worldAfter.x),
+          y: rotatedCamera.y + (worldBefore.y - worldAfter.y),
+        })
+        return
+      }
+
+      const zoomFactor = Math.exp(-event.deltaY * 0.0015)
       const nextZoom = clamp(camera.zoom * zoomFactor, 0.01, 100)
       const zoomedCamera = { ...camera, zoom: nextZoom }
       const worldAfter = screenToWorld(pointerScreen, zoomedCamera, viewportSize)
@@ -6043,10 +6124,10 @@ export function CanvasViewport({
                 onClick={() => {
                   setIsTargetDisplayOverlayEnabled((current) => !current)
                 }}
-                aria-label={isTargetDisplayOverlayEnabled ? 'Disable target frame overlay' : 'Enable target frame overlay'}
-                title={isTargetDisplayOverlayEnabled ? 'Disable overlay' : 'Enable overlay'}
+                aria-label={isTargetDisplayOverlayEnabled ? 'Hide target frame' : 'Show target frame'}
+                title={isTargetDisplayOverlayEnabled ? 'Hide target frame' : 'Show target frame'}
               >
-                {isTargetDisplayOverlayEnabled ? 'On' : 'Off'}
+                <FontAwesomeIcon icon={isTargetDisplayOverlayEnabled ? faEye : faEyeSlash} />
               </button>
               <button
                 type="button"
@@ -6056,10 +6137,13 @@ export function CanvasViewport({
                     current === 'landscape' ? 'portrait' : 'landscape'
                   )
                 }}
-                aria-label="Rotate target display"
-                title="Rotate target display"
+                aria-label={`Switch target display to ${targetDisplayOrientation === 'landscape' ? 'portrait' : 'landscape'}`}
+                title={`Switch to ${targetDisplayOrientation === 'landscape' ? 'portrait' : 'landscape'}`}
               >
-                <FontAwesomeIcon icon={faRotateRight} />
+                <FontAwesomeIcon
+                  icon={faMobileScreenButton}
+                  style={{ transform: targetDisplayOrientation === 'landscape' ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                />
               </button>
             </div>
           </div>,

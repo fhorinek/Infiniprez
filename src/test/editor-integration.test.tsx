@@ -175,6 +175,21 @@ describe('integration: group deletion', () => {
 })
 
 describe('integration: shift+wheel rotation', () => {
+  it('rotates camera with alt+wheel without changing zoom', () => {
+    const state = useEditorStore.getState()
+    state.setCamera({ x: 0, y: 0, zoom: 1.5, rotation: 0 })
+
+    render(<CanvasViewport />)
+
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+    const before = useEditorStore.getState().camera
+    fireEvent.wheel(stage, { deltaY: 100, altKey: true })
+    const after = useEditorStore.getState().camera
+
+    expect(Math.abs(after.rotation - before.rotation)).toBeCloseTo((10 * Math.PI) / 180)
+    expect(after.zoom).toBeCloseTo(before.zoom)
+  })
+
   it('rotates a selected group together with descendants', () => {
     const state = useEditorStore.getState()
     createObject(createShapeRect({ id: 'group-a', x: 0, y: 0, zIndex: 1 }))
@@ -234,6 +249,98 @@ describe('integration: shift+wheel rotation', () => {
     expect(Math.abs((afterB?.rotation ?? 0) - (beforeB?.rotation ?? 0))).toBeGreaterThan(0.15)
     expect(afterA?.y).not.toBe(beforeA?.y)
     expect(afterB?.y).not.toBe(beforeB?.y)
+  })
+
+  it('rotates selected objects in 10 degree increments', async () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'rot-step-a', x: 0, y: 0, zIndex: 1 }))
+
+    render(<CanvasViewport />)
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+
+    state.selectObjects(['rot-step-a'])
+    await act(async () => { })
+    const before =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'rot-step-a')?.rotation ?? 0
+    fireEvent.wheel(stage, { deltaY: 100, shiftKey: true })
+    const after =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'rot-step-a')?.rotation ?? 0
+    const delta = Math.abs(after - before)
+
+    expect(delta).toBeCloseTo((10 * Math.PI) / 180)
+  })
+
+  it('applies fine 1 degree rotation with shift+alt+wheel', async () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'rot-fine-step-a', x: 0, y: 0, zIndex: 1 }))
+
+    render(<CanvasViewport />)
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+
+    state.selectObjects(['rot-fine-step-a'])
+    await act(async () => { })
+    const before =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'rot-fine-step-a')?.rotation ?? 0
+    fireEvent.wheel(stage, { deltaY: 100, shiftKey: true, altKey: true })
+    const after =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'rot-fine-step-a')?.rotation ?? 0
+    const delta = Math.abs(after - before)
+
+    expect(delta).toBeCloseTo((1 * Math.PI) / 180)
+  })
+})
+
+describe('integration: ctrl+wheel scaling', () => {
+  it('scales a selected object with ctrl+wheel', () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'ctrl-scale-a', x: 0, y: 0, zIndex: 1, scalePercent: 100 }))
+    state.selectObjects(['ctrl-scale-a'])
+
+    render(<CanvasViewport />)
+
+    const before = useEditorStore
+      .getState()
+      .document.objects.find((object) => object.id === 'ctrl-scale-a')
+
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+    fireEvent.wheel(stage, { deltaY: -100, ctrlKey: true })
+
+    const after = useEditorStore
+      .getState()
+      .document.objects.find((object) => object.id === 'ctrl-scale-a')
+
+    expect((after?.scalePercent ?? 0)).toBeGreaterThan(before?.scalePercent ?? 0)
+    expect((after?.w ?? 0)).toBeGreaterThan(before?.w ?? 0)
+    expect((after?.h ?? 0)).toBeGreaterThan(before?.h ?? 0)
+  })
+
+  it('applies 10x finer scaling with ctrl+alt+wheel', async () => {
+    const state = useEditorStore.getState()
+    createObject(createShapeRect({ id: 'ctrl-normal-a', x: 0, y: 0, zIndex: 1, scalePercent: 100 }))
+    createObject(createShapeRect({ id: 'ctrl-fine-a', x: 220, y: 0, zIndex: 2, scalePercent: 100 }))
+
+    render(<CanvasViewport />)
+    const stage = document.querySelector('.canvas-stage') as HTMLElement
+
+    state.selectObjects(['ctrl-normal-a'])
+    await act(async () => { })
+    fireEvent.wheel(stage, { deltaY: -100, ctrlKey: true })
+    const normalScale =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'ctrl-normal-a')
+        ?.scalePercent ?? 100
+    const normalDelta = normalScale - 100
+
+    state.selectObjects(['ctrl-fine-a'])
+    await act(async () => { })
+    fireEvent.wheel(stage, { deltaY: -100, ctrlKey: true, altKey: true })
+    const fineScale =
+      useEditorStore.getState().document.objects.find((object) => object.id === 'ctrl-fine-a')
+        ?.scalePercent ?? 100
+    const fineDelta = fineScale - 100
+
+    expect(normalDelta).toBeGreaterThan(0)
+    expect(fineDelta).toBeGreaterThan(0)
+    expect(fineDelta).toBeLessThan(normalDelta)
   })
 })
 

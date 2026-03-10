@@ -19,6 +19,20 @@ https://fhorinek.github.io/Infiniprez/
 - Shapes, text, images, media, grouping, layering, and snapping tools
 - Export presentation to standalone HTML
 
+## Shortcuts
+
+- `Middle mouse drag` -> Pan canvas
+- `Left mouse drag on empty canvas` -> Marquee select (in edit mode)
+- `Wheel` -> Zoom canvas
+- `Alt + Wheel` -> Rotate camera (10deg steps)
+- `Ctrl/Cmd + Wheel` -> Scale selected object(s)
+- `Ctrl/Cmd + Alt + Wheel` -> Fine scale selected object(s) (1/10 speed)
+- `Shift + Wheel` -> Rotate selected object(s) (10deg steps)
+- `Shift + Alt + Wheel` -> Fine rotate selected object(s) (1deg steps)
+- `Shift + Middle click` -> Align selected object(s) with camera angle
+- `Ctrl/Cmd + Z` -> Undo
+- `Backspace` -> Delete selected object(s)
+
 ## Tech Stack
 
 - React
