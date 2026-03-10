@@ -8,7 +8,7 @@ https://fhorinek.github.io/Infiniprez/
 
 ## Screenshot
 
-![Infiniprez screenshot](public/screenshot.svg)
+![Infiniprez screenshot](public/screenshot.png)
 
 ## Main Features
 
