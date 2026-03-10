@@ -4,10 +4,7 @@
   "description": "Ascending blocks for progress and product milestones.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "shape",
       "shapeType": "shape_rect",
       "frame": {

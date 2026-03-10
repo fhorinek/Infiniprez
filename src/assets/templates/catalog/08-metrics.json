@@ -4,10 +4,7 @@
   "description": "KPI cards with supporting details.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "placeholder",
       "frame": {
         "x": -420,

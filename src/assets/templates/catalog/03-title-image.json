@@ -4,10 +4,7 @@
   "description": "Narrative intro with hero media.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": -420,

@@ -4,10 +4,7 @@
   "description": "Large title with summary block.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": 0,

@@ -4,10 +4,7 @@
   "description": "Headline and structured bullets.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": 455,

@@ -4,10 +4,7 @@
   "description": "Glow accents with center-stage keynote messaging.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "shape",
       "shapeType": "shape_circle",
       "frame": {

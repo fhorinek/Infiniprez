@@ -4,10 +4,7 @@
   "description": "Rounded warm card style for product highlights.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "shape",
       "shapeType": "shape_circle",
       "frame": {

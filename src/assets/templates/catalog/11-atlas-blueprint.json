@@ -4,10 +4,7 @@
   "description": "Technical blueprint with a precise grid and callouts.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": 0,

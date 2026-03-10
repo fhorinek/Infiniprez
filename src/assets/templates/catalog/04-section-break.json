@@ -4,10 +4,7 @@
   "description": "Section divider with strong label.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": 0,

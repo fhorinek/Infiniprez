@@ -1,50 +1,32 @@
-# React + TypeScript + Vite
+# Infiniprez
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Infiniprez is a web presentation editor where your whole deck lives on one infinite, zoomable canvas. Instead of classic fixed slides, you create camera bookmarks and play them as smooth transitions.
 
-Currently, two official plugins are available:
+## Live Demo (GitHub Pages)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+https://fhorinek.github.io/Infiniprez/
 
-## Expanding the ESLint configuration
+## Screenshot
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+![Infiniprez screenshot](public/screenshot.svg)
 
-- Configure the top-level `parserOptions` property like this:
+## Main Features
 
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
-```
+- Infinite canvas with pan, zoom, and rotation controls
+- Slide bookmarks as camera states (position, zoom, rotation)
+- Presentation playback with animated transitions and timed/manual triggers
+- Drag-and-drop slide ordering and rich object editing
+- Shapes, text, images, media, grouping, layering, and snapping tools
+- Export presentation to standalone HTML
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+## Tech Stack
 
-```js
-// eslint.config.js
-import react from 'eslint-plugin-react'
+- React
+- TypeScript
+- Vite
+- Zustand + Immer
+- TipTap editor
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: '18.3' } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs['jsx-runtime'].rules,
-  },
-})
-```
+## Disclaimer
+
+This whole thing was vibe coded using mostly GPT Codex.

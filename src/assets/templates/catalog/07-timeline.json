@@ -4,10 +4,7 @@
   "description": "Three-stage sequence layout.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "placeholder",
       "frame": {
         "x": -430,

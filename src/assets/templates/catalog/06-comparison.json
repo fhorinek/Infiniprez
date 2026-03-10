@@ -4,10 +4,7 @@
   "description": "Left-right compare with balanced placeholders.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "placeholder",
       "frame": {
         "x": 0,

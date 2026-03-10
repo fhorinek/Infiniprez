@@ -4,10 +4,7 @@
   "description": "Monochrome card mosaic for concise factual slides.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "placeholder",
       "frame": {
         "x": -420,

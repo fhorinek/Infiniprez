@@ -4,10 +4,7 @@
   "description": "Image-driven slide with captions.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "placeholder",
       "frame": {
         "x": -430,

@@ -4,10 +4,7 @@
   "description": "Organic lower motif with room for story flow.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "panel",
       "frame": {
         "x": 0,

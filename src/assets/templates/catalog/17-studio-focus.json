@@ -4,10 +4,7 @@
   "description": "Diagonal corners with balanced text and visual blocks.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "shape",
       "shapeType": "shape_rect",
       "frame": {

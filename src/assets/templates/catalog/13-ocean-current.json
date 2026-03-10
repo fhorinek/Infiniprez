@@ -4,10 +4,7 @@
   "description": "Diagonal momentum layout for strategy and execution.",
   "section": "generic",
   "layout": [
-    {
-      "kind": "baseFrame"
-    },
-    {
+        {
       "kind": "shape",
       "shapeType": "shape_rect",
       "frame": {
